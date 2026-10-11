@@ -1,26 +1,32 @@
-# Core Dependencies
-torch>=1.7.0
-torchvision>=0.8.1
-numpy>=1.19.0
-opencv-python>=4.5.0
-mediapipe>=0.8.9
-ultralytics>=8.0.0
+# Fall detection program (dashboard / CLI) dependencies
+# Tested with Python 3.12 on Windows, CPU-only PyTorch.
+#   python -m venv venv
+#   venv\Scripts\python.exe -m pip install -r requirements.txt
+# The web server has its own environment: see server/requirements.txt
+# Exact versions of every installed package: requirements-working.txt
 
-# Dashboard UI
+# --- Deep learning (CPU) ---
+# The default PyPI build of torch on Windows is CPU-only, which is what this project uses.
+# For an NVIDIA GPU, install the CUDA build of torch/torchvision first from the PyTorch
+# index (see https://pytorch.org/get-started/locally/), then install this file.
+# Do not install the separate nvidia-*-cu11 packages; the CUDA build of torch brings its own.
+torch==2.14.1
+torchvision==0.29.1
+
+# --- Detection / pose ---
+ultralytics==8.4.175
+# Keep 0.10.14: mediapipe 1.x removed mp.solutions (pose, selfie_segmentation) used by this project
+mediapipe==0.10.14
+# mediapipe 0.10.14 requires numpy < 2
+numpy==1.26.4
+# ultralytics needs opencv-python and mediapipe needs opencv-contrib-python.
+# Both provide the cv2 module, so keep them at the same version.
+opencv-python==4.10.0.84
+opencv-contrib-python==4.10.0.84
+
+# --- Dashboard UI ---
+# PyQt5-Qt5 newer than 5.15.2 has no Windows wheels
 PyQt5==5.15.10
-PyQt5-Qt5==5.15.2  
+PyQt5-Qt5==5.15.2
 PyQt5-sip==12.13.0
-matplotlib>=3.3.0
-
-# Utilities
-Pillow>=8.0.0
-pyyaml>=5.3.1
-tqdm>=4.41.0
-scipy>=1.4.1
-requests>=2.23.0
-
-# Optional Dependencies
-# Recommended for better performance
-nvidia-cudnn-cu11>=8.6.0 ; platform_system == "Linux" or platform_system == "Windows"
-nvidia-cuda-runtime-cu11>=11.7.0 ; platform_system == "Linux" or platform_system == "Windows"
-nvidia-cuda-cupti-cu11>=11.7.0 ; platform_system == "Linux" or platform_system == "Windows"
+matplotlib==3.11.2

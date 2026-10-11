@@ -19,34 +19,41 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 
 ## Requirements
 
-- Python 3.7-3.10 (Python 3.11+ may have compatibility issues with some dependencies)
-- PyTorch
-- OpenCV
-- MediaPipe
-- Ultralytics (YOLOv12)
-- PyQt5
-- Matplotlib
-- NumPy
+- Python 3.12 (tested on Windows; MediaPipe 0.10.14 has no wheels for Python 3.13)
+- CPU-only PyTorch by default (see GPU note below)
+- Exact versions are pinned in `requirements.txt` (detection program) and `server/requirements.txt` (web server)
 
 ## Installation
 
 1. Clone this repository:
    ```
-   git clone https://github.com/itSkyyledc/Human-Fall-Detection-Yolov12-Mediapipe.git
+   git clone https://github.com/rladustn1467-sketch/Human-Fall-Detection-Yolov12-Mediapipe.git
    cd Human-Fall-Detection-Yolov12-Mediapipe
    ```
 
-2. Install requirements:
+2. Create a virtual environment for the detection program and install requirements:
    ```
-   pip install -r requirements.txt
+   python -m venv venv
+   venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
+   `requirements-working.txt` lists the exact version of every package in a tested
+   environment and can be used instead to reproduce it exactly.
 
-3. Install PyQt5 (if not included in requirements):
+3. Create a separate virtual environment for the web server:
    ```
-   pip install PyQt5==5.15.10 PyQt5-Qt5==5.15.2 PyQt5-sip==12.13.0 matplotlib
+   cd server
+   python -m venv venv
+   venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
 
 4. Download YOLOv12 model (automatic on first run, or manually place in project root)
+
+**GPU (optional):** the default PyPI build of PyTorch on Windows is CPU-only. To use an
+NVIDIA GPU, first install the CUDA build of `torch` and `torchvision` (same versions as in
+`requirements.txt`) from the PyTorch index following https://pytorch.org/get-started/locally/,
+then install `requirements.txt`. Separate `nvidia-*-cu11` packages are not needed.
+
+**Do not upgrade MediaPipe to 1.x:** it removed the `mp.solutions` API that this project uses.
 
 ## Usage
 

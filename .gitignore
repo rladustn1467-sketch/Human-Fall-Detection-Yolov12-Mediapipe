@@ -4,3 +4,9 @@ fall_snapshots/*
 venv/
 __pycache__/
 *.pyc
+
+server/images/
+server/access_token.txt
+server/events.json
+server/events.tmp
+logs/

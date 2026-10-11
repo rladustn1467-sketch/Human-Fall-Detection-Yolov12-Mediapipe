@@ -6,6 +6,10 @@ import datetime
 import time
 import threading
 import json
+import base64
+import queue
+import uuid
+import urllib.error
 import urllib.request
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -23,6 +27,8 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
 # Add parent directory to path so we can import our modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.fall_detector import FallDetector
+from utils.silhouette import SilhouetteRenderer, shrink_frame
+from utils.low_light import LowLightEnhancer, JointCompareLogger, draw_debug_overlay
 
 from PyQt5.QtWidgets import QShortcut
 from PyQt5.QtGui import QKeySequence
@@ -30,6 +36,12 @@ from PyQt5.QtGui import QKeySequence
 # 낙상 이벤트 전송 설정 (다른 컴퓨터에서는 DEVICE_ID만 바꾸면 됨)
 EVENT_SERVER_URL = "http://127.0.0.1:8000/api/events"
 DEVICE_ID = "laptop"
+_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 서버가 처음 실행될 때 만드는 접근 토큰 파일 (서버와 같은 컴퓨터에서 실행할 때)
+ACCESS_TOKEN_FILE = os.path.join(_PROJECT_DIR, "server", "access_token.txt")
+# 전송 실패 시 재시도 간격(초). 항목 수 = 재시도 횟수
+SEND_RETRY_DELAYS = (1, 2, 4)
+SEND_FAILURE_LOG = os.path.join(_PROJECT_DIR, "logs", "send_failures.log")
 
 class ModernStyle:
     """Modern UI style definitions for the application."""
@@ -201,6 +213,21 @@ class FallDetectionDashboard(QMainWindow):
         # Last snapshot time to avoid saving too many images
         self.last_snapshot_time = 0
         self.snapshot_cooldown = 2.0  # seconds
+
+        # Latest raw camera frame and person boxes (for silhouette images sent to the server)
+        self._last_raw_frame = None
+        self._last_person_boxes = []
+
+        # One worker thread handles silhouette rendering and sending; the small
+        # bounded queue keeps at most a few downscaled frames in memory
+        self._event_queue = queue.Queue(maxsize=2)
+        self._silhouette = SilhouetteRenderer()
+        threading.Thread(target=self._event_worker_loop, daemon=True).start()
+
+        # Low-light correction applied before detection; F10 toggles the debug view
+        self.low_light = LowLightEnhancer()
+        self.joint_compare = JointCompareLogger()
+        self.low_light_debug = False
         
         # Create the central widget and layout
         self.central_widget = QWidget()
@@ -212,6 +239,9 @@ class FallDetectionDashboard(QMainWindow):
         # TEST: F9 단축키로 가짜 낙상 발생
         self.test_shortcut = QShortcut(QKeySequence("F9"), self)
         self.test_shortcut.activated.connect(self.trigger_test_fall)
+        # F10: 원본/보정 영상 비교 디버그 표시 켜기/끄기
+        self.low_light_shortcut = QShortcut(QKeySequence("F10"), self)
+        self.low_light_shortcut.activated.connect(self.toggle_low_light_debug)
         
     def setup_ui(self):
         """Set up the main user interface."""
@@ -753,6 +783,10 @@ class FallDetectionDashboard(QMainWindow):
             if self.cap and self.cap.isOpened():
                 self.cap.release()
                 self.cap = None
+
+            # Drop the last raw frame so it is not kept in memory or reused
+            self._last_raw_frame = None
+            self._last_person_boxes = []
         else:
             # Start detection
             self.start_detection()
@@ -862,9 +896,19 @@ class FallDetectionDashboard(QMainWindow):
                 # Update FPS display
                 self.fps_label.setText(f"{self.fps:.1f}")
             
+            # Correct dark frames before detection; the corrected frame is used for
+            # pose detection, silhouettes and display alike
+            raw_frame = frame
+            frame, light_info = self.low_light.process(raw_frame)
+
             # Process the frame for fall detection
             if self.detection_enabled:
                 output_frame, fall_detected, fall_data = self.fall_detector.process_frame(frame)
+                self.joint_compare.maybe_log(raw_frame, frame, fall_data.get("person_boxes", []), light_info)
+
+                # Keep a reference (no copy) to the raw frame for silhouette images
+                self._last_raw_frame = frame
+                self._last_person_boxes = fall_data.get("person_boxes", [])
                 
                 # Add FPS display to the frame
                 fps_text = f"FPS: {self.fps:.1f}"
@@ -877,6 +921,9 @@ class FallDetectionDashboard(QMainWindow):
                     (0, 255, 0), 
                     2
                 )
+
+                if self.low_light_debug:
+                    draw_debug_overlay(output_frame, raw_frame, light_info)
                 
                 # Update statistics
                 self.update_statistics(fall_data)
@@ -1201,33 +1248,133 @@ class FallDetectionDashboard(QMainWindow):
             
             QMessageBox.information(self, "Reset Complete", "Statistics have been reset.")
 
+    def toggle_low_light_debug(self):
+        # F10: 원본 썸네일과 밝기 정보를 영상 위에 표시
+        self.low_light_debug = not self.low_light_debug
+        print(f"[low-light] 디버그 표시 {'ON' if self.low_light_debug else 'OFF'}")
+
     def trigger_test_fall(self):
         # TEST: 가짜 낙상 1건 발생시키기 (F9)
         self.test_fall_count = getattr(self, "test_fall_count", 0) + 1
         print("TEST: fake fall")
         self._process_new_falls("slip_and_fall", [-self.test_fall_count], time.time(), is_test=True)
 
-    def _send_fall_event(self, fall_type, is_test):
-        """Send a fall event to the server in a background thread."""
-        payload = json.dumps({
+    def _post_fall_event(self, fall_type, is_test, image_b64=None):
+        """Send one fall event to the server, retrying on network/server errors.
+
+        Blocking; call from a background thread. Success is only reported after the
+        server confirms it (and confirms the image was saved, when one was sent).
+        """
+        event_id = uuid.uuid4().hex  # same id on every retry, so the server never records it twice
+        event = {
+            "event_id": event_id,
             "device_id": DEVICE_ID,
             "fall_type": fall_type,
             "is_test": is_test,
-        }).encode("utf-8")
+        }
+        if image_b64:
+            event["image_jpeg_base64"] = image_b64
+        payload = json.dumps(event).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        token = self._read_access_token()
+        if token:
+            headers["X-Access-Token"] = token
 
-        def send():
+        error = None
+        for attempt in range(len(SEND_RETRY_DELAYS) + 1):
+            if attempt:
+                time.sleep(SEND_RETRY_DELAYS[attempt - 1])
+                print(f"[server] 재시도 {attempt}/{len(SEND_RETRY_DELAYS)} (event {event_id[:8]})")
             try:
-                request = urllib.request.Request(
-                    EVENT_SERVER_URL, data=payload,
-                    headers={"Content-Type": "application/json"}, method="POST"
-                )
-                with urllib.request.urlopen(request, timeout=2) as response:
-                    response.read()
+                request = urllib.request.Request(EVENT_SERVER_URL, data=payload, headers=headers, method="POST")
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    result = json.loads(response.read())
+            except urllib.error.HTTPError as e:
+                error = f"HTTP {e.code}"
+                if e.code < 500:
+                    # 인증 실패(401)나 잘못된 요청(422)은 다시 보내도 같으므로 재시도하지 않음
+                    if e.code == 401:
+                        error += " (인증 실패: server/access_token.txt 확인)"
+                    break
+                continue
             except Exception as e:
-                # 서버가 꺼져 있거나 전송에 실패해도 대시보드는 계속 동작
-                print(f"[server] 전송 실패: {e}")
+                # 서버가 꺼져 있거나 네트워크 오류 - 재시도
+                error = str(e)
+                continue
 
-        threading.Thread(target=send, daemon=True).start()
+            if not result.get("ok"):
+                error = f"서버 응답 이상: {result}"
+                break
+            if image_b64 and not result.get("image_saved"):
+                print(f"[server] 기록 저장됨, 이미지는 서버가 저장하지 못함 (event {event_id[:8]})")
+                self._log_send_failure(event_id, fall_type, "image not saved by server")
+                return
+            print(f"[server] 전송 완료 (event {event_id[:8]}{', 이미지 포함' if image_b64 else ''})")
+            return
+
+        # 서버가 꺼져 있거나 전송에 실패해도 대시보드는 계속 동작
+        print(f"[server] 전송 실패 (event {event_id[:8]}): {error}")
+        self._log_send_failure(event_id, fall_type, error)
+
+    @staticmethod
+    def _read_access_token():
+        try:
+            with open(ACCESS_TOKEN_FILE, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _log_send_failure(event_id, fall_type, error):
+        try:
+            os.makedirs(os.path.dirname(SEND_FAILURE_LOG), exist_ok=True)
+            with open(SEND_FAILURE_LOG, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} event={event_id} type={fall_type} error={error}\n")
+        except OSError as e:
+            print(f"[server] 실패 기록 저장 불가: {e}")
+
+    def _send_fall_event(self, fall_type, is_test):
+        """Send a fall event without an image in a background thread."""
+        threading.Thread(target=self._post_fall_event, args=(fall_type, is_test), daemon=True).start()
+
+    def _queue_fall_events(self, fall_type, is_test, count):
+        """Queue fall events (with a silhouette image when possible) for the worker thread."""
+        frame = self._last_raw_frame
+        small_frame, boxes = None, []
+        if frame is not None:
+            try:
+                # Downscaled copy only; the full-size raw frame is never queued
+                small_frame, boxes = shrink_frame(frame, self._last_person_boxes)
+            except Exception as e:
+                print(f"[silhouette] 프레임 준비 실패: {e}")
+
+        try:
+            self._event_queue.put_nowait((fall_type, is_test, count, small_frame, boxes))
+        except queue.Full:
+            # Worker is busy: discard the frame but never lose the fall events
+            print("[silhouette] 대기열이 가득 차 이미지 없이 전송합니다")
+            for _ in range(count):
+                self._send_fall_event(fall_type, is_test)
+
+    def _event_worker_loop(self):
+        """Render silhouette images and send fall events, one job at a time."""
+        while True:
+            fall_type, is_test, count, frame, boxes = self._event_queue.get()
+            image_b64 = None
+            try:
+                jpeg = self._silhouette.render(frame, boxes)
+                if jpeg:
+                    image_b64 = base64.b64encode(jpeg).decode("ascii")
+                else:
+                    print("[silhouette] 실루엣 처리 실패 - 이미지 없이 전송합니다")
+            except Exception as e:
+                print(f"[silhouette] 실루엣 처리 오류 - 이미지 없이 전송합니다: {e}")
+            finally:
+                # Temporary frame is discarded whether or not rendering succeeded
+                frame = None
+
+            for _ in range(count):
+                self._post_fall_event(fall_type, is_test, image_b64)
 
     def _process_new_falls(self, fall_type, new_fallen_ids, current_time, is_test=False):
         """Process newly detected falls."""
@@ -1276,8 +1423,7 @@ class FallDetectionDashboard(QMainWindow):
         print(f"Recorded new fall of type: {fall_type}")
 
         # Send one event per newly fallen person to the server
-        for _ in new_fallen_ids:
-            self._send_fall_event(fall_type, is_test)
+        self._queue_fall_events(fall_type, is_test, len(new_fallen_ids))
 
     def update_sensitivity_label(self, value):
         sensitivity_labels = {

@@ -63,6 +63,7 @@ def run_cli_mode(args):
     import cv2
     import time
     from utils.utils import save_frame
+    from utils.low_light import LowLightEnhancer, JointCompareLogger, draw_debug_overlay
     
     print("Starting Fall Detection System in CLI mode")
     print(f"Using model: {args.model}")
@@ -108,7 +109,12 @@ def run_cli_mode(args):
     active_falls = set()  # Track currently fallen people by ID
     total_falls = 0       # Count of total unique falls
     
-    print("Press 'q' to quit, 's' to save current frame")
+    # Low-light correction applied before detection ('d' toggles the debug view)
+    low_light = LowLightEnhancer()
+    joint_compare = JointCompareLogger()
+    low_light_debug = False
+
+    print("Press 'q' to quit, 's' to save current frame, 'd' to toggle low-light debug view")
     
     try:
         while cap.isOpened():
@@ -119,8 +125,15 @@ def run_cli_mode(args):
             
             frame_count += 1
             
+            # Correct dark frames before detection
+            raw_frame = frame
+            frame, light_info = low_light.process(raw_frame)
+
             # Process the frame
             output_frame, fall_detected, fall_data = fall_detector.process_frame(frame)
+            joint_compare.maybe_log(raw_frame, frame, fall_data.get("person_boxes", []), light_info)
+            if low_light_debug:
+                draw_debug_overlay(output_frame, raw_frame, light_info)
             
             # Update fall tracking
             if fall_detected and 'person_ids' in fall_data and 'fallen_ids' in fall_data:
@@ -171,6 +184,8 @@ def run_cli_mode(args):
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
+            elif key == ord('d'):
+                low_light_debug = not low_light_debug
             elif key == ord('s'):
                 saved_path = save_frame(output_frame, args.output_dir, "manual_save")
                 print(f"\nFrame saved to: {saved_path}")

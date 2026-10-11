@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>낙상 확인</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1f2328; --muted: #656d76;
+    --safe: #1a7f37; --help: #cf222e; --wait: #9a6700; --timeout: #bc4c00;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 16px; }
+  .conn { font-size: 13px; color: var(--muted); text-align: right; min-height: 18px; }
+  .conn.bad { color: var(--help); font-weight: bold; }
+  .card { background: var(--card); border-radius: 14px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .banner { border-radius: 10px; padding: 14px; color: #fff; text-align: center; font-size: 22px; font-weight: 700; }
+  .banner small { display: block; font-size: 15px; font-weight: 500; margin-top: 4px; }
+  .s-awaiting_response, .s-detected { background: var(--wait); }
+  .s-safe { background: var(--safe); }
+  .s-help_needed { background: var(--help); }
+  .s-timeout { background: var(--timeout); }
+  .s-none { background: #8c959f; }
+  .meta { color: var(--muted); font-size: 15px; margin: 12px 0; line-height: 1.6; }
+  .badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #ddf4ff; color: #0969da; }
+  .photo { width: 100%; border-radius: 10px; background: #e6e8eb; display: block; }
+  .nophoto { padding: 28px; text-align: center; color: var(--muted); background: #eef0f2; border-radius: 10px; }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  @media (max-width: 380px) { .buttons { grid-template-columns: 1fr; } }
+  button {
+    font: inherit; font-size: clamp(16px, 4.6vw, 22px); font-weight: 700; padding: 22px 8px; border: 0; border-radius: 12px;
+    color: #fff; cursor: pointer; touch-action: manipulation;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  #btn-safe { background: var(--safe); }
+  #btn-help { background: var(--help); }
+  .msg { margin-top: 12px; min-height: 22px; font-size: 16px; text-align: center; }
+  .msg.err { color: var(--help); font-weight: bold; }
+  .msg.ok { color: var(--safe); font-weight: bold; }
+  .history { font-size: 14px; color: var(--muted); margin-top: 14px; padding-left: 18px; }
+  .links { margin-top: 16px; font-size: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <div class="conn" id="conn"></div>
+  <div class="card">
+    <div class="banner s-none" id="banner" role="status" aria-live="polite">불러오는 중...</div>
+    <div class="meta" id="meta"></div>
+    <div id="photo-wrap"></div>
+    <div class="buttons">
+      <button id="btn-safe" disabled>괜찮아요</button>
+      <button id="btn-help" disabled>도움이 필요해요</button>
+    </div>
+    <div class="msg" id="msg" aria-live="polite"></div>
+    <ul class="history" id="history"></ul>
+  </div>
+  <div class="links"><a href="/">전체 기록 보기</a></div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var POLL_MS = 2000;
+  var pinnedId = new URLSearchParams(location.search).get("event");
+  var current = null;        // 현재 표시 중인 이벤트
+  var fetchedAt = 0;         // 마지막 조회 시각 (남은 시간 계산용)
+  var lastSeenId = null;     // 새 이벤트 알림용
+  var sending = false;
+  var shownImage = null;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var LABEL = { safe: "괜찮아요", help_needed: "도움이 필요해요" };
+
+  function setMsg(text, cls) { var m = $("msg"); m.textContent = text; m.className = "msg " + (cls || ""); }
+
+  function alertNewEvent() {
+    if (navigator.vibrate) navigator.vibrate([400, 150, 400]);
+    try {
+      var ctx = alertNewEvent.ctx || (alertNewEvent.ctx = new (window.AudioContext || window.webkitAudioContext)());
+      var osc = ctx.createOscillator(); osc.frequency.value = 880;
+      osc.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 0.4);
+    } catch (e) { /* 사용자 조작 전에는 소리가 막힐 수 있음 */ }
+  }
+
+  function render(ev) {
+    current = ev;
+    var banner = $("banner");
+    if (!ev) {
+      banner.className = "banner s-none"; banner.textContent = "아직 낙상 기록이 없습니다";
+      $("meta").textContent = ""; $("photo-wrap").innerHTML = ""; $("history").innerHTML = "";
+      $("btn-safe").disabled = $("btn-help").disabled = true;
+      return;
+    }
+    banner.className = "banner s-" + ev.status;
+    banner.textContent = ev.status_label;
+    var sub = document.createElement("small");
+    if (ev.status === "awaiting_response") {
+      var left = Math.max(0, ev.remaining_seconds - Math.floor((Date.now() - fetchedAt) / 1000));
+      sub.textContent = "응답해 주세요 · 남은 시간 " + left + "초";
+    } else if (ev.responded_at) {
+      sub.textContent = "응답: " + LABEL[ev.response] + " (" + ev.responded_at + ")";
+    } else if (ev.status === "timeout") {
+      sub.textContent = "제한 시간 안에 응답이 없었습니다";
+    }
+    banner.appendChild(sub);
+
+    var meta = $("meta");
+    meta.textContent = "발생 시각 " + ev.time + " · 유형 " + ev.fall_type + " · 기기 " + ev.device_id + " ";
+    if (ev.is_test) { var b = document.createElement("span"); b.className = "badge"; b.textContent = "테스트"; meta.appendChild(b); }
+
+    if (ev.image !== shownImage) {
+      shownImage = ev.image;
+      var wrap = $("photo-wrap"); wrap.innerHTML = "";
+      if (ev.image) {
+        var img = document.createElement("img");
+        img.className = "photo"; img.alt = "비식별화된 낙상 사진"; img.src = ev.image;
+        wrap.appendChild(img);
+      } else {
+        var none = document.createElement("div"); none.className = "nophoto"; none.textContent = "사진 없음";
+        wrap.appendChild(none);
+      }
+    }
+
+    var hist = $("history"); hist.innerHTML = "";
+    ev.history.forEach(function (h) {
+      var li = document.createElement("li");
+      li.textContent = h.time.slice(11) + " " + ({detected: "낙상 감지", awaiting_response: "응답 대기",
+        safe: "안전 확인", help_needed: "도움 요청", timeout: "응답 시간 초과"}[h.status] || h.status) +
+        (h.note ? " (" + h.note + ")" : "");
+      hist.appendChild(li);
+    });
+
+    $("btn-safe").disabled = $("btn-help").disabled = sending;
+  }
+
+  function poll() {
+    var url = pinnedId ? "/api/events/" + encodeURIComponent(pinnedId) : "/api/events?limit=1";
+    fetch(url, { cache: "no-store" }).then(function (r) {
+      if (r.status === 401) throw new Error("auth");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).then(function (data) {
+      var ev = pinnedId ? data : (data[0] || null);
+      fetchedAt = Date.now();
+      $("conn").textContent = "서버 연결됨 · " + new Date().toLocaleTimeString();
+      $("conn").className = "conn";
+      if (ev && lastSeenId !== null && ev.event_id !== lastSeenId && ev.status === "awaiting_response") {
+        alertNewEvent();
+        setMsg("");
+      }
+      if (ev) lastSeenId = ev.event_id; else if (lastSeenId === null) lastSeenId = "";
+      if (!sending) render(ev);
+    }).catch(function (e) {
+      $("conn").className = "conn bad";
+      $("conn").textContent = e.message === "auth"
+        ? "로그인이 필요합니다. 서버 콘솔의 /login?token=... 주소로 접속하세요"
+        : "서버에 연결할 수 없습니다 (재시도 중)";
+    });
+  }
+
+  function send(response) {
+    if (!current || sending) return;
+    sending = true;
+    $("btn-safe").disabled = $("btn-help").disabled = true;
+    setMsg("전송 중...");
+    fetch("/api/events/" + encodeURIComponent(current.event_id) + "/response", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response: response })
+    }).then(function (r) {
+      if (!r.ok) throw new Error(r.status === 401 ? "로그인이 필요합니다" : "서버 오류 (HTTP " + r.status + ")");
+      return r.json();
+    }).then(function (ev) {
+      // 서버가 기록을 확인해 준 뒤에만 성공으로 표시
+      sending = false;
+      fetchedAt = Date.now();
+      render(ev);
+      setMsg("'" + LABEL[response] + "' 응답이 서버에 기록되었습니다 (" + ev.responded_at.slice(11) + ")", "ok");
+    }).catch(function (e) {
+      sending = false;
+      if (current) render(current);
+      setMsg("전송 실패: " + e.message + " - 다시 눌러 주세요", "err");
+    });
+  }
+
+  $("btn-safe").addEventListener("click", function () { send("safe"); });
+  $("btn-help").addEventListener("click", function () { send("help_needed"); });
+  // 남은 시간 표시를 1초마다 갱신
+  setInterval(function () { if (current && !sending && current.status === "awaiting_response") render(current); }, 1000);
+  setInterval(poll, POLL_MS);
+  poll();
+})();
+</script>
+</body>
+</html>
