@@ -6,6 +6,7 @@ import math
 import time
 import torch
 import os
+from utils.utils import draw_skeleton
 
 class FallDetector:
     def __init__(self, model_path='yolov12n1.pt', confidence=0.5):
@@ -487,6 +488,7 @@ class FallDetector:
             
             # Store the data for our enhanced detection
             pose_data.append((person_id, landmarks, pose_features, (x1, y1, x2, y2)))
+            if landmarks: draw_skeleton(output_frame, landmarks, self.mp_pose.POSE_CONNECTIONS, box=(x1, y1, x2, y2))
         
         # Add better fall detection using collected pose data
         for person_id, landmarks, pose_features, (x1, y1, x2, y2) in pose_data:

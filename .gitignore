@@ -1,3 +1,6 @@
 fall_snapshots/
 fall_snapshots/*
 
+venv/
+__pycache__/
+*.pyc

@@ -6,6 +6,7 @@ import datetime
 import time
 import threading
 import json
+import urllib.request
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -22,6 +23,13 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSize
 # Add parent directory to path so we can import our modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.fall_detector import FallDetector
+
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
+
+# 낙상 이벤트 전송 설정 (다른 컴퓨터에서는 DEVICE_ID만 바꾸면 됨)
+EVENT_SERVER_URL = "http://127.0.0.1:8000/api/events"
+DEVICE_ID = "laptop"
 
 class ModernStyle:
     """Modern UI style definitions for the application."""
@@ -201,6 +209,9 @@ class FallDetectionDashboard(QMainWindow):
         
         # Setup the UI components
         self.setup_ui()
+        # TEST: F9 단축키로 가짜 낙상 발생
+        self.test_shortcut = QShortcut(QKeySequence("F9"), self)
+        self.test_shortcut.activated.connect(self.trigger_test_fall)
         
     def setup_ui(self):
         """Set up the main user interface."""
@@ -779,7 +790,11 @@ class FallDetectionDashboard(QMainWindow):
                 self.cap = cv2.VideoCapture(self.video_source)
             else:
                 # Camera - try without DSHOW first
+                print("DEBUG:", repr(self.camera_source), type(self.camera_source), repr(self.video_source))
                 self.cap = cv2.VideoCapture(self.camera_source)
+                
+                
+
             
             if not self.cap.isOpened():
                 # Try with DSHOW on Windows as fallback
@@ -1103,25 +1118,26 @@ class FallDetectionDashboard(QMainWindow):
                 QMessageBox.critical(self, "Export Error", f"Failed to export history: {str(e)}")
     
     # Utility methods
+    
     def play_alert_sound(self):
-        """Play a sound alert when a fall is detected."""
+        """Play a voice alert when a fall is detected."""
         try:
-            # Only import if needed
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-        except:
-            # If winsound not available (non-Windows), try another approach
-            try:
-                import sys
-                from subprocess import call
-                
-                if sys.platform == 'darwin':  # macOS
-                    call(['afplay', '/System/Library/Sounds/Sosumi.aiff'])
-                elif sys.platform.startswith('linux'):  # Linux
-                    call(['paplay', '/usr/share/sounds/freedesktop/stereo/dialog-warning.oga'])
-            except:
-                # If all else fails, print to console
-                print('\a')  # ASCII bell
+            import subprocess
+
+            script = (
+                'Add-Type -AssemblyName System.Speech; '
+                '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+                '$s.Speak("낙상이 감지되었습니다")'
+            )
+
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-Command", script],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+        except Exception as e:
+            print(f"Voice alert error: {e}")
+
     
     def save_fall_snapshot(self):
         """Save the current frame as an image when a fall is detected."""
@@ -1185,7 +1201,35 @@ class FallDetectionDashboard(QMainWindow):
             
             QMessageBox.information(self, "Reset Complete", "Statistics have been reset.")
 
-    def _process_new_falls(self, fall_type, new_fallen_ids, current_time):
+    def trigger_test_fall(self):
+        # TEST: 가짜 낙상 1건 발생시키기 (F9)
+        self.test_fall_count = getattr(self, "test_fall_count", 0) + 1
+        print("TEST: fake fall")
+        self._process_new_falls("slip_and_fall", [-self.test_fall_count], time.time(), is_test=True)
+
+    def _send_fall_event(self, fall_type, is_test):
+        """Send a fall event to the server in a background thread."""
+        payload = json.dumps({
+            "device_id": DEVICE_ID,
+            "fall_type": fall_type,
+            "is_test": is_test,
+        }).encode("utf-8")
+
+        def send():
+            try:
+                request = urllib.request.Request(
+                    EVENT_SERVER_URL, data=payload,
+                    headers={"Content-Type": "application/json"}, method="POST"
+                )
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    response.read()
+            except Exception as e:
+                # 서버가 꺼져 있거나 전송에 실패해도 대시보드는 계속 동작
+                print(f"[server] 전송 실패: {e}")
+
+        threading.Thread(target=send, daemon=True).start()
+
+    def _process_new_falls(self, fall_type, new_fallen_ids, current_time, is_test=False):
         """Process newly detected falls."""
         # Increment counter by number of new falls
         self.stats["total_falls_detected"] += len(new_fallen_ids)
@@ -1230,6 +1274,10 @@ class FallDetectionDashboard(QMainWindow):
         
         # Print confirmation
         print(f"Recorded new fall of type: {fall_type}")
+
+        # Send one event per newly fallen person to the server
+        for _ in new_fallen_ids:
+            self._send_fall_event(fall_type, is_test)
 
     def update_sensitivity_label(self, value):
         sensitivity_labels = {
