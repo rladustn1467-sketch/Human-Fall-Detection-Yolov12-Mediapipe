@@ -42,6 +42,7 @@ STATUS_LABELS = {
     "help_needed": "도움 요청",
     "timeout": "응답 시간 초과",
 }
+LATE_PREFIX = "시간 초과 후 "  # 제한 시간이 지난 뒤 누른 응답의 표시 앞말
 
 app = FastAPI(title="Fall Detection Server")
 
@@ -154,10 +155,19 @@ def _refresh_timeouts():
         _save_events()
 
 
+def _detected_ts(ev):
+    """Detection time as a timestamp (events saved before detected_ts existed use the time string)."""
+    if ev.get("detected_ts") is not None:
+        return ev["detected_ts"]
+    return datetime.strptime(ev["time"], "%Y-%m-%d %H:%M:%S").timestamp()
+
+
 def _public(ev):
     """Event as returned to clients, with labels and remaining time."""
     out = dict(ev)
     out["status_label"] = STATUS_LABELS.get(ev["status"], ev["status"])
+    if ev.get("late_response") and ev["status"] in ("safe", "help_needed"):
+        out["status_label"] = LATE_PREFIX + out["status_label"]
     out["remaining_seconds"] = (max(0, int(ev["deadline"] - time.time()))
                                 if ev["status"] == "awaiting_response" else 0)
     return out
@@ -208,11 +218,14 @@ def add_event(event: FallEvent):
             "fall_type": event.fall_type,
             "is_test": event.is_test,
             "time": _now_str(now),
+            "detected_ts": now,
             "deadline": now + RESPONSE_TIMEOUT_SECONDS,
             "status": "detected",
             "image": None,
             "response": None,
             "responded_at": None,
+            "response_seconds": None,  # 낙상 감지부터 (마지막) 응답까지 걸린 시간
+            "late_response": False,    # 응답 제한 시간이 지난 뒤 응답했는지
             "history": [],
         }
         _add_history(ev, "detected", now)
@@ -255,18 +268,24 @@ def respond(event_id: str, body: UserResponse):
         ev = events.get(event_id)
         if not ev:
             raise HTTPException(status_code=404, detail="Event not found")
-        _apply_timeout(ev)
+        now = time.time()
+        _apply_timeout(ev, now)
+
+        # 버튼을 누른 시각과 낙상 감지 시각의 차이로 제한 시간 초과 여부를 판단
+        elapsed = now - _detected_ts(ev)
+        late = elapsed > RESPONSE_TIMEOUT_SECONDS
 
         notes = []
-        if ev["status"] == "timeout":
+        if late:
             notes.append("시간 초과 후 응답")
         if ev["response"] and ev["response"] != body.response:
             notes.append(f"응답 변경 ({STATUS_LABELS[ev['response']]} → {STATUS_LABELS[body.response]})")
 
-        now = time.time()
         ev["status"] = body.response
         ev["response"] = body.response
         ev["responded_at"] = _now_str(now)
+        ev["response_seconds"] = round(elapsed, 1)
+        ev["late_response"] = late
         _add_history(ev, body.response, now, ", ".join(notes) or None)
         _save_events()
         return _public(ev)
@@ -308,6 +327,11 @@ def _image_cell(e):
             f'<img src="{src}" width="160" loading="lazy" alt="실루엣 이미지"></a></td>')
 
 
+def _seconds_cell(e):
+    seconds = e.get("response_seconds")
+    return "<td>-</td>" if seconds is None else f"<td>{seconds:.1f}</td>"
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     denied = _page_or_401(request)
@@ -321,8 +345,9 @@ def home(request: Request):
         f"<td>{html.escape(e['device_id'])}</td>"
         f"<td>{html.escape(e['fall_type'])}</td>"
         f"<td>{'테스트' if e['is_test'] else '실제'}</td>"
-        f"<td class='st-{e['status']}'>{e['status_label']}</td>"
+        f"<td class='st-{e['status']}{' late' if e.get('late_response') else ''}'>{e['status_label']}</td>"
         f"<td>{e['responded_at'] or '-'}</td>"
+        f"{_seconds_cell(e)}"
         f"{_image_cell(e)}</tr>"
         for e in rows_data
     )
@@ -338,6 +363,7 @@ def home(request: Request):
             .st-safe {{ background: #d9f2df; }}
             .st-help_needed {{ background: #ffd6d6; font-weight: bold; }}
             .st-timeout {{ background: #ffe0b3; font-weight: bold; }}
+            .late {{ font-weight: bold; outline: 2px solid #bc4c00; outline-offset: -2px; }}
             .table-wrap {{ overflow-x: auto; }}
         </style>
     </head>
@@ -347,7 +373,7 @@ def home(request: Request):
            · 응답 제한 시간 {RESPONSE_TIMEOUT_SECONDS}초</p>
         <div class="table-wrap">
         <table border="1" cellpadding="8" style="border-collapse: collapse">
-            <tr><th>시간</th><th>기기</th><th>유형</th><th>구분</th><th>상태</th><th>응답 시각</th><th>이미지</th></tr>
+            <tr><th>시간</th><th>기기</th><th>유형</th><th>구분</th><th>상태</th><th>응답 시각</th><th>응답 소요(초)</th><th>이미지</th></tr>
             {rows}
         </table>
         </div>
