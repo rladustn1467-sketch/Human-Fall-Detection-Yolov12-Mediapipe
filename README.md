@@ -60,7 +60,8 @@ within the response time limit, when the user asks for help, and a correction wh
 later answers that they are okay. Copy `server/.env.example` to `server/.env` and fill in
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, then restart the server. `server/.env` is in
 `.gitignore`; never commit it. Without these values the server logs "텔레그램 설정 없음" and
-runs without alerts. Alert rules live in `server/notify_rules.py`, delivery channels in
+runs without alerts. Each "help" press sends a numbered alert again, except presses within
+`HELP_ALERT_COOLDOWN` seconds (default 10) of the previous help alert. Alert rules live in `server/notify_rules.py`, delivery channels in
 `server/notifiers.py`.
 
 ## Usage

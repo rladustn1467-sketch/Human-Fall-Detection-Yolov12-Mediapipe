@@ -45,6 +45,8 @@ _load_env_file(ENV_FILE)
 # ---- 조정 가능한 설정값 ----
 # 낙상 후 사용자 응답을 기다리는 시간(초). 환경변수 FALL_RESPONSE_TIMEOUT으로도 변경 가능
 RESPONSE_TIMEOUT_SECONDS = int(os.environ.get("FALL_RESPONSE_TIMEOUT", "60"))
+# 직전 '도움 요청' 알림 후 이 시간(초) 안에 온 도움 요청은 중복(두 번 누름·재시도)으로 보고 알림을 보내지 않음
+HELP_ALERT_COOLDOWN = float(os.environ.get("HELP_ALERT_COOLDOWN", "10"))
 MAX_IMAGE_BYTES = 1_000_000  # 디코딩 후 최대 1MB
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 로그인 쿠키 유지 기간(초)
 SERVER_PORT = 8000  # 접속 주소 안내용 (실행 포트와 맞출 것)
@@ -188,12 +190,17 @@ def _add_history(ev, status, ts=None, note=None):
 
 def _notify(ev, trigger, previous_response=None):
     """Ask the rules whether this change needs an alert; if so, record it and hand it to the dispatcher."""
-    notification = notify_rules.decide(ev, trigger, RESPONSE_TIMEOUT_SECONDS, previous_response)
+    now = time.time()
+    notification = notify_rules.decide(ev, trigger, RESPONSE_TIMEOUT_SECONDS, previous_response,
+                                       help_cooldown=HELP_ALERT_COOLDOWN, now=now)
     if notification is None:
+        if trigger == "help_needed":
+            print(f"[notify] help 알림 생략 - 직전 도움 요청 알림 후 {HELP_ALERT_COOLDOWN:g}초 이내 (event {ev['event_id'][:8]})")
         return
-    # 보내기 전에 먼저 기록해 같은 알림이 두 번 나가지 않게 함
+    # 보내기 전에 먼저 기록해 같은 알림이 두 번 나가지 않게 함 (규칙은 이 기록으로 횟수·간격을 판단)
     ev["last_alert"] = notification.kind
-    ev["alerts"].append({"kind": notification.kind, "time": _now_str(), "channels": dispatcher.channel_names})
+    ev["alerts"].append({"kind": notification.kind, "time": _now_str(now), "ts": now,
+                         "channels": dispatcher.channel_names})
     channels = ", ".join(dispatcher.channel_names) or "채널 없음 - 전송 안 함"
     print(f"[notify] {notification.kind} 알림 (event {ev['event_id'][:8]}, {channels})")
     dispatcher.notify(notification)
