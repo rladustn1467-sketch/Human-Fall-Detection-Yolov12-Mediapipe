@@ -5,9 +5,11 @@ To add a channel (web push, app push, ...): subclass Notifier, implement send(),
 and add it in build_notifiers().
 """
 import json
+import os
 import queue
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +24,7 @@ class Notification:
     event_id: str
     text: str
     is_test: bool = False
-    image_path: Optional[str] = None  # 사진 알림용 자리 (아직 사용하지 않음)
+    image_path: Optional[str] = None  # 사생활 보호 처리된 사진 파일 (없으면 글자만)
 
 
 class NotifyError(Exception):
@@ -40,30 +42,68 @@ class Notifier:
         raise NotImplementedError
 
 
+def _multipart(fields, files):
+    """Encode form fields and files ({name: (filename, bytes, content_type)}) as multipart/form-data."""
+    boundary = uuid.uuid4().hex
+    parts = []
+    for name, value in fields.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+                     + str(value).encode("utf-8") + b"\r\n")
+    for name, (filename, content, content_type) in files.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                     f"Content-Type: {content_type}\r\n\r\n".encode() + content + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
 class TelegramNotifier(Notifier):
     name = "telegram"
     API_URL = "https://api.telegram.org/bot{token}/{method}"
+    CAPTION_LIMIT = 1024  # 텔레그램 사진 설명 최대 글자 수
 
-    def __init__(self, bot_token, chat_id, timeout=10):
+    def __init__(self, bot_token, chat_id, timeout=10, photo_timeout=30):
         self._token = bot_token
         self.chat_id = chat_id
         self.timeout = timeout
+        self.photo_timeout = photo_timeout
 
     def send(self, notification):
-        # 텍스트만 전송 (사진은 나중에 sendPhoto로 추가)
+        # 사진이 있으면 사진+글자를 한 메시지로, 사진 전송이 실패하면 글자만 보냄
+        if notification.image_path:
+            try:
+                self._send_photo(notification)
+                return
+            except NotifyError as e:
+                print(f"[notify:telegram] 사진 전송 실패 - 글자만 보냅니다 (event {notification.event_id[:8]}): {e}")
         self._call("sendMessage", {
             "chat_id": self.chat_id,
             "text": notification.text,
             "disable_web_page_preview": "true",
         })
 
-    def _call(self, method, params):
+    def _send_photo(self, notification):
+        try:
+            with open(notification.image_path, "rb") as f:
+                photo = f.read()
+        except OSError as e:
+            raise NotifyError(f"사진 파일을 읽을 수 없음: {e}", retryable=False)
+        caption = notification.text
+        if len(caption) > self.CAPTION_LIMIT:
+            caption = caption[:self.CAPTION_LIMIT - 1] + "…"
+        self._call("sendPhoto", {"chat_id": self.chat_id, "caption": caption},
+                   files={"photo": (os.path.basename(notification.image_path), photo, "image/jpeg")},
+                   timeout=self.photo_timeout)
+
+    def _call(self, method, params, files=None, timeout=None):
         url = self.API_URL.format(token=self._token, method=method)
-        data = urllib.parse.urlencode(params).encode("utf-8")
-        request = urllib.request.Request(url, data=data, method="POST")
+        if files:
+            data, content_type = _multipart(params, files)
+        else:
+            data, content_type = urllib.parse.urlencode(params).encode("utf-8"), "application/x-www-form-urlencoded"
+        request = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": content_type})
         # 오류 메시지에는 URL(토큰 포함)을 절대 넣지 않음
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
                 body = json.loads(response.read())
         except urllib.error.HTTPError as e:
             try:
@@ -72,8 +112,9 @@ class TelegramNotifier(Notifier):
                 body = {}
             description = body.get("description", "")
             retry_after = (body.get("parameters") or {}).get("retry_after")
-            hint = {401: " (봇 토큰 확인)", 400: " (채팅 ID 확인, 봇에게 먼저 메시지를 보냈는지 확인)",
-                    403: " (봇이 차단되었거나 채팅방에 없음)", 404: " (봇 토큰 확인)"}.get(e.code, "")
+            hint = {401: " (봇 토큰 확인)", 403: " (봇이 차단되었거나 채팅방에 없음)", 404: " (봇 토큰 확인)"}.get(e.code, "")
+            if e.code == 400 and "chat not found" in description:
+                hint = " (채팅 ID 확인, 봇에게 먼저 메시지를 보냈는지 확인)"
             raise NotifyError(f"HTTP {e.code} {description}{hint}",
                               retryable=e.code == 429 or e.code >= 500, retry_after=retry_after)
         except (urllib.error.URLError, OSError, ValueError) as e:

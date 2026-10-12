@@ -29,13 +29,14 @@ def _alert_ts(alert):
     return datetime.strptime(alert["time"], "%Y-%m-%d %H:%M:%S").timestamp()
 
 
-def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=10, now=None):
+def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=10, now=None, image_path=None):
     """Return the Notification to send for this trigger, or None.
 
     trigger: "timeout" (deadline passed without a response), "safe" or "help_needed" (button pressed).
     previous_response: the event's response before this button press.
     help_cooldown: HELP requests within this many seconds of the previous HELP alert are not sent again.
     now: current timestamp (time.time()).
+    image_path: the fall's privacy-processed photo; attached to TIMEOUT and HELP alerts only.
     """
     # 알림 기능이 생기기 전에 저장된 기록에는 알림을 보내지 않음
     if "last_alert" not in ev:
@@ -56,8 +57,11 @@ def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=1
         kind = None
     if kind is None:
         return None
+    # 사진은 '응답 없음'과 '도움 요청'에만 붙임 ('정정'에는 붙이지 않음)
+    photo = image_path if kind in (TIMEOUT, HELP) else None
     return Notification(kind=kind, event_id=ev["event_id"], is_test=ev.get("is_test", False),
-                        text=_message(kind, ev, timeout_seconds, previous_response, help_number))
+                        text=_message(kind, ev, timeout_seconds, previous_response, help_number),
+                        image_path=photo)
 
 
 def _message(kind, ev, timeout_seconds, previous_response, help_number=None):

@@ -14,3 +14,7 @@ logs/
 # Secrets (Telegram bot token etc.) - copy server/.env.example to server/.env
 .env
 server/.env
+
+# Test photos (stock images, not ours to publish) and processed test results
+test_images/
+test_output/

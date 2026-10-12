@@ -8,6 +8,7 @@ import threading
 import json
 import base64
 import queue
+import random
 import uuid
 import urllib.error
 import urllib.request
@@ -42,6 +43,11 @@ ACCESS_TOKEN_FILE = os.path.join(_PROJECT_DIR, "server", "access_token.txt")
 # 전송 실패 시 재시도 간격(초). 항목 수 = 재시도 횟수
 SEND_RETRY_DELAYS = (1, 2, 4)
 SEND_FAILURE_LOG = os.path.join(_PROJECT_DIR, "logs", "send_failures.log")
+# 웹캠 없이 테스트할 때 카메라 프레임 대신 쓰는 사진 폴더 (F9: 카메라 프레임이 없으면 랜덤 선택, Shift+F9: 직접 선택)
+TEST_IMAGE_DIR = os.path.join(_PROJECT_DIR, "test_images")
+TEST_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
+# 테스트 사진으로 만든 가짜 낙상의 가공 결과(실루엣 이미지)를 눈으로 확인하도록 저장하는 폴더
+TEST_OUTPUT_DIR = os.path.join(_PROJECT_DIR, "test_output")
 
 class ModernStyle:
     """Modern UI style definitions for the application."""
@@ -160,8 +166,9 @@ class ModernStyle:
     """ % (SUCCESS)
 
 class FallDetectionDashboard(QMainWindow):
-    def __init__(self):
+    def __init__(self, server_url=None):
         super().__init__()
+        self.event_server_url = server_url or EVENT_SERVER_URL
         
         # Set window title and size
         self.setWindowTitle("Fall Detection System Dashboard")
@@ -199,7 +206,8 @@ class FallDetectionDashboard(QMainWindow):
             "fall_threshold": 0.4,
             "angle_threshold": 45,
             "sound_alerts": True,
-            "auto_save_falls": True,
+            # 원본 화면 스냅샷 저장은 사생활 보호를 위해 사용하지 않음 (서버에는 실루엣 이미지만 전송)
+            "auto_save_falls": False,
             "output_dir": "fall_snapshots",
             "fall_cooldown": 5.0  # Cooldown in seconds for the same person
         }
@@ -239,6 +247,9 @@ class FallDetectionDashboard(QMainWindow):
         # TEST: F9 단축키로 가짜 낙상 발생
         self.test_shortcut = QShortcut(QKeySequence("F9"), self)
         self.test_shortcut.activated.connect(self.trigger_test_fall)
+        # TEST: Shift+F9로 사진을 골라 카메라 프레임 대신 써서 가짜 낙상 발생
+        self.test_image_shortcut = QShortcut(QKeySequence("Shift+F9"), self)
+        self.test_image_shortcut.activated.connect(self.choose_test_image)
         # F10: 원본/보정 영상 비교 디버그 표시 켜기/끄기
         self.low_light_shortcut = QShortcut(QKeySequence("F10"), self)
         self.low_light_shortcut.activated.connect(self.toggle_low_light_debug)
@@ -539,7 +550,10 @@ class FallDetectionDashboard(QMainWindow):
         
         # Auto-save falls
         self.auto_save_falls_check = QCheckBox("Automatically Save Fall Snapshots")
-        self.auto_save_falls_check.setChecked(self.config.get("auto_save_falls", True))
+        self.auto_save_falls_check.setChecked(False)
+        # 원본 화면이 저장되므로 사생활 보호를 위해 끔
+        self.auto_save_falls_check.setEnabled(False)
+        self.auto_save_falls_check.setToolTip("사생활 보호를 위해 원본 스냅샷 저장은 사용하지 않습니다")
         notification_layout.addWidget(self.auto_save_falls_check, 1, 0, 1, 2)
         
         # Output directory
@@ -804,20 +818,24 @@ class FallDetectionDashboard(QMainWindow):
             self.pause_resume_btn.setText("Resume")
             self.status_bar.showMessage("Paused")
     
+    def _ensure_fall_detector(self):
+        """Create the fall detector on first use."""
+        if not self.fall_detector:
+            self.fall_detector = FallDetector(
+                model_path=self.config["model_path"],
+                confidence=self.config["confidence"]
+            )
+
+            # Set detection parameters
+            self.fall_detector.fall_threshold = self.config["fall_threshold"]
+            self.fall_detector.angle_threshold = self.config["angle_threshold"]
+
     def start_detection(self):
         """Initialize and start the fall detection process."""
         try:
             # Initialize the fall detector if not already created
-            if not self.fall_detector:
-                self.fall_detector = FallDetector(
-                    model_path=self.config["model_path"],
-                    confidence=self.config["confidence"]
-                )
-                
-                # Set detection parameters
-                self.fall_detector.fall_threshold = self.config["fall_threshold"]
-                self.fall_detector.angle_threshold = self.config["angle_threshold"]
-            
+            self._ensure_fall_detector()
+
             # Open video source
             if self.video_source:
                 # Video file
@@ -1255,9 +1273,61 @@ class FallDetectionDashboard(QMainWindow):
 
     def trigger_test_fall(self):
         # TEST: 가짜 낙상 1건 발생시키기 (F9)
+        # 카메라 프레임이 없으면(웹캠 없음) test_images의 사진을 랜덤으로 골라 카메라 프레임 대신 사용
+        if self._last_raw_frame is None:
+            image_path = self._random_test_image()
+            if image_path:
+                self.trigger_test_fall_from_image(image_path)
+                return
         self.test_fall_count = getattr(self, "test_fall_count", 0) + 1
         print("TEST: fake fall")
         self._process_new_falls("slip_and_fall", [-self.test_fall_count], time.time(), is_test=True)
+
+    @staticmethod
+    def _random_test_image():
+        try:
+            names = [n for n in os.listdir(TEST_IMAGE_DIR) if n.lower().endswith(TEST_IMAGE_EXTENSIONS)]
+        except OSError:
+            names = []
+        if not names:
+            print("TEST: test_images 폴더에 사진이 없어 사진 없는 가짜 낙상으로 진행합니다")
+            return None
+        return os.path.join(TEST_IMAGE_DIR, random.choice(names))
+
+    def choose_test_image(self):
+        # TEST: Shift+F9 - 사진을 직접 골라 가짜 낙상 발생
+        image_path, _ = QFileDialog.getOpenFileName(
+            self, "테스트 사진 선택", TEST_IMAGE_DIR, "Images (*.jpg *.jpeg *.png *.bmp)")
+        if image_path:
+            self.trigger_test_fall_from_image(image_path)
+
+    def trigger_test_fall_from_image(self, image_path):
+        """Fake fall that uses a photo in place of a camera frame, then follows the real fall path.
+
+        The photo goes through the same steps as a camera frame (low-light correction, person
+        detection, silhouette rendering, server upload, alerts). Only the processed silhouette
+        image is saved to test_output/ for checking; the photo itself is never sent.
+        """
+        frame = cv2.imread(image_path)
+        if frame is None:
+            print(f"TEST: 사진을 읽을 수 없습니다: {image_path}")
+            return
+        try:
+            self._ensure_fall_detector()
+        except Exception as e:
+            print(f"TEST: 감지 모델을 불러오지 못했습니다: {e}")
+            return
+
+        frame, _ = self.low_light.process(frame)
+        output_frame, _, fall_data = self.fall_detector.process_frame(frame)
+        boxes = fall_data.get("person_boxes", [])
+        self.display_frame(output_frame)
+
+        name = os.path.splitext(os.path.basename(image_path))[0]
+        print(f"TEST: fake fall from image {os.path.basename(image_path)} (사람 {len(boxes)}명 감지)")
+        self.test_fall_count = getattr(self, "test_fall_count", 0) + 1
+        self._process_new_falls("slip_and_fall", [-self.test_fall_count], time.time(), is_test=True,
+                                frame=frame, boxes=boxes, test_output_name=name)
 
     def _post_fall_event(self, fall_type, is_test, image_b64=None):
         """Send one fall event to the server, retrying on network/server errors.
@@ -1286,7 +1356,7 @@ class FallDetectionDashboard(QMainWindow):
                 time.sleep(SEND_RETRY_DELAYS[attempt - 1])
                 print(f"[server] 재시도 {attempt}/{len(SEND_RETRY_DELAYS)} (event {event_id[:8]})")
             try:
-                request = urllib.request.Request(EVENT_SERVER_URL, data=payload, headers=headers, method="POST")
+                request = urllib.request.Request(self.event_server_url, data=payload, headers=headers, method="POST")
                 with urllib.request.urlopen(request, timeout=3) as response:
                     result = json.loads(response.read())
             except urllib.error.HTTPError as e:
@@ -1337,19 +1407,23 @@ class FallDetectionDashboard(QMainWindow):
         """Send a fall event without an image in a background thread."""
         threading.Thread(target=self._post_fall_event, args=(fall_type, is_test), daemon=True).start()
 
-    def _queue_fall_events(self, fall_type, is_test, count):
-        """Queue fall events (with a silhouette image when possible) for the worker thread."""
-        frame = self._last_raw_frame
-        small_frame, boxes = None, []
+    def _queue_fall_events(self, fall_type, is_test, count, frame=None, boxes=None, test_output_name=None):
+        """Queue fall events (with a silhouette image when possible) for the worker thread.
+
+        frame/boxes default to the latest camera frame; a test photo can be passed instead.
+        """
+        if frame is None:
+            frame, boxes = self._last_raw_frame, self._last_person_boxes
+        small_frame, small_boxes = None, []
         if frame is not None:
             try:
                 # Downscaled copy only; the full-size raw frame is never queued
-                small_frame, boxes = shrink_frame(frame, self._last_person_boxes)
+                small_frame, small_boxes = shrink_frame(frame, boxes or [])
             except Exception as e:
                 print(f"[silhouette] 프레임 준비 실패: {e}")
 
         try:
-            self._event_queue.put_nowait((fall_type, is_test, count, small_frame, boxes))
+            self._event_queue.put_nowait((fall_type, is_test, count, small_frame, small_boxes, test_output_name))
         except queue.Full:
             # Worker is busy: discard the frame but never lose the fall events
             print("[silhouette] 대기열이 가득 차 이미지 없이 전송합니다")
@@ -1359,12 +1433,14 @@ class FallDetectionDashboard(QMainWindow):
     def _event_worker_loop(self):
         """Render silhouette images and send fall events, one job at a time."""
         while True:
-            fall_type, is_test, count, frame, boxes = self._event_queue.get()
+            fall_type, is_test, count, frame, boxes, test_output_name = self._event_queue.get()
             image_b64 = None
             try:
                 jpeg = self._silhouette.render(frame, boxes)
                 if jpeg:
                     image_b64 = base64.b64encode(jpeg).decode("ascii")
+                    if test_output_name:
+                        self._save_test_output(jpeg, test_output_name)
                 else:
                     print("[silhouette] 실루엣 처리 실패 - 이미지 없이 전송합니다")
             except Exception as e:
@@ -1376,8 +1452,24 @@ class FallDetectionDashboard(QMainWindow):
             for _ in range(count):
                 self._post_fall_event(fall_type, is_test, image_b64)
 
-    def _process_new_falls(self, fall_type, new_fallen_ids, current_time, is_test=False):
-        """Process newly detected falls."""
+    @staticmethod
+    def _save_test_output(jpeg, name):
+        """Save the processed (silhouette) image of a test-photo fall for visual checking."""
+        try:
+            os.makedirs(TEST_OUTPUT_DIR, exist_ok=True)
+            path = os.path.join(TEST_OUTPUT_DIR, f"{datetime.datetime.now():%Y%m%d_%H%M%S}_{name}_silhouette.jpg")
+            with open(path, "wb") as f:
+                f.write(jpeg)
+            print(f"TEST: 가공된 이미지 저장: {path}")
+        except OSError as e:
+            print(f"TEST: 가공된 이미지 저장 실패: {e}")
+
+    def _process_new_falls(self, fall_type, new_fallen_ids, current_time, is_test=False,
+                           frame=None, boxes=None, test_output_name=None):
+        """Process newly detected falls.
+
+        frame/boxes: image to send instead of the latest camera frame (test photos).
+        """
         # Increment counter by number of new falls
         self.stats["total_falls_detected"] += len(new_fallen_ids)
         self.fall_count_label.setText(str(self.stats["total_falls_detected"]))
@@ -1386,10 +1478,8 @@ class FallDetectionDashboard(QMainWindow):
         if self.config.get("sound_alerts", True):
             self.play_alert_sound()
         
-        # Save fall snapshot if enabled and not in cooldown
-        if (self.config.get("auto_save_falls", True) and 
-            current_time - self.last_snapshot_time > self.snapshot_cooldown):
-            self.save_fall_snapshot()
+        # 원본 스냅샷은 저장하지 않음 (사생활 보호). 이 시각은 ID 없는 낙상의 중복 방지에도 쓰이므로 계속 갱신
+        if current_time - self.last_snapshot_time > self.snapshot_cooldown:
             self.last_snapshot_time = current_time
         
         # Update fall types count
@@ -1423,7 +1513,7 @@ class FallDetectionDashboard(QMainWindow):
         print(f"Recorded new fall of type: {fall_type}")
 
         # Send one event per newly fallen person to the server
-        self._queue_fall_events(fall_type, is_test, len(new_fallen_ids))
+        self._queue_fall_events(fall_type, is_test, len(new_fallen_ids), frame, boxes, test_output_name)
 
     def update_sensitivity_label(self, value):
         sensitivity_labels = {

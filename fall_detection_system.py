@@ -35,6 +35,12 @@ def parse_arguments():
                       help='Save frames when falls are detected')
     parser.add_argument('--output-dir', type=str, default='fall_snapshots',
                       help='Directory to save fall snapshots (if --save-falls is used)')
+
+    # Test options (dashboard mode)
+    parser.add_argument('--test-image', type=str, default=None,
+                      help='Dashboard: after start, create one fake fall using this photo instead of a camera frame')
+    parser.add_argument('--server-url', type=str, default=None,
+                      help='Dashboard: fall event server URL (default: http://127.0.0.1:8000/api/events)')
     
     return parser.parse_args()
 
@@ -44,9 +50,14 @@ def run_dashboard_mode(args):
         from PyQt5.QtWidgets import QApplication
         from dashboard.dashboard_app import FallDetectionDashboard
         
+        from PyQt5.QtCore import QTimer
+
         app = QApplication(sys.argv)
-        window = FallDetectionDashboard()
+        window = FallDetectionDashboard(server_url=args.server_url)
         window.show()
+        if args.test_image:
+            # 창이 뜬 뒤 사진으로 가짜 낙상 1건 (실제 낙상과 같은 경로: 가공 -> 서버 업로드 -> 알림)
+            QTimer.singleShot(500, lambda: window.trigger_test_fall_from_image(args.test_image))
         sys.exit(app.exec_())
     except ImportError as e:
         print(f"Error: Required PyQt5 libraries not found. {str(e)}")

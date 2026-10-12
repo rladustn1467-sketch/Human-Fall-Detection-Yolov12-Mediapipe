@@ -191,8 +191,10 @@ def _add_history(ev, status, ts=None, note=None):
 def _notify(ev, trigger, previous_response=None):
     """Ask the rules whether this change needs an alert; if so, record it and hand it to the dispatcher."""
     now = time.time()
+    image_path = IMAGE_DIR / f"{ev['event_id']}.jpg"
     notification = notify_rules.decide(ev, trigger, RESPONSE_TIMEOUT_SECONDS, previous_response,
-                                       help_cooldown=HELP_ALERT_COOLDOWN, now=now)
+                                       help_cooldown=HELP_ALERT_COOLDOWN, now=now,
+                                       image_path=str(image_path) if ev.get("image") and image_path.is_file() else None)
     if notification is None:
         if trigger == "help_needed":
             print(f"[notify] help 알림 생략 - 직전 도움 요청 알림 후 {HELP_ALERT_COOLDOWN:g}초 이내 (event {ev['event_id'][:8]})")
@@ -202,7 +204,8 @@ def _notify(ev, trigger, previous_response=None):
     ev["alerts"].append({"kind": notification.kind, "time": _now_str(now), "ts": now,
                          "channels": dispatcher.channel_names})
     channels = ", ".join(dispatcher.channel_names) or "채널 없음 - 전송 안 함"
-    print(f"[notify] {notification.kind} 알림 (event {ev['event_id'][:8]}, {channels})")
+    photo = ", 사진 포함" if notification.image_path else ""
+    print(f"[notify] {notification.kind} 알림 (event {ev['event_id'][:8]}, {channels}{photo})")
     dispatcher.notify(notification)
 
 

@@ -61,8 +61,13 @@ later answers that they are okay. Copy `server/.env.example` to `server/.env` an
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, then restart the server. `server/.env` is in
 `.gitignore`; never commit it. Without these values the server logs "텔레그램 설정 없음" and
 runs without alerts. Each "help" press sends a numbered alert again, except presses within
-`HELP_ALERT_COOLDOWN` seconds (default 10) of the previous help alert. Alert rules live in `server/notify_rules.py`, delivery channels in
-`server/notifiers.py`.
+`HELP_ALERT_COOLDOWN` seconds (default 10) of the previous help alert. "No response" and "help"
+alerts include the privacy-processed photo (blurred background, solid silhouette) when the fall
+has one; if the photo cannot be sent, the text is sent alone. Alert rules live in
+`server/notify_rules.py`, delivery channels in `server/notifiers.py`.
+
+**Privacy:** only the processed silhouette image leaves the dashboard; original camera frames
+are never sent to the server or saved (the raw fall snapshot option is disabled).
 
 ## Usage
 
@@ -71,6 +76,18 @@ runs without alerts. Each "help" press sends a numbered alert again, except pres
 ```
 python fall_detection_system.py --mode dashboard
 ```
+
+**Testing without a webcam:** put photos in `test_images/` (ignored by git). In the dashboard,
+**F9** creates a fake fall; with no camera frame it uses a random photo from `test_images/` as the
+camera frame (with an empty folder it sends a fake fall without a photo). **Shift+F9** lets you
+pick the photo. Or start with a photo:
+
+```
+python fall_detection_system.py --mode dashboard --test-image test_images/lying.jpg
+```
+
+Photo tests follow the real path (person detection, privacy processing, server upload, alerts),
+and the processed image is also saved to `test_output/` for checking.
 
 ### Command Line Mode
 
