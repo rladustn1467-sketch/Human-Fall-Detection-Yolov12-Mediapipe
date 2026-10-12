@@ -10,3 +10,7 @@ server/access_token.txt
 server/events.json
 server/events.tmp
 logs/
+
+# Secrets (Telegram bot token etc.) - copy server/.env.example to server/.env
+.env
+server/.env

@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
@@ -17,12 +18,37 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+import notify_rules
+from notifiers import NotificationDispatcher, build_notifiers
+
+ENV_FILE = Path(__file__).parent / ".env"
+
+
+def _load_env_file(path):
+    """Read KEY=VALUE lines from server/.env into os.environ (values already in the environment win)."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        if key:
+            os.environ.setdefault(key, value)
+
+
+# 비밀 설정(텔레그램 토큰 등)은 server/.env 에 둠 (GitHub에 올라가지 않음, 예시: .env.example)
+_load_env_file(ENV_FILE)
+
 # ---- 조정 가능한 설정값 ----
 # 낙상 후 사용자 응답을 기다리는 시간(초). 환경변수 FALL_RESPONSE_TIMEOUT으로도 변경 가능
 RESPONSE_TIMEOUT_SECONDS = int(os.environ.get("FALL_RESPONSE_TIMEOUT", "60"))
 MAX_IMAGE_BYTES = 1_000_000  # 디코딩 후 최대 1MB
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 로그인 쿠키 유지 기간(초)
 SERVER_PORT = 8000  # 접속 주소 안내용 (실행 포트와 맞출 것)
+TIMEOUT_CHECK_INTERVAL = 1  # 응답 시간 초과를 검사하는 주기(초)
 
 BASE_DIR = Path(__file__).parent
 IMAGE_DIR = BASE_DIR / "images"
@@ -44,7 +70,30 @@ STATUS_LABELS = {
 }
 LATE_PREFIX = "시간 초과 후 "  # 제한 시간이 지난 뒤 누른 응답의 표시 앞말
 
-app = FastAPI(title="Fall Detection Server")
+# ---- 알림 (규칙: notify_rules.py, 전송: notifiers.py) ----
+dispatcher = NotificationDispatcher(build_notifiers(os.environ))
+
+
+def _timeout_watcher(stop):
+    """Mark overdue events as timed out every second, so timeout alerts go out even when nobody is viewing a page."""
+    while not stop.wait(TIMEOUT_CHECK_INTERVAL):
+        try:
+            with _lock:
+                _refresh_timeouts()
+        except Exception as e:  # 감시 작업이 멈추지 않도록 오류는 기록만 함
+            print(f"[server] 시간 초과 검사 오류: {type(e).__name__}: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    dispatcher.start()
+    stop = threading.Event()
+    threading.Thread(target=_timeout_watcher, args=(stop,), name="timeout-watcher", daemon=True).start()
+    yield
+    stop.set()
+
+
+app = FastAPI(title="Fall Detection Server", lifespan=lifespan)
 
 
 # ---- 접근 토큰 ----
@@ -137,12 +186,26 @@ def _add_history(ev, status, ts=None, note=None):
     ev["history"].append(entry)
 
 
+def _notify(ev, trigger, previous_response=None):
+    """Ask the rules whether this change needs an alert; if so, record it and hand it to the dispatcher."""
+    notification = notify_rules.decide(ev, trigger, RESPONSE_TIMEOUT_SECONDS, previous_response)
+    if notification is None:
+        return
+    # 보내기 전에 먼저 기록해 같은 알림이 두 번 나가지 않게 함
+    ev["last_alert"] = notification.kind
+    ev["alerts"].append({"kind": notification.kind, "time": _now_str(), "channels": dispatcher.channel_names})
+    channels = ", ".join(dispatcher.channel_names) or "채널 없음 - 전송 안 함"
+    print(f"[notify] {notification.kind} 알림 (event {ev['event_id'][:8]}, {channels})")
+    dispatcher.notify(notification)
+
+
 def _apply_timeout(ev, now=None):
     """Switch an unanswered event to timeout once its deadline has passed. Returns True if changed."""
     now = now if now is not None else time.time()
     if ev["status"] == "awaiting_response" and now > ev["deadline"]:
         ev["status"] = "timeout"
         _add_history(ev, "timeout", ev["deadline"])
+        _notify(ev, "timeout")
         return True
     return False
 
@@ -226,6 +289,8 @@ def add_event(event: FallEvent):
             "responded_at": None,
             "response_seconds": None,  # 낙상 감지부터 (마지막) 응답까지 걸린 시간
             "late_response": False,    # 응답 제한 시간이 지난 뒤 응답했는지
+            "last_alert": None,        # 마지막으로 보낸 알림 종류 (중복 알림 방지)
+            "alerts": [],              # 보낸 알림 기록
             "history": [],
         }
         _add_history(ev, "detected", now)
@@ -281,12 +346,14 @@ def respond(event_id: str, body: UserResponse):
         if ev["response"] and ev["response"] != body.response:
             notes.append(f"응답 변경 ({STATUS_LABELS[ev['response']]} → {STATUS_LABELS[body.response]})")
 
+        previous_response = ev["response"]
         ev["status"] = body.response
         ev["response"] = body.response
         ev["responded_at"] = _now_str(now)
         ev["response_seconds"] = round(elapsed, 1)
         ev["late_response"] = late
         _add_history(ev, body.response, now, ", ".join(notes) or None)
+        _notify(ev, body.response, previous_response)
         _save_events()
         return _public(ev)
 

@@ -55,6 +55,14 @@ then install `requirements.txt`. Separate `nvidia-*-cu11` packages are not neede
 
 **Do not upgrade MediaPipe to 1.x:** it removed the `mp.solutions` API that this project uses.
 
+**Telegram alerts (optional):** the server can send a Telegram message when nobody responds
+within the response time limit, when the user asks for help, and a correction when the user
+later answers that they are okay. Copy `server/.env.example` to `server/.env` and fill in
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, then restart the server. `server/.env` is in
+`.gitignore`; never commit it. Without these values the server logs "텔레그램 설정 없음" and
+runs without alerts. Alert rules live in `server/notify_rules.py`, delivery channels in
+`server/notifiers.py`.
+
 ## Usage
 
 ### Dashboard Mode (Recommended)
