@@ -12,9 +12,14 @@ saved in events.json, so they survive a server restart):
   - response "safe" after any alert   -> SAFE_CORRECTION, unless the last alert sent was
                                          already SAFE_CORRECTION
   - response "safe" before any alert  -> nothing
+  - response "safe" after a 119 report (simulation) -> nothing here; escalation.py sends
+                                         the '신고 취소 요청' alert instead
+TIMEOUT and HELP alerts carry the guardian buttons while an auto report is scheduled
+(see escalation.py).
 """
 from datetime import datetime
 
+import escalation
 from notifiers import Notification
 
 TIMEOUT = "timeout"
@@ -29,7 +34,8 @@ def _alert_ts(alert):
     return datetime.strptime(alert["time"], "%Y-%m-%d %H:%M:%S").timestamp()
 
 
-def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=10, now=None, image_path=None):
+def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=10, now=None, image_path=None,
+           guardian_wait=None, residents=()):
     """Return the Notification to send for this trigger, or None.
 
     trigger: "timeout" (deadline passed without a response), "safe" or "help_needed" (button pressed).
@@ -37,6 +43,9 @@ def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=1
     help_cooldown: HELP requests within this many seconds of the previous HELP alert are not sent again.
     now: current timestamp (time.time()).
     image_path: the fall's privacy-processed photo; attached to TIMEOUT and HELP alerts only.
+    guardian_wait: seconds until the auto 119 report (simulation); when set, TIMEOUT and HELP
+                   alerts get the guardian buttons.
+    residents: the resident list; with 2+ residents a '누가 쓰러졌나요?' button row is added.
     """
     # 알림 기능이 생기기 전에 저장된 기록에는 알림을 보내지 않음
     if "last_alert" not in ev:
@@ -52,16 +61,24 @@ def decide(ev, trigger, timeout_seconds, previous_response=None, help_cooldown=1
         kind = None if recent else HELP
         help_number = len(help_alerts) + 1
     elif trigger == "safe":
-        kind = SAFE_CORRECTION if alerts and alerts[-1]["kind"] != SAFE_CORRECTION else None
+        reported = (ev.get("escalation") or {}).get("report")
+        kind = SAFE_CORRECTION if alerts and alerts[-1]["kind"] != SAFE_CORRECTION and not reported else None
     else:
         kind = None
     if kind is None:
         return None
     # 사진은 '응답 없음'과 '도움 요청'에만 붙임 ('정정'에는 붙이지 않음)
     photo = image_path if kind in (TIMEOUT, HELP) else None
+    with_buttons = kind in (TIMEOUT, HELP) and guardian_wait is not None
+    text = _message(kind, ev, timeout_seconds, previous_response, help_number)
+    if with_buttons:
+        text += (f"\n{guardian_wait:.0f}초 안에 아무도 누르지 않으면 119 신고(시뮬레이션)를 해요.\n"
+                 f"'확인했어요' → 자동 신고 중지 / '119 신고해주세요' → 바로 신고(시뮬레이션)")
+        if len(residents) >= 2:
+            text += "\n누가 쓰러졌나요? 아래 이름을 눌러 주세요 (자동 신고 대기는 계속돼요)"
     return Notification(kind=kind, event_id=ev["event_id"], is_test=ev.get("is_test", False),
-                        text=_message(kind, ev, timeout_seconds, previous_response, help_number),
-                        image_path=photo)
+                        text=text, image_path=photo,
+                        buttons=escalation.guardian_buttons(residents) if with_buttons else [])
 
 
 def _message(kind, ev, timeout_seconds, previous_response, help_number=None):

@@ -18,3 +18,10 @@ server/.env
 # Test photos (stock images, not ours to publish) and processed test results
 test_images/
 test_output/
+
+# Telegram button polling position (server runtime state)
+server/telegram_state.json
+server/telegram_state.json.tmp
+
+# Resident profiles with medical info (copy server/residents.example.json)
+server/residents.json

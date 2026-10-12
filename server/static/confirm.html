@@ -129,7 +129,11 @@
     ev.history.forEach(function (h) {
       var li = document.createElement("li");
       li.textContent = h.time.slice(11) + " " + ({detected: "낙상 감지", awaiting_response: "응답 대기",
-        safe: "안전 확인", help_needed: "도움 요청", timeout: "응답 시간 초과"}[h.status] || h.status) +
+        safe: "안전 확인", help_needed: "도움 요청", timeout: "응답 시간 초과",
+        guardian_wait: "보호자 응답 대기", guardian_confirmed: "보호자 확인", reported_119: "119 신고(시뮬레이션)",
+        report_cancel_requested: "신고 후 취소", escalation_cancelled: "예약 신고 취소",
+        fallen_confirmed: "낙상자 확정", fallen_confirmed_after_report: "신고 후 확정(참고용)",
+        report_detail_sent: "상세 보기 전송"}[h.status] || h.status) +
         (h.note ? " (" + h.note + ")" : "");
       hist.appendChild(li);
     });

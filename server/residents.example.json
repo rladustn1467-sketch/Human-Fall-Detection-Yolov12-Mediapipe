@@ -1,0 +1,21 @@
+{
+  "_설명": "예시 파일입니다 (가짜 데이터). 이 파일을 복사해 이름을 residents.json 으로 바꾼 뒤 내용을 고치세요. residents.json 은 GitHub에 올라가지 않습니다. id 는 영문·숫자로 짧게, 정보 갱신일(updated)은 YYYY-MM-DD 형식으로 적으세요. 거주자가 1명이면 두 번째 묶음을 지우세요.",
+  "residents": [
+    {
+      "id": "r1",
+      "alias": "예시할머니",
+      "age": "80",
+      "conditions": "예시 지병 A",
+      "medications": "예시 약 A",
+      "updated": "2026-01-01"
+    },
+    {
+      "id": "r2",
+      "alias": "예시할아버지",
+      "age": "83",
+      "conditions": "예시 지병 B",
+      "medications": "예시 약 B",
+      "updated": "2026-01-01"
+    }
+  ]
+}

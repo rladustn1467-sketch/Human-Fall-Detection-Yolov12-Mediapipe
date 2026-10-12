@@ -66,6 +66,33 @@ alerts include the privacy-processed photo (blurred background, solid silhouette
 has one; if the photo cannot be sent, the text is sent alone. Alert rules live in
 `server/notify_rules.py`, delivery channels in `server/notifiers.py`.
 
+**Guardian escalation and 119 report (simulation only):** "no response" and "help" alerts carry
+two Telegram buttons, "확인했어요" (stop the automatic report) and "119 신고해주세요" (report now).
+If no guardian presses a button within `GUARDIAN_WAIT_AFTER_TIMEOUT` seconds (default 180) after a
+no-response alert, or `GUARDIAN_WAIT_AFTER_HELP` seconds (default 90) after a help alert, the
+server records a **simulated** 119 report and tells the guardians, with the photo, the fall time,
+the state and `REPORT_ADDRESS` / `REPORT_CONTACT` from `server/.env`. **No real call or report is
+ever made.** If the person answers "괜찮아요" before the report, the scheduled report is cancelled;
+after the report, guardians get a "cancel request" alert. Several guardians can be listed in
+`TELEGRAM_CHAT_ID` separated by commas; one "확인했어요" is enough. Button presses are received
+with Telegram `getUpdates` polling (no public address needed), and only presses from listed chat
+IDs are accepted. Run only one server per bot token. Rules live in `server/escalation.py`.
+
+**Residents and report contents:** resident profiles (alias, age, conditions, medications, update
+date) go in `server/residents.json` (copy `server/residents.example.json`; the real file is in
+`.gitignore`). With one resident the fallen person is set automatically; with two or more, guardians
+pick "누가 쓰러졌나요?" in Telegram or on the record page (this never stops the automatic report
+wait). The simulated report includes the address, door codes (`DOOR_CODE`, `BUILDING_DOOR_CODE`),
+guardian contact and the fallen person's medical info; if nobody was picked, medical info is left out
+(`REPORT_UNCONFIRMED_MEDICAL=all` includes everyone). Telegram only lists the item names; the values
+are shown only on the record page `/reports/<event id>` and are never stored in `events.json`, logs or
+messages. `REPORT_PAGE_ACCESS=local` limits that page to this PC. Decided in `server/report119.py`.
+The report alert has a "📄 상세 보기" button: a registered guardian who presses it gets the same
+details as the report page as a reply in their own chat (useful when the phone cannot reach the
+server PC). Turn it off with `SHOW_DETAIL_IN_TELEGRAM=false` before using real information, since
+messages stay on Telegram's servers and the phone. A web link is added only when `PUBLIC_BASE_URL`
+is set.
+
 **Privacy:** only the processed silhouette image leaves the dashboard; original camera frames
 are never sent to the server or saved (the raw fall snapshot option is disabled).
 

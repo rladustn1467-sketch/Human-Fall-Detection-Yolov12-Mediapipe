@@ -18,8 +18,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+import escalation
 import notify_rules
-from notifiers import NotificationDispatcher, build_notifiers
+import report119
+import residents as residents_mod
+from notifiers import ButtonResult, NotificationDispatcher, build_notifiers, build_receivers
 
 ENV_FILE = Path(__file__).parent / ".env"
 
@@ -47,6 +50,31 @@ _load_env_file(ENV_FILE)
 RESPONSE_TIMEOUT_SECONDS = int(os.environ.get("FALL_RESPONSE_TIMEOUT", "60"))
 # 직전 '도움 요청' 알림 후 이 시간(초) 안에 온 도움 요청은 중복(두 번 누름·재시도)으로 보고 알림을 보내지 않음
 HELP_ALERT_COOLDOWN = float(os.environ.get("HELP_ALERT_COOLDOWN", "10"))
+# 보호자 대기 -> 119 신고(시뮬레이션). 실제 119에는 절대 연락하지 않음 (규칙: escalation.py)
+ESCALATION = escalation.Settings(
+    # 무응답 알림 후 보호자가 아무 버튼도 누르지 않으면 자동 신고하기까지의 시간(초)
+    wait_after_timeout=float(os.environ.get("GUARDIAN_WAIT_AFTER_TIMEOUT", "180")),
+    # 본인 '도움이 필요해요' 알림 후 보호자 대기 시간(초)
+    wait_after_help=float(os.environ.get("GUARDIAN_WAIT_AFTER_HELP", "90")),
+    # 낙상자 미확인일 때 의료 정보: exclude(제외, 기본) / all(거주자 전원 포함)
+    unconfirmed_policy="all" if os.environ.get("REPORT_UNCONFIRMED_MEDICAL", "").strip().lower() == "all" else "exclude",
+    # 거주자 정보 갱신일이 이 일수보다 오래되면 '정보가 오래됐을 수 있음'
+    stale_days=int(os.environ.get("PROFILE_STALE_DAYS", "180")),
+)
+# 신고(시뮬레이션)의 집 공통 정보 (비어 있으면 '미등록'). 웹페이지 신고 기록에만 표시, 저장·전송하지 않음
+HOME_INFO = report119.HomeInfo(
+    address=os.environ.get("REPORT_ADDRESS", "").strip(),
+    door_code=os.environ.get("DOOR_CODE", "").strip(),
+    building_door_code=os.environ.get("BUILDING_DOOR_CODE", "").strip(),
+    contact=os.environ.get("REPORT_CONTACT", "").strip(),
+)
+# 신고 기록 상세(주소·현관 비번·의료 정보) 페이지 접근 범위: anywhere(토큰만 있으면 어디서나, 기본) / local(이 PC에서만)
+REPORT_PAGE_LOCAL_ONLY = os.environ.get("REPORT_PAGE_ACCESS", "").strip().lower() == "local"
+# 신고 완료 알림의 '상세 보기' 버튼: 누른 보호자의 텔레그램 대화창에 신고 상세(주소·현관 비번·의료 정보)를 답장.
+# 진짜 정보를 넣을 때는 false 로 끄세요 (텔레그램에 보낸 내용은 텔레그램 서버와 휴대폰에 남습니다)
+ESCALATION.show_detail = os.environ.get("SHOW_DETAIL_IN_TELEGRAM", "true").strip().lower() not in ("false", "0", "off", "no")
+# 휴대폰에서 열리는 서버 주소 (예: https://example.com). 있을 때만 신고 완료 알림에 웹 링크를 붙임
+ESCALATION.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 MAX_IMAGE_BYTES = 1_000_000  # 디코딩 후 최대 1MB
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 로그인 쿠키 유지 기간(초)
 SERVER_PORT = 8000  # 접속 주소 안내용 (실행 포트와 맞출 것)
@@ -56,6 +84,8 @@ BASE_DIR = Path(__file__).parent
 IMAGE_DIR = BASE_DIR / "images"
 EVENTS_FILE = BASE_DIR / "events.json"
 TOKEN_FILE = BASE_DIR / "access_token.txt"
+TELEGRAM_STATE_FILE = BASE_DIR / "telegram_state.json"  # 마지막으로 처리한 텔레그램 버튼 번호
+RESIDENTS_FILE = BASE_DIR / "residents.json"  # 거주자 프로필 (의료 정보 포함, GitHub에 올리지 않음)
 CONFIRM_PAGE = BASE_DIR / "static" / "confirm.html"
 IMAGE_DIR.mkdir(exist_ok=True)
 
@@ -69,6 +99,15 @@ STATUS_LABELS = {
     "safe": "안전 확인",
     "help_needed": "도움 요청",
     "timeout": "응답 시간 초과",
+    # 보호자·119 흐름 (history에만 기록)
+    "guardian_wait": "보호자 응답 대기",
+    "guardian_confirmed": "보호자 확인",
+    "reported_119": "119 신고(시뮬레이션)",
+    "report_cancel_requested": "신고 후 취소",
+    "escalation_cancelled": "예약 신고 취소",
+    "fallen_confirmed": "낙상자 확정",
+    "fallen_confirmed_after_report": "신고 후 확정(참고용)",
+    "report_detail_sent": "상세 보기 전송",
 }
 LATE_PREFIX = "시간 초과 후 "  # 제한 시간이 지난 뒤 누른 응답의 표시 앞말
 
@@ -77,7 +116,7 @@ dispatcher = NotificationDispatcher(build_notifiers(os.environ))
 
 
 def _timeout_watcher(stop):
-    """Mark overdue events as timed out every second, so timeout alerts go out even when nobody is viewing a page."""
+    """Every second: mark overdue events as timed out and run due auto reports, even when nobody is viewing a page."""
     while not stop.wait(TIMEOUT_CHECK_INTERVAL):
         try:
             with _lock:
@@ -89,6 +128,9 @@ def _timeout_watcher(stop):
 @asynccontextmanager
 async def lifespan(app):
     dispatcher.start()
+    # 보호자 버튼 수신 (텔레그램 getUpdates 폴링)
+    for receiver in build_receivers(os.environ, str(TELEGRAM_STATE_FILE), _on_guardian_action):
+        receiver.start()
     stop = threading.Event()
     threading.Thread(target=_timeout_watcher, args=(stop,), name="timeout-watcher", daemon=True).start()
     yield
@@ -128,6 +170,9 @@ print(f"  이 컴퓨터 : http://127.0.0.1:{SERVER_PORT}/login?token={ACCESS_TOK
 print(f"  같은 Wi-Fi: http://{_lan_ip()}:{SERVER_PORT}/login?token={ACCESS_TOKEN}")
 print("  (토큰은 server/access_token.txt 에 저장되어 있습니다. 외부에 공유하지 마세요)")
 print("=" * 60)
+print(f"[report] 신고 기록 상세 페이지: {'이 PC에서만' if REPORT_PAGE_LOCAL_ONLY else '토큰이 있으면 어디서나'} (REPORT_PAGE_ACCESS)")
+print(f"[report] 텔레그램 '상세 보기' 버튼: {'켜짐' if ESCALATION.show_detail else '꺼짐'} (SHOW_DETAIL_IN_TELEGRAM)"
+      f" / 웹 링크: {ESCALATION.public_base_url or '없음'} (PUBLIC_BASE_URL)")
 
 
 def _is_authorized(request: Request):
@@ -188,17 +233,30 @@ def _add_history(ev, status, ts=None, note=None):
     ev["history"].append(entry)
 
 
+def _residents():
+    # 필요할 때마다 다시 읽음 (파일을 고친 뒤 서버를 재시작하지 않아도 됨)
+    return residents_mod.load(RESIDENTS_FILE)
+
+
+def _image_path(ev):
+    path = IMAGE_DIR / f"{ev['event_id']}.jpg"
+    return str(path) if ev.get("image") and path.is_file() else None
+
+
 def _notify(ev, trigger, previous_response=None):
     """Ask the rules whether this change needs an alert; if so, record it and hand it to the dispatcher."""
     now = time.time()
-    image_path = IMAGE_DIR / f"{ev['event_id']}.jpg"
     notification = notify_rules.decide(ev, trigger, RESPONSE_TIMEOUT_SECONDS, previous_response,
-                                       help_cooldown=HELP_ALERT_COOLDOWN, now=now,
-                                       image_path=str(image_path) if ev.get("image") and image_path.is_file() else None)
+                                       help_cooldown=HELP_ALERT_COOLDOWN, now=now, image_path=_image_path(ev),
+                                       guardian_wait=escalation.remaining(ev, now), residents=_residents())
     if notification is None:
         if trigger == "help_needed":
             print(f"[notify] help 알림 생략 - 직전 도움 요청 알림 후 {HELP_ALERT_COOLDOWN:g}초 이내 (event {ev['event_id'][:8]})")
         return
+    _send(ev, notification, now)
+
+
+def _send(ev, notification, now):
     # 보내기 전에 먼저 기록해 같은 알림이 두 번 나가지 않게 함 (규칙은 이 기록으로 횟수·간격을 판단)
     ev["last_alert"] = notification.kind
     ev["alerts"].append({"kind": notification.kind, "time": _now_str(now), "ts": now,
@@ -209,12 +267,75 @@ def _notify(ev, trigger, previous_response=None):
     dispatcher.notify(notification)
 
 
+def _apply_steps(ev, steps, now):
+    """Apply the result of an escalation rule: add history entries and send its alerts. Returns True if changed."""
+    for status, note in steps.history:
+        _add_history(ev, status, now, note)
+    for notification in steps.notifications:
+        _send(ev, notification, now)
+    return bool(steps.history or steps.notifications)
+
+
+def _report_view(ev):
+    """(report, contents, details, after-report note) for the report page and the Telegram detail reply.
+
+    The values are filled in now from residents.json and .env; the result is never stored or logged.
+    Returns None when the fall has no report in the current format.
+    """
+    report = (ev.get("escalation") or {}).get("report")
+    if not report or "contents" not in report:
+        return None
+    fallen = ev["escalation"].get("fallen")
+    after = escalation.describe_fallen(ev) if fallen and fallen["after_report"] else ""
+    detail = report119.details(report["contents"], _residents(), HOME_INFO, ESCALATION.stale_days)
+    return report, report["contents"], detail, after
+
+
+def _detail_reply(ev, actor, now):
+    """'상세 보기' button: reply with the report details to the presser's chat only."""
+    if not ESCALATION.show_detail:
+        return ButtonResult(reply="상세 보기 기능이 꺼져 있어요.")
+    view = _report_view(ev)
+    if view is None:
+        return ButtonResult(reply="이 낙상에는 상세 신고 기록이 없어요.")
+    report, contents, detail, after = view
+    how = f"보호자 요청 ({report['by']})" if report["by"] else "보호자 무응답으로 자동 신고"
+    header = ("[테스트] " if ev.get("is_test") else "") + "📄 119 신고(시뮬레이션) 상세\n" \
+        "⚠️ 시뮬레이션입니다. 실제 119에는 연락하지 않았습니다.\n" \
+        f"낙상 감지: {ev['time']} / 신고: {report['time']}\n" \
+        f"상태: {escalation.REASON_LABELS.get(report['reason'], report['reason'])} / 신고 경위: {how}"
+    # 누가 언제 상세를 받았는지만 기록 (내용은 저장하지 않음)
+    _add_history(ev, "report_detail_sent", now, actor.get("name") or str(actor.get("id")))
+    _save_events()
+    return ButtonResult(reply="상세 내용을 이 대화창에 보냈어요.",
+                        message=report119.format_text(header, contents, detail, after))
+
+
+def _on_guardian_action(event_id, action, actor):
+    """A registered guardian pressed a button (called by a receiver thread). Returns the reply to show."""
+    if not EVENT_ID_RE.match(event_id or ""):
+        return "알 수 없는 버튼이에요."
+    with _lock:
+        ev = events.get(event_id)
+        if not ev:
+            return "낙상 기록을 찾을 수 없어요."
+        now = time.time()
+        if action == escalation.DETAIL:
+            return _detail_reply(ev, actor, now)
+        steps = escalation.on_guardian(ev, action, actor, now, ESCALATION, _residents(), _image_path(ev))
+        if _apply_steps(ev, steps, now):
+            _save_events()
+        return steps.reply
+
+
 def _apply_timeout(ev, now=None):
     """Switch an unanswered event to timeout once its deadline has passed. Returns True if changed."""
     now = now if now is not None else time.time()
     if ev["status"] == "awaiting_response" and now > ev["deadline"]:
         ev["status"] = "timeout"
         _add_history(ev, "timeout", ev["deadline"])
+        # 보호자 대기를 먼저 시작해야 알림에 버튼과 남은 시간이 붙음
+        _apply_steps(ev, escalation.start_wait(ev, "timeout", now, ESCALATION), now)
         _notify(ev, "timeout")
         return True
     return False
@@ -222,8 +343,12 @@ def _apply_timeout(ev, now=None):
 
 def _refresh_timeouts():
     changed = False
+    now = time.time()
     for ev in events.values():
-        changed |= _apply_timeout(ev)
+        changed |= _apply_timeout(ev, now)
+        # 보호자 대기 시간이 끝났으면 자동 119 신고(시뮬레이션)
+        if escalation.report_due(ev, now):
+            changed |= _apply_steps(ev, escalation.on_tick(ev, now, ESCALATION, _residents(), _image_path(ev)), now)
     if changed:
         _save_events()
 
@@ -241,8 +366,14 @@ def _public(ev):
     out["status_label"] = STATUS_LABELS.get(ev["status"], ev["status"])
     if ev.get("late_response") and ev["status"] in ("safe", "help_needed"):
         out["status_label"] = LATE_PREFIX + out["status_label"]
-    out["remaining_seconds"] = (max(0, int(ev["deadline"] - time.time()))
+    now = time.time()
+    out["remaining_seconds"] = (max(0, int(ev["deadline"] - now))
                                 if ev["status"] == "awaiting_response" else 0)
+    # 자동 119 신고(시뮬레이션) 예정 시각 (대기 중이 아니면 None). 대시보드 카운트다운용
+    wait = escalation.remaining(ev, now)
+    out["report_at"] = ev["escalation"]["report_at"] if wait is not None else None
+    out["report_in_seconds"] = None if wait is None else int(wait)
+    out["escalation_label"] = escalation.describe(ev, now)
     return out
 
 
@@ -301,6 +432,7 @@ def add_event(event: FallEvent):
             "late_response": False,    # 응답 제한 시간이 지난 뒤 응답했는지
             "last_alert": None,        # 마지막으로 보낸 알림 종류 (중복 알림 방지)
             "alerts": [],              # 보낸 알림 기록
+            "escalation": escalation.new_state(),  # 보호자 대기 -> 119 신고(시뮬레이션) 상태
             "history": [],
         }
         _add_history(ev, "detected", now)
@@ -314,6 +446,10 @@ def add_event(event: FallEvent):
 
         ev["status"] = "awaiting_response"
         _add_history(ev, "awaiting_response", now)
+        # 거주자가 1명이면 그 사람으로 낙상자 자동 확정 (얼굴 인식 등 식별 기능은 쓰지 않음)
+        people = _residents()
+        if len(people) == 1:
+            _apply_steps(ev, escalation.select_fallen(ev, people[0], None, now, how="auto"), now)
         events[event_id] = ev
         _save_events()
     return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "count": len(events)}
@@ -363,6 +499,12 @@ def respond(event_id: str, body: UserResponse):
         ev["response_seconds"] = round(elapsed, 1)
         ev["late_response"] = late
         _add_history(ev, body.response, now, ", ".join(notes) or None)
+        if body.response == "help_needed":
+            # 보호자 대기를 먼저 시작(또는 단축)해야 알림에 버튼과 남은 시간이 붙음
+            _apply_steps(ev, escalation.start_wait(ev, "help_needed", now, ESCALATION), now)
+        else:
+            # 예약된 신고 취소, 이미 신고했으면 보호자에게 신고 취소 요청
+            _apply_steps(ev, escalation.on_person_safe(ev, now, ESCALATION), now)
         _notify(ev, body.response, previous_response)
         _save_events()
         return _public(ev)
@@ -404,6 +546,22 @@ def _image_cell(e):
             f'<img src="{src}" width="160" loading="lazy" alt="실루엣 이미지"></a></td>')
 
 
+def _guardian_cell(e, people):
+    """'보호자·119' cell: escalation state, who fell, resident buttons and the report link."""
+    parts = [html.escape(e["escalation_label"])]
+    if escalation.enabled(e):
+        parts.append(html.escape(escalation.describe_fallen(e)))
+        if len(people) >= 2:
+            eid = html.escape(e["event_id"])
+            buttons = "".join(
+                f'<form method="post" action="/events/{eid}/fallen/{html.escape(r["id"])}" style="display:inline">'
+                f'<button type="submit">🙋 {html.escape(r["alias"])}</button></form> ' for r in people)
+            parts.append(f"<small>누가 쓰러졌나요?</small> {buttons}")
+        if e["escalation"].get("report"):
+            parts.append(f'<a href="/reports/{html.escape(e["event_id"])}">신고 기록 보기</a>')
+    return "<td>" + "<br>".join(parts) + "</td>"
+
+
 def _seconds_cell(e):
     seconds = e.get("response_seconds")
     return "<td>-</td>" if seconds is None else f"<td>{seconds:.1f}</td>"
@@ -417,6 +575,7 @@ def home(request: Request):
     with _lock:
         _refresh_timeouts()
         rows_data = [_public(ev) for ev in reversed(list(events.values()))]
+    people = _residents()
     rows = "".join(
         f"<tr><td>{e['time']}</td>"
         f"<td>{html.escape(e['device_id'])}</td>"
@@ -425,6 +584,7 @@ def home(request: Request):
         f"<td class='st-{e['status']}{' late' if e.get('late_response') else ''}'>{e['status_label']}</td>"
         f"<td>{e['responded_at'] or '-'}</td>"
         f"{_seconds_cell(e)}"
+        f"{_guardian_cell(e, people)}"
         f"{_image_cell(e)}</tr>"
         for e in rows_data
     )
@@ -447,13 +607,94 @@ def home(request: Request):
     <body style="font-family: sans-serif; padding: 16px">
         <h1>낙상 기록</h1>
         <p>총 {len(rows_data)}건 (5초마다 자동 새로고침) · <a href="/confirm">사용자 확인 화면</a>
-           · 응답 제한 시간 {RESPONSE_TIMEOUT_SECONDS}초</p>
+           · 응답 제한 시간 {RESPONSE_TIMEOUT_SECONDS}초
+           · 보호자 대기 {ESCALATION.wait_after_timeout:g}초(무응답) / {ESCALATION.wait_after_help:g}초(도움 요청)
+           · 119 신고는 <b>시뮬레이션</b>입니다 (실제 신고 안 함) · 거주자 {len(people)}명</p>
         <div class="table-wrap">
         <table border="1" cellpadding="8" style="border-collapse: collapse">
-            <tr><th>시간</th><th>기기</th><th>유형</th><th>구분</th><th>상태</th><th>응답 시각</th><th>응답 소요(초)</th><th>이미지</th></tr>
+            <tr><th>시간</th><th>기기</th><th>유형</th><th>구분</th><th>상태</th><th>응답 시각</th><th>응답 소요(초)</th><th>보호자·119</th><th>이미지</th></tr>
             {rows}
         </table>
         </div>
     </body>
     </html>
     """
+
+
+@app.post("/events/{event_id}/fallen/{resident_id}")
+def select_fallen_web(event_id: str, resident_id: str, request: Request):
+    """Record page: pick who fell (same rule as the Telegram '누가 쓰러졌나요?' buttons)."""
+    denied = _page_or_401(request)
+    if denied:
+        return denied
+    with _lock:
+        ev = events.get(event_id)
+        resident = residents_mod.find(_residents(), resident_id)
+        if ev and resident:
+            now = time.time()
+            if _apply_steps(ev, escalation.select_fallen(ev, resident, {"name": "웹페이지"}, now, how="web"), now):
+                _save_events()
+    return RedirectResponse("/", status_code=303)
+
+
+def _report_page_denied(request: Request):
+    denied = _page_or_401(request)
+    if denied:
+        return denied
+    host = request.client.host if request.client else ""
+    if REPORT_PAGE_LOCAL_ONLY and host not in ("127.0.0.1", "::1", "localhost"):
+        return HTMLResponse("<h2>신고 기록 상세는 이 PC에서만 볼 수 있도록 설정되어 있습니다</h2>"
+                            "<p>설정: server/.env 의 REPORT_PAGE_ACCESS=local</p>", status_code=403)
+    return None
+
+
+@app.get("/reports/{event_id}", response_class=HTMLResponse)
+def report_page(event_id: str, request: Request):
+    """119 report (simulation) details. Values are filled in now from residents.json and .env; never stored."""
+    denied = _report_page_denied(request)
+    if denied:
+        return denied
+    with _lock:
+        ev = events.get(event_id)
+        view = _report_view(ev) if ev else None
+    if view is None:
+        return HTMLResponse("<h2>이 낙상에는 신고(시뮬레이션) 기록이 없습니다</h2><p><a href='/'>기록으로</a></p>",
+                            status_code=404, headers={"Cache-Control": "no-store"})
+    report, c, d, fallen_now = view
+    esc = lambda v: html.escape(str(v))  # noqa: E731
+    how = f"보호자 요청 ({report['by']})" if report["by"] else "보호자 무응답으로 자동 신고"
+    people_html = ""
+    for p in d["people"]:
+        if p["missing"]:
+            people_html += f"<li>거주자 ID {esc(p['id'])}: 현재 거주자 파일에 없음</li>"
+            continue
+        notes = []
+        if p["stale"]:
+            notes.append("⚠️ 정보가 오래됐을 수 있음")
+        if p["changed_since_report"]:
+            notes.append("ℹ️ 신고 뒤 정보가 수정됨 (아래는 현재 정보)")
+        people_html += (f"<li><b>{esc(p['alias'])}</b> {' · '.join(notes)}<br>"
+                        f"나이: {esc(p['age'])} · 지병: {esc(p['conditions'])} · 복용약: {esc(p['medications'])}"
+                        f" · 정보 갱신일: {esc(p['updated'])}</li>")
+    if not people_html:
+        people_html = "<li>의료 정보 제외 (낙상자 미확인)</li>"
+    after = f"<p>{esc(fallen_now)}</p>" if fallen_now else ""
+    body = f"""
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex"><title>119 신고(시뮬레이션) 기록</title></head>
+    <body style="font-family: sans-serif; padding: 16px; max-width: 720px">
+    <p style="background:#fff4cc; padding:8px"><b>⚠️ 시뮬레이션입니다. 실제 119에는 연락하지 않았습니다.</b></p>
+    <h2>119 신고(시뮬레이션) 기록</h2>
+    <p>낙상 감지: {esc(ev['time'])} · 신고: {esc(report['time'])} · 상태: {esc(escalation.REASON_LABELS.get(report['reason'], report['reason']))}
+       · 신고 경위: {esc(how)}</p>
+    <p><b>{esc(report119.fallen_line(c))}</b></p>{after}
+    <h3>집 정보</h3>
+    <ul><li>주소: {esc(d['address'])}</li>
+        <li>현관 비번: {esc(d['door_code'])} · 공동현관 비번: {esc(d['building_door_code'])}</li>
+        <li>보호자 연락처: {esc(d['contact'])}</li></ul>
+    <h3>거주자 정보</h3><ul>{people_html}</ul>
+    <p><small>전달 항목: {esc(', '.join(c['items']))}. 이 페이지의 값은 저장된 것이 아니라 현재 등록된 정보로 표시합니다.</small></p>
+    <p><a href="/">기록으로</a></p>
+    </body></html>"""
+    # 브라우저·중간 서버에 저장되지 않게 함
+    return HTMLResponse(body, headers={"Cache-Control": "no-store"})
