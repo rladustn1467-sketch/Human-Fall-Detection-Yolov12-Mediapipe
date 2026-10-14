@@ -30,4 +30,5 @@
   --gap: 20px;
   --page-padding: 20px;
   --nav-height: 84px;           /* 하단 메뉴 높이 */
+  --nav-font-size: 18px;        /* 하단 메뉴 글자 (메뉴 5개가 휴대폰 너비에 들어가도록) */
 }

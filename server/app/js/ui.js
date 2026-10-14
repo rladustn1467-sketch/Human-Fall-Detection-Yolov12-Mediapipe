@@ -18,3 +18,10 @@ export function button(label, hint, { className = "", onClick } = {}) {
   if (onClick) node.addEventListener("click", onClick);
   return node;
 }
+
+// 항목-값 목록: statusList([["감지 모드", "확인 불가"], ...])
+export function statusList(rows) {
+  const list = el("dl", { className: "status-list" });
+  for (const [label, value] of rows) list.append(el("dt", {}, label), el("dd", {}, value));
+  return list;
+}

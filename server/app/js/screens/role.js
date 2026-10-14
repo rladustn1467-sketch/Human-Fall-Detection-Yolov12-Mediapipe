@@ -19,6 +19,6 @@ export function render(container, { go }) {
 
   function choose(role) {
     setRole(role);
-    go(role === ROLES.GUARDIAN ? "guardian" : "self");
+    go(role === ROLES.GUARDIAN ? "guardian" : "home");
   }
 }

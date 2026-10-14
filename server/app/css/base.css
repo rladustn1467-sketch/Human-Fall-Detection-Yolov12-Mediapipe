@@ -60,6 +60,7 @@ p { margin: 0 0 var(--gap); }
 .big-button.safe { background: var(--color-safe); border-color: var(--color-safe); color: var(--color-on-strong); }
 .big-button.help { background: var(--color-help); border-color: var(--color-help); color: var(--color-on-strong); }
 .big-button:disabled { opacity: 0.55; cursor: default; }
+.big-button[hidden] { display: none; }
 
 /* 키보드로 이동할 때 어디에 있는지 잘 보이게 */
 :focus-visible { outline: 5px solid var(--color-focus); outline-offset: 3px; }
@@ -94,12 +95,76 @@ p { margin: 0 0 var(--gap); }
 .bottom-nav[hidden] { display: none; }
 .bottom-nav a {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0 4px;
   color: var(--color-text);
-  font-size: var(--font-size-large);
+  font-size: var(--nav-font-size);
   font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  word-break: keep-all;
   text-decoration: none;
 }
 .bottom-nav a[aria-current="page"] { background: var(--color-primary); color: var(--color-on-primary); }
+
+h2 { font-size: var(--font-size-large); margin: calc(var(--gap) * 1.5) 0 var(--gap); }
+
+/* 항목-값 목록 (ui.js statusList) */
+.status-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0 0 var(--gap);
+}
+.status-list dt { font-weight: 700; }
+.status-list dd { margin: 0; overflow-wrap: anywhere; }
+
+.content-list { margin: 0 0 var(--gap); padding-left: 1.4em; }
+.event-item .status-list { margin-bottom: 0; }
+
+/* 앱 전체 안내 줄 (로그인 필요, 서버 연결 끊김) */
+.global-notice { max-width: 640px; margin: var(--page-padding) auto 0; }
+.global-notice[hidden] { display: none; }
+
+/* 사고 대응 레이어: 모든 메뉴 위에 뜨는 낙상 확인 화면 (js/incident/) */
+.incident-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  overflow-y: auto;
+  background: var(--color-bg);
+  outline: none;
+}
+.incident-layer[hidden] { display: none; }
+.incident-inner { max-width: 640px; margin: 0 auto; padding: var(--page-padding); }
+.incident-title { font-size: var(--font-size-large); font-weight: 800; margin: 0 0 var(--gap); }
+body.incident-open { overflow: hidden; }
+
+/* 사고 대응 레이어를 잠시 숨겼을 때 위쪽에 남는 알림 줄 */
+.incident-banner {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px var(--page-padding);
+  background: var(--color-help-bg);
+  border-bottom: 3px solid var(--color-help);
+  font-weight: 800;
+}
+.incident-banner[hidden] { display: none; }
+.incident-banner button {
+  flex: none;
+  padding: 8px 20px;
+  border: 3px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}

@@ -6,4 +6,7 @@ export const CONFIG = {
   activeMinutes: 30,
   // 본인 화면: '괜찮아요'를 누른 뒤 확인 문구를 보여 주는 시간(분)
   showAnsweredMinutes: 3,
+  // 낙상 감지 메뉴: 기록 목록을 다시 가져오는 간격(초)과 가져올 개수
+  historyPollSeconds: 10,
+  historyLimit: 50,
 };

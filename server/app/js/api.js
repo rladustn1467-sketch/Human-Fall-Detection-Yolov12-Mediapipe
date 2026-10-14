@@ -26,4 +26,6 @@ export const api = {
   // 본인 응답: "safe"(괜찮아요) 또는 "help_needed"(도움이 필요해요)
   respond: (eventId, response) =>
     request("POST", `/api/events/${encodeURIComponent(eventId)}/response`, { response }),
+  // 웹앱 콘텐츠 파일 (예: "content/prevention/index.json", /app/ 기준 상대 주소)
+  content: (path) => request("GET", path),
 };

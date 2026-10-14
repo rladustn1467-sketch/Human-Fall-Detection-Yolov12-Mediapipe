@@ -13,10 +13,16 @@
   <link rel="stylesheet" href="css/base.css">
 </head>
 <body>
-  <!-- 화면(본인/보호자/설정/역할 선택)이 이 안에 그려집니다 (js/screens/) -->
+  <!-- 사고 대응 레이어를 잠시 숨겼을 때 보이는 알림 줄 (js/incident/layer.js) -->
+  <div id="incident-banner" class="incident-banner" role="status" hidden></div>
+  <!-- 앱 전체 안내 줄: 로그인 필요, 서버 연결 끊김 (js/app.js) -->
+  <div id="global-notice" class="notice global-notice" role="alert" hidden></div>
+  <!-- 화면(홈/낙상 예방/낙상 감지/생활 관리/설정/역할 선택 등)이 이 안에 그려집니다 (js/screens/) -->
   <main id="screen" class="screen" tabindex="-1" aria-live="polite"></main>
   <!-- 하단 메뉴 (js/router.js) -->
   <nav id="nav" class="bottom-nav" aria-label="화면 이동" hidden></nav>
+  <!-- 사고 대응 레이어: 확인이 필요한 낙상이 있으면 어느 메뉴에서든 맨 위에 뜸 (js/incident/) -->
+  <div id="incident" class="incident-layer" role="dialog" aria-modal="true" aria-labelledby="incident-title" tabindex="-1" hidden></div>
   <!-- 앱 시작점 -->
   <script type="module" src="js/app.js"></script>
 </body>
