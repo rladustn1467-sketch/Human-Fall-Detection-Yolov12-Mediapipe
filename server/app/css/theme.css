@@ -1,0 +1,33 @@
+/*
+ * 앱 전체의 색과 크기 (여기만 고치면 모든 화면이 바뀝니다)
+ * 고령자를 위해: 큰 글씨, 큰 버튼, 높은 대비
+ */
+:root {
+  /* 글자 크기 */
+  --font-size-base: 20px;    /* 기본 글자 (18px 이상) */
+  --font-size-large: 28px;   /* 제목, 안내 문장 */
+  --font-size-huge: 40px;    /* 가장 중요한 질문 */
+  --line-height: 1.5;
+
+  /* 색 (흰 바탕에 짙은 글자 - 높은 대비) */
+  --color-bg: #ffffff;
+  --color-text: #111111;
+  --color-muted: #3d3d3d;       /* 보조 설명 (흰 바탕에서도 충분히 진함) */
+  --color-border: #1f1f1f;
+  --color-primary: #0b57d0;     /* 기본 버튼, 선택된 메뉴 */
+  --color-on-primary: #ffffff;
+  --color-safe: #0a6b2b;        /* 괜찮아요 */
+  --color-help: #b3261e;        /* 도움이 필요해요 */
+  --color-on-strong: #ffffff;   /* 진한 버튼 위의 글자 */
+  --color-safe-bg: #e3f4e8;     /* 괜찮음 상태 배경 */
+  --color-alert-bg: #fff1c2;    /* 질문 상태 배경 */
+  --color-help-bg: #fde3e1;     /* 도움 요청 상태 배경 */
+  --color-focus: #ff8f00;       /* 키보드로 이동할 때 보이는 테두리 */
+
+  /* 크기 */
+  --button-height: 88px;        /* 큰 버튼 높이 (손가락으로 누르기 쉽게) */
+  --radius: 18px;
+  --gap: 20px;
+  --page-padding: 20px;
+  --nav-height: 84px;           /* 하단 메뉴 높이 */
+}

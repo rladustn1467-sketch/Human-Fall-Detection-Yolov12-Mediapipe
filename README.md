@@ -93,6 +93,13 @@ server PC). Turn it off with `SHOW_DETAIL_IN_TELEGRAM=false` before using real i
 messages stay on Telegram's servers and the phone. A web link is added only when `PUBLIC_BASE_URL`
 is set.
 
+**User web app (`/app`, work in progress):** a large-text app for the person and guardians, served by
+the same server from `server/app/` (plain HTML/CSS/JS, no build step). Log in once with
+`/login?token=...&next=/app`; the device then remembers whether it is the person's or a guardian's.
+The person's screen shows the current fall with big "괜찮아요" / "도움이 필요해요" buttons and the
+remaining time; the guardian screen is a placeholder for now. Colors and sizes are in
+`server/app/css/theme.css`, the polling interval in `server/app/js/config.js`.
+
 **Privacy:** only the processed silhouette image leaves the dashboard; original camera frames
 are never sent to the server or saved (the raw fall snapshot option is disabled).
 

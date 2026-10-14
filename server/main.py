@@ -521,13 +521,57 @@ def get_image(event_id: str):
 
 
 # ---- 페이지 ----
+# 로그인 뒤 이동할 수 있는 주소 (그 밖의 값은 무시하고 /confirm 으로)
+LOGIN_NEXT_PAGES = {"/confirm": "/confirm", "/app": "/app/", "/app/": "/app/"}
+
+
 @app.get("/login")
-def login(token: str = ""):
+def login(token: str = "", next: str = "/confirm"):
     if not secrets.compare_digest(token.encode(), ACCESS_TOKEN.encode()):
         return HTMLResponse(UNAUTHORIZED_PAGE, status_code=401)
-    response = RedirectResponse("/confirm", status_code=303)
+    response = RedirectResponse(LOGIN_NEXT_PAGES.get(next, "/confirm"), status_code=303)
     response.set_cookie(COOKIE_NAME, ACCESS_TOKEN, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
     return response
+
+
+# ---- 사용자용 앱 (/app, 파일은 server/app/) ----
+APP_DIR = (BASE_DIR / "app").resolve()
+# 확장자별 파일 형식 (Windows 설정에 따라 .js 를 잘못 알려 주는 경우가 있어 직접 지정)
+APP_MEDIA_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                   ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json",
+                   ".png": "image/png", ".svg": "image/svg+xml", ".json": "application/json"}
+APP_LOGIN_PAGE = """
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로그인이 필요해요</title></head>
+<body style="font-family: sans-serif; font-size: 22px; line-height: 1.5; padding: 24px; max-width: 640px">
+<h1 style="font-size: 30px">로그인이 필요해요</h1>
+<p>서버 창에 표시된 로그인 주소 끝에 <b>&amp;next=/app</b> 을 붙여 한 번 접속해 주세요.</p>
+<p style="background:#f2f2f2; padding:12px; word-break: break-all">http://서버주소:8000/login?token=…&amp;next=/app</p>
+</body></html>
+"""
+
+
+def _app_public(path):
+    # PWA 정보와 아이콘은 데이터가 없고, 브라우저가 쿠키 없이 가져가기도 해서 로그인 없이 허용
+    return path == "manifest.webmanifest" or path.startswith("icons/")
+
+
+@app.get("/app")
+def app_root():
+    # 상대 주소(css/, js/)가 맞게 풀리도록 끝에 / 를 붙임
+    return RedirectResponse("/app/", status_code=307)
+
+
+@app.get("/app/{path:path}")
+def app_files(path: str, request: Request):
+    path = path or "index.html"
+    target = (APP_DIR / path).resolve()
+    # server/app 폴더 밖의 파일은 열지 않음
+    if APP_DIR not in target.parents or not target.is_file() or target.suffix not in APP_MEDIA_TYPES:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not _app_public(path) and not _is_authorized(request):
+        return HTMLResponse(APP_LOGIN_PAGE, status_code=401)
+    return FileResponse(target, media_type=APP_MEDIA_TYPES[target.suffix], headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/confirm", response_class=HTMLResponse)

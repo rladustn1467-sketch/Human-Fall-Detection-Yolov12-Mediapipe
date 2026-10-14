@@ -1,0 +1,105 @@
+/* 모든 화면이 함께 쓰는 모양. 색과 크기 값은 theme.css 의 변수를 씁니다. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height);
+}
+
+/* 화면 영역: 하단 메뉴에 가리지 않도록 아래 여백 */
+.screen {
+  max-width: 640px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: var(--page-padding) var(--page-padding) calc(var(--nav-height) + var(--page-padding));
+  outline: none;
+}
+.screen.no-nav { padding-bottom: var(--page-padding); }
+
+h1 { font-size: var(--font-size-large); margin: 8px 0 var(--gap); }
+.question { font-size: var(--font-size-huge); font-weight: 800; line-height: 1.3; margin: 8px 0 var(--gap); }
+.lead { font-size: var(--font-size-large); font-weight: 700; margin: 0 0 var(--gap); }
+.muted { color: var(--color-muted); }
+p { margin: 0 0 var(--gap); }
+
+/* 상태 상자 (한 화면에 한 가지 일) */
+.panel {
+  border: 3px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--gap);
+  margin-bottom: var(--gap);
+}
+.panel.safe { background: var(--color-safe-bg); border-color: var(--color-safe); }
+.panel.alert { background: var(--color-alert-bg); }
+.panel.help { background: var(--color-help-bg); border-color: var(--color-help); }
+
+/* 큰 버튼 */
+.big-button {
+  display: block;
+  width: 100%;
+  min-height: var(--button-height);
+  margin: 0 0 var(--gap);
+  padding: 12px 20px;
+  border: 3px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-large);
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+}
+.big-button small { display: block; font-size: var(--font-size-base); font-weight: 400; }
+.big-button.primary { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-on-primary); }
+.big-button.safe { background: var(--color-safe); border-color: var(--color-safe); color: var(--color-on-strong); }
+.big-button.help { background: var(--color-help); border-color: var(--color-help); color: var(--color-on-strong); }
+.big-button:disabled { opacity: 0.55; cursor: default; }
+
+/* 키보드로 이동할 때 어디에 있는지 잘 보이게 */
+:focus-visible { outline: 5px solid var(--color-focus); outline-offset: 3px; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 12px;
+  border: 2px solid var(--color-border);
+  border-radius: 999px;
+  font-size: var(--font-size-base);
+  font-weight: 700;
+}
+
+/* 서버 연결 안내 줄 */
+.notice {
+  border: 3px dashed var(--color-help);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: var(--gap);
+  font-weight: 700;
+}
+
+/* 하단 메뉴 */
+.bottom-nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  height: var(--nav-height);
+  background: var(--color-bg);
+  border-top: 3px solid var(--color-border);
+}
+.bottom-nav[hidden] { display: none; }
+.bottom-nav a {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text);
+  font-size: var(--font-size-large);
+  font-weight: 800;
+  text-decoration: none;
+}
+.bottom-nav a[aria-current="page"] { background: var(--color-primary); color: var(--color-on-primary); }
