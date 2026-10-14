@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 서버 /app 화면(theme.css)과 비슷한 색 -->
+    <color name="safe">#1B6E2E</color>
+    <color name="help">#B3261E</color>
+    <color name="primary">#0B57D0</color>
+    <color name="alert_background">#FFF4CC</color>
+    <color name="notice_text">#B3261E</color>
+    <color name="muted_text">#555555</color>
+    <color name="button_text">#FFFFFF</color>
+</resources>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">낙상 감지</string>
+    <string name="pose_check_name">자세 인식 검사 (개발용)</string>
+    <string name="confirm_title">낙상 확인</string>
+    <string name="settings_title">서버 설정</string>
+
+    <string name="main_heading">낙상 감지 (개발 중)</string>
+    <string name="main_note">실제 낙상 감지는 아직 연결되지 않았어요. 테스트 낙상으로 서버 연결과 사용자 확인을 시험합니다.</string>
+    <string name="send_test_fall">테스트 낙상 보내기</string>
+    <string name="open_settings">서버 설정</string>
+    <string name="open_pose_check">자세 인식 검사 (개발용)</string>
+
+    <string name="label_server_url">서버 주소 (에뮬레이터에서 PC는 10.0.2.2)</string>
+    <string name="label_token">접근 토큰 (서버 폴더의 access_token.txt)</string>
+    <string name="label_device_id">기기 이름 (device_id)</string>
+    <string name="save">저장</string>
+    <string name="check_connection">저장하고 연결 확인</string>
+
+    <string name="test_badge">테스트</string>
+</resources>

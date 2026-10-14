@@ -1,0 +1,12 @@
+# 빌드 결과와 PC별 설정
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+
+# 모델 파일은 공식 주소에서 받아 넣음 (README.md 참고, 저장소에 올리지 않음)
+app/src/main/assets/*.task
