@@ -14,6 +14,8 @@
   const SELF_WINDOW = 60 * S;      // 낙상자 응답 대기
   const AUTO_REPORT = 180 * S;     // 가족 알림 후 자동 신고까지
   const TERMINAL = ['reported', 'closed'];
+  // 실제 모드(mode.js): 서버 데이터만 사용. 가짜 타이머(advance)·시간 배속·탭 간 저장소 공유를 쓰지 않음
+  const LIVE = FD.MODE === 'live';
 
   let state = null;
   let meId = null;
@@ -23,6 +25,7 @@
 
   /* ---------- 시계 (배속 지원) ---------- */
   function clockNow(st) {
+    if (LIVE) return Date.now();   // 실제 모드는 실제 시각만
     const c = st.clock;
     return c.virtBase + (Date.now() - c.realBase) * c.speed;
   }
@@ -47,6 +50,7 @@
 
   /* 서버 대행: 시간 경과 전이 (결정적 — 여러 탭에서 동시에 돌아도 같은 결과) */
   function advance(st) {
+    if (LIVE) return false;   // 실제 모드: 사고 상태와 시간 초과 처리는 서버만 함
     const t = clockNow(st);
     let changed = false;
     st.incidents.forEach(inc => {
@@ -73,6 +77,7 @@
   function notifySubs(kind) { subs.forEach(fn => { try { fn(kind); } catch (e) { console.error(e); } }); }
 
   function commit(mut) {
+    if (LIVE) throw new FD.NotReadyError('commit');   // 실제 모드의 변경은 서버 API 로만 (아래 Act 참고)
     const latest = API.readSnapshot();
     if (latest && latest.version === 2) state = latest;
     advance(state);
@@ -97,7 +102,7 @@
     state = await API.loadSnapshot();
     const params = new URLSearchParams(location.search);
     const as = params.get('as');
-    if (as && person(state, as)) fixedUser = as;
+    if (!LIVE && as && person(state, as)) fixedUser = as;   // ?as= 는 개발 확인용 (테스트 모드에서만)
     const sess = API.readSession();
     if (fixedUser) meId = fixedUser;
     else if (sess === '__none__') meId = null;
@@ -110,7 +115,7 @@
     advance(state); save();
     if (!started) {
       started = true;
-      window.addEventListener('storage', e => {
+      if (!LIVE) window.addEventListener('storage', e => {
         if (e.key === API.KEY && e.newValue) {
           try { state = JSON.parse(e.newValue); } catch (err) { return; }
           if (meId && !person(state, meId)) meId = null;
@@ -439,6 +444,20 @@
     },
     clearIncidents() { commit(st => { st.incidents = []; }); }
   };
+
+  /* 실제 모드: 아직 서버 API 로 바꾸지 않은 동작은 아무것도 바꾸지 않고 안내만 한 뒤 처리를 멈춤
+     (뒤따르는 '완료했어요' 안내나 화면 이동이 잘못 일어나지 않도록 오류로 멈추고, mode.js 가 그 오류를 조용히 처리).
+     B단계부터 동작을 하나씩 서버 호출로 교체하고, 교체한 동작 이름을 SERVER_ACTIONS 에 추가합니다. */
+  if (LIVE) {
+    const SERVER_ACTIONS = new Set();
+    Object.keys(Act).forEach(name => {
+      if (SERVER_ACTIONS.has(name)) return;
+      Act[name] = function notReady() {
+        if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
+        throw new FD.NotReadyError(name);
+      };
+    });
+  }
 
   /* 구독 */
   function subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }

@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+import db
 import escalation
 import notify_rules
 import report119
@@ -87,6 +88,8 @@ TOKEN_FILE = BASE_DIR / "access_token.txt"
 TELEGRAM_STATE_FILE = BASE_DIR / "telegram_state.json"  # 마지막으로 처리한 텔레그램 버튼 번호
 RESIDENTS_FILE = BASE_DIR / "residents.json"  # 거주자 프로필 (의료 정보 포함, GitHub에 올리지 않음)
 CONFIRM_PAGE = BASE_DIR / "static" / "confirm.html"
+# 새 웹앱(/app/next) 데이터베이스. 기존 events.json·residents.json 은 아직 여기로 옮기지 않음 (db.py 참고)
+DB_PATH = Path(os.environ.get("FALL_DB_PATH") or BASE_DIR / "fall.db")
 IMAGE_DIR.mkdir(exist_ok=True)
 
 COOKIE_NAME = "fall_access"
@@ -379,6 +382,10 @@ def _public(ev):
 
 _load_events()
 
+# 새 웹앱 데이터베이스 준비 (없으면 만들고, 필요한 스키마 변경을 적용)
+DB_SCHEMA_VERSION = db.init(DB_PATH)
+print(f"[db] 웹앱 데이터베이스: {DB_PATH.name} (스키마 버전 {DB_SCHEMA_VERSION})")
+
 
 # ---- API ----
 class FallEvent(BaseModel):
@@ -520,6 +527,31 @@ def get_image(event_id: str):
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
+# ---- 새 웹앱(/app/next) API: /api/v2 ----
+# A단계: 저장소 상태와 '로그인한 사람 없음' 상태만 알려 줌 (데이터 없음).
+# B단계부터 사용자 로그인을 확인하고, 로그인한 사람의 그룹 데이터만 돌려줌. 기존 /api/... 는 그대로.
+NO_STORE = {"Cache-Control": "no-store"}
+
+
+@app.get("/api/v2/health")
+def api_v2_health():
+    ok, version = db.health(DB_PATH)
+    return JSONResponse({"ok": ok, "db": "ok" if ok else "error", "schema_version": version}, headers=NO_STORE)
+
+
+@app.get("/api/v2/state")
+def api_v2_state():
+    # 젠스파크 store.js 의 상태 형식 (빈 값). 실제 모드에서는 이 값만 쓰고 예시 데이터는 쓰지 않음
+    now_ms = int(time.time() * 1000)
+    state = {
+        "version": 2, "live": True, "anchoredAt": now_ms,
+        "clock": {"realBase": now_ms, "virtBase": now_ms, "speed": 1},
+        "groups": [], "people": [], "homes": [], "devices": [],
+        "incidents": [], "history": [], "notifs": [],
+    }
+    return JSONResponse({"authenticated": False, "me_id": None, "state": state}, headers=NO_STORE)
+
+
 # ---- 페이지 ----
 # 로그인 뒤 이동할 수 있는 주소 (그 밖의 값은 무시하고 /confirm 으로)
 LOGIN_NEXT_PAGES = {"/confirm": "/confirm", "/app": "/app/", "/app/": "/app/"}
@@ -551,9 +583,18 @@ APP_LOGIN_PAGE = """
 """
 
 
-def _app_public(path):
+# 새 웹앱 (젠스파크 화면, /app/next/). 가입·로그인 전에도 화면이 열려야 하므로 파일은 로그인 없이 제공.
+# 화면 파일에는 실제 데이터가 없고, 실제 데이터 API(/api/...)는 계속 토큰·로그인으로 보호됨
+NEXT_DIR = APP_DIR / "next"
+
+
+def _app_public(target):
+    # 공개 여부는 실제 파일 위치로 판단 (주소에 ../ 를 넣어 로그인이 필요한 파일을 공개 파일처럼 여는 것을 막음)
+    rel = target.relative_to(APP_DIR).as_posix()
     # PWA 정보와 아이콘은 데이터가 없고, 브라우저가 쿠키 없이 가져가기도 해서 로그인 없이 허용
-    return path == "manifest.webmanifest" or path.startswith("icons/")
+    if rel == "manifest.webmanifest" or rel.startswith("icons/"):
+        return True
+    return NEXT_DIR in target.parents
 
 
 @app.get("/app")
@@ -567,9 +608,16 @@ def app_files(path: str, request: Request):
     path = path or "index.html"
     target = (APP_DIR / path).resolve()
     # server/app 폴더 밖의 파일은 열지 않음
-    if APP_DIR not in target.parents or not target.is_file() or target.suffix not in APP_MEDIA_TYPES:
+    if APP_DIR not in target.parents:
         raise HTTPException(status_code=404, detail="Not found")
-    if not _app_public(path) and not _is_authorized(request):
+    # 폴더 주소(/app/next/)는 그 안의 index.html. 끝에 / 가 없으면 붙여서 다시 요청 (상대 주소가 맞게 풀리도록)
+    if target.is_dir():
+        if not path.endswith("/"):
+            return RedirectResponse(f"/app/{target.relative_to(APP_DIR).as_posix()}/", status_code=307)
+        target = target / "index.html"
+    if not target.is_file() or target.suffix not in APP_MEDIA_TYPES:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not _app_public(target) and not _is_authorized(request):
         return HTMLResponse(APP_LOGIN_PAGE, status_code=401)
     return FileResponse(target, media_type=APP_MEDIA_TYPES[target.suffix], headers={"Cache-Control": "no-cache"})
 

@@ -102,6 +102,15 @@ While the app is open, a fall that needs an answer is shown on top of any menu w
 Fall prevention content lives in `server/app/content/prevention/` (see its README). Colors and sizes are
 in `server/app/css/theme.css`, the polling interval in `server/app/js/config.js`.
 
+**New family web app (`/app/next/`, being connected to the server):** the Genspark design in
+`server/app/next/`. It opens without the access token (sign-up must be reachable); its data API
+(`/api/v2/...`) is protected per user from stage B on. Real mode (default) uses only server data;
+`?mode=test` and `dev.html` use built-in sample data in the browser and never call the server (see
+`server/app/next/README.md`). Its data is kept in an SQLite file `server/fall.db` (created on server start,
+in `.gitignore`; set `FALL_DB_PATH` to use another file). `events.json` and `residents.json` are not moved
+into it yet. Server tests: `server\venv\Scripts\python.exe -m unittest discover -s server/tests -t server`
+(they run a copy of the server in a temporary folder and never touch the real data).
+
 **Privacy:** only the processed silhouette image leaves the dashboard; original camera frames
 are never sent to the server or saved (the raw fall snapshot option is disabled).
 

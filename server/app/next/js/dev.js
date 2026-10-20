@@ -59,7 +59,7 @@
       if (box.querySelector(`[data-u="${id}"]`)) return;
       const p = Sel.person(id); if (!p) return;
       const f = document.createElement('div'); f.className = 'frame'; f.dataset.u = id;
-      f.innerHTML = `<h3><span>${esc(p.name)}${p.isTarget ? ' · 감지 대상자' : ' · 알림만'}</span></h3><iframe title="${esc(p.name)} 화면" src="index.html?as=${id}#/"></iframe>`;
+      f.innerHTML = `<h3><span>${esc(p.name)}${p.isTarget ? ' · 감지 대상자' : ' · 알림만'}</span></h3><iframe title="${esc(p.name)} 화면" src="index.html?mode=test&as=${id}#/"></iframe>`;
       box.appendChild(f);
     });
   }

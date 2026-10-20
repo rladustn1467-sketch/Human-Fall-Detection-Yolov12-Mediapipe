@@ -20,8 +20,11 @@
   <div id="toast-root" class="toast-root" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
-  <!-- 데이터 / 상태 -->
+  <!-- 실제 모드(기본) / 테스트 모드(?mode=test) 결정 -->
+  <script src="js/mode.js"></script>
+  <!-- 데이터 / 상태: api.js = 예시 데이터(테스트 모드), api-live.js = 서버 데이터(실제 모드) -->
   <script src="js/api.js"></script>
+  <script src="js/api-live.js"></script>
   <script src="js/store.js"></script>
   <!-- UI 공통 / 라우터 -->
   <script src="js/ui.js"></script>

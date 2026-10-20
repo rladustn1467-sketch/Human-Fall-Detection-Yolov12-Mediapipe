@@ -63,7 +63,7 @@
         <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700">상태 객체 (JSON)</summary><pre id="json"></pre></details>
       </section>
       <section class="panel"><h2>초기화</h2><button id="btn-reset">임시 데이터 처음 상태로</button>
-        <p style="margin:10px 0 0"><a href="index.html" target="_blank" rel="noopener">앱 새 탭에서 열기</a></p></section>
+        <p style="margin:10px 0 0"><a href="index.html?mode=test" target="_blank" rel="noopener">앱 새 탭에서 열기 (테스트 모드)</a></p></section>
     </div>
     <div>
       <section class="panel"><h2>사용자별 동시 보기 <span style="font-weight:400">(같은 사고 상태를 공유)</span></h2>
@@ -72,6 +72,8 @@
     </div>
   </main>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <!-- 개발 확인 콘솔은 항상 테스트 모드 (예시 데이터만, 서버 API 호출 없음) -->
+  <script src="js/mode.js"></script>
   <script src="js/api.js"></script>
   <script src="js/store.js"></script>
   <script src="js/dev.js"></script>

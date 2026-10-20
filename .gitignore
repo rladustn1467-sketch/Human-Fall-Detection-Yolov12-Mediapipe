@@ -25,3 +25,9 @@ server/telegram_state.json.tmp
 
 # Resident profiles with medical info (copy server/residents.example.json)
 server/residents.json
+
+# Web app database (/app/next) and its backups - real user data, never commit
+server/fall.db
+server/fall.db-wal
+server/fall.db-shm
+server/backups/
