@@ -23,7 +23,7 @@ from pathlib import Path
 import db
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
-CODE_FILES = ["main.py", "db.py", "accounts.py", "escalation.py", "notify_rules.py", "notifiers.py", "report119.py", "residents.py"]
+CODE_FILES = ["main.py", "db.py", "accounts.py", "people.py", "address_search.py", "escalation.py", "notify_rules.py", "notifiers.py", "report119.py", "residents.py"]
 
 
 def free_port():
@@ -33,7 +33,7 @@ def free_port():
 
 
 class ServerCopy:
-    def __init__(self):
+    def __init__(self, extra_env=None):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         for name in CODE_FILES:
@@ -44,6 +44,7 @@ class ServerCopy:
         self.db_path = self.dir / "copy.db"
         env = dict(os.environ, TELEGRAM_BOT_TOKEN="", TELEGRAM_CHAT_ID="", FALL_DB_PATH=str(self.db_path),
                    PYTHONIOENCODING="utf-8")
+        env.update(extra_env or {})   # 시험별 설정 (예: 가짜 도로명주소 API 주소)
         self.log = open(self.dir / "server.log", "w", encoding="utf-8")
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(self.port)],

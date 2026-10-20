@@ -134,6 +134,7 @@
     me.homeIds.map(id => Sel.home(id)).filter(Boolean).forEach(h => {
       const nm = Sel.homeName(h, me);
       if (!h.address) out.push({ t: `${nm} 주소를 입력해 주세요`, a: 'todo.address', id: h.id });
+      if (FD.MODE === 'live') return;   // 실제 모드: 현관 비밀번호 등록은 H단계 전까지 할 수 없으므로 할 일에 넣지 않음
       if (!h.centralPw) out.push({ t: `${nm} 중앙 현관 비밀번호를 등록해 주세요`, a: 'todo.pw', id: h.id, key: 'centralPw' });
       if (!h.doorPw) out.push({ t: `${nm} 집 현관 비밀번호를 등록해 주세요`, a: 'todo.pw', id: h.id, key: 'doorPw' });
     });

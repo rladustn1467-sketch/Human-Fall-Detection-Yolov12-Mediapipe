@@ -17,6 +17,7 @@ SMS verification and password reset are not part of this stage.
 import base64
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import time
@@ -281,16 +282,50 @@ def join_group(conn, user_id, code, now=None):
     return invite["group_id"]
 
 
+def _delete_group_if_empty(conn, group_id):
+    # 아무도 남지 않은 그룹은 초대 코드·집과 함께 지움 (invites, homes 는 ON DELETE CASCADE)
+    if group_id and not conn.execute("SELECT 1 FROM users WHERE group_id = ?", (group_id,)).fetchone():
+        conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+
+
 def leave_group(conn, user_id):
+    """Leave the group. Like the Genspark design, the group-shared profile goes with it: detection-target
+    flag, health information and home links. If nobody is left, the group and its homes are deleted."""
     with _transaction(conn):
         me = _user(conn, user_id)
         group_id = me["group_id"]
         if not group_id:
             return
-        conn.execute("UPDATE users SET group_id = NULL, onboarded = 0 WHERE id = ?", (user_id,))
-        # 아무도 남지 않은 그룹은 초대 코드와 함께 지움
-        if not conn.execute("SELECT 1 FROM users WHERE group_id = ?", (group_id,)).fetchone():
-            conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        conn.execute("DELETE FROM home_members WHERE user_id = ?", (user_id,))
+        conn.execute("""UPDATE users SET group_id = NULL, onboarded = 0, is_target = 0,
+                        birth = NULL, conditions = NULL, medications = NULL WHERE id = ?""", (user_id,))
+        _delete_group_if_empty(conn, group_id)
+
+
+def withdraw(conn, user_id, password, ip, now=None):
+    """Delete the account after checking the password again. All or nothing (one transaction).
+
+    Deleted: the user row (profile, health info, password hash), its sessions and home links (ON DELETE
+    CASCADE), and failure/count records that contain the phone number or user id. If the user was the last member,
+    the group, its invite and its homes are deleted too; otherwise the group, homes and other members stay.
+    The new database has no incident/report records yet (stage D); events.json is not linked to accounts.
+    """
+    now = time.time() if now is None else now
+    me = _user(conn, user_id)
+    phone_key = f"login-phone:{me['phone']}"
+    wait_message = "비밀번호 확인 시도가 너무 많아요. {minutes}분 뒤 다시 시도해 주세요."
+    _check_limit(conn, phone_key, LOGIN_LIMIT_PER_PHONE, now, wait_message)
+    if not verify_password(password or "", me["password_hash"]):
+        with _transaction(conn):
+            _record_failure(conn, phone_key, now)
+        raise AccountError(401, "비밀번호가 맞지 않아요.", "password")
+    with _transaction(conn):
+        me = _user(conn, user_id)
+        group_id = me["group_id"]
+        conn.execute("DELETE FROM auth_failures WHERE key IN (?, ?, ?)",
+                     (phone_key, f"join-user:{user_id}", f"address-user:{user_id}"))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        _delete_group_if_empty(conn, group_id)
 
 
 def set_onboarded(conn, user_id, onboarded):
@@ -300,14 +335,46 @@ def set_onboarded(conn, user_id, onboarded):
 
 
 # ---- 화면에 보낼 상태 (젠스파크 store.js 형식) ----
-def _person(row):
-    # B단계에서 저장하는 항목 외(감지 대상·건강 정보·집 등)는 C단계부터 서버에 저장. 지금은 기본값
+DEFAULT_PREFS = {"device": True, "member": True, "home": True}
+
+
+def _json_list(text):
+    # NULL = 아직 입력 안 함(None), '[]' = 없음
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    return value if isinstance(value, list) else None
+
+
+def _prefs(text):
+    prefs = dict(DEFAULT_PREFS)
+    try:
+        saved = json.loads(text) if text else {}
+    except ValueError:
+        saved = {}
+    if isinstance(saved, dict):
+        prefs.update({k: bool(v) for k, v in saved.items() if k in DEFAULT_PREFS})
+    return prefs
+
+
+def _person(row, home_ids=()):
+    # phoneCamera(내 폰 카메라 감지)는 카메라 단계에서 저장. 지금은 항상 꺼짐
     return {
         "id": row["id"], "name": row["name"], "phone": format_phone(row["phone"]), "email": "",
         "groupId": row["group_id"], "onboarded": bool(row["onboarded"]),
-        "isTarget": False, "birth": None, "conditions": None, "medications": None,
-        "homeIds": [], "phoneCamera": False, "prefs": {"device": True, "member": True, "home": True},
+        "isTarget": bool(row["is_target"]), "birth": row["birth"],
+        "conditions": _json_list(row["conditions"]), "medications": _json_list(row["medications"]),
+        "homeIds": list(home_ids), "phoneCamera": False, "prefs": _prefs(row["prefs"]),
     }
+
+
+def _home(row):
+    # centralPw/doorPw: 현관 비밀번호 등록 여부. 저장 기능은 H단계라 지금은 항상 '미등록'
+    return {"id": row["id"], "groupId": row["group_id"], "address": row["address"],
+            "centralPw": False, "doorPw": False}
 
 
 def empty_state(now=None):
@@ -321,7 +388,7 @@ def empty_state(now=None):
 
 
 def state_for(conn, user_id, now=None):
-    """Only the logged-in user's own record and, if any, their own group and its members."""
+    """Only the logged-in user's own record and, if any, their own group, its members and its homes."""
     state = empty_state(now)
     me = _user(conn, user_id)
     if not me["group_id"]:
@@ -337,5 +404,11 @@ def state_for(conn, user_id, now=None):
             "expiresAt": int(invite["expires_at"] * 1000), "createdBy": invite["created_by"],
         },
     }]
-    state["people"] = [_person(m) for m in members]
+    homes = conn.execute("SELECT * FROM homes WHERE group_id = ? ORDER BY created_at", (me["group_id"],)).fetchall()
+    links = {}
+    for row in conn.execute("""SELECT hm.user_id, hm.home_id FROM home_members hm JOIN homes h ON h.id = hm.home_id
+                               WHERE h.group_id = ? ORDER BY hm.linked_at""", (me["group_id"],)):
+        links.setdefault(row["user_id"], []).append(row["home_id"])
+    state["people"] = [_person(m, links.get(m["id"], ())) for m in members]
+    state["homes"] = [_home(h) for h in homes]
     return state

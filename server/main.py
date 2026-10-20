@@ -12,7 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -20,9 +20,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field
 
 import accounts
+import address_search
 import db
 import escalation
 import notify_rules
+import people as people_mod
 import report119
 import residents as residents_mod
 from notifiers import ButtonResult, NotificationDispatcher, build_notifiers, build_receivers
@@ -558,6 +560,44 @@ class OnboardedBody(BaseModel):
     onboarded: bool
 
 
+class ProfileBody(BaseModel):
+    # 휴대전화 번호(로그인 아이디) 변경은 문자 인증 단계에서. 보내도 쓰지 않음
+    name: str = Field(max_length=100)
+    birth: Optional[str] = Field(default=None, max_length=20)
+    conditions: Optional[List[str]] = Field(default=None, max_length=100)
+    medications: Optional[List[str]] = Field(default=None, max_length=100)
+
+
+class PrefBody(BaseModel):
+    key: str = Field(max_length=20)
+    value: bool
+
+
+class SetupInfo(BaseModel):
+    birth: Optional[str] = Field(default=None, max_length=20)
+    conditions: Optional[List[str]] = Field(default=None, max_length=100)
+    medications: Optional[List[str]] = Field(default=None, max_length=100)
+
+
+class SetupHome(BaseModel):
+    mode: str = Field(max_length=20)
+    id: Optional[str] = Field(default=None, max_length=60)
+    address: Optional[str] = Field(default=None, max_length=1000)
+
+
+class SetupBody(BaseModel):
+    info: SetupInfo
+    home: SetupHome
+
+
+class AddressBody(BaseModel):
+    address: str = Field(max_length=1000)
+
+
+class PasswordBody(BaseModel):
+    password: str = Field(max_length=200)
+
+
 @app.exception_handler(accounts.AccountError)
 def _account_error(request: Request, exc: accounts.AccountError):
     headers = dict(NO_STORE)
@@ -695,6 +735,85 @@ def api_v2_onboarded(body: OnboardedBody, request: Request):
         user_id = _require_user(conn, request)
         accounts.set_onboarded(conn, user_id, body.onboarded)
         return _state_response(conn, user_id)
+
+
+# C단계: 내 정보·집·탈퇴. 모두 로그인한 사람 본인 기준이고, 집 id 는 그 사람 그룹 안에서만 찾음 (people.py)
+@app.post("/api/v2/me/profile")
+def api_v2_profile(body: ProfileBody, request: Request):
+    _check_origin(request)
+    health = {k: getattr(body, k) for k in ("birth", "conditions", "medications") if k in body.model_fields_set}
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.update_profile(conn, user_id, body.name, health)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/me/prefs")
+def api_v2_prefs(body: PrefBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.set_pref(conn, user_id, body.key, body.value)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/me/setup")
+def api_v2_setup(body: SetupBody, request: Request):
+    # 처음 설정(감지 대상 켜기) 완료: 건강 정보 + 집을 한 번에 저장 (전부 저장되거나 전부 취소)
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.finish_setup(conn, user_id, body.info.model_dump(), body.home.model_dump())
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/homes/{home_id}/link")
+def api_v2_link_home(home_id: str, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.link_home(conn, user_id, home_id)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/homes/{home_id}/unlink")
+def api_v2_unlink_home(home_id: str, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.unlink_home(conn, user_id, home_id)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/homes/{home_id}/address")
+def api_v2_home_address(home_id: str, body: AddressBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.update_home_address(conn, user_id, home_id, body.address)
+        return _state_response(conn, user_id)
+
+
+@app.get("/api/v2/address/search")
+def api_v2_address_search(request: Request, q: str = ""):
+    # 도로명주소 검색: 서버가 대신 호출 (승인키 JUSO_API_KEY 는 브라우저로 보내지 않음). address_search.py
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        results = address_search.search(conn, user_id, q[:200], os.environ.get("JUSO_API_KEY", "").strip(),
+                                        os.environ.get("JUSO_API_URL", "").strip() or None)
+    return JSONResponse({"results": results}, headers=NO_STORE)
+
+
+@app.post("/api/v2/me/withdraw")
+def api_v2_withdraw(body: PasswordBody, request: Request):
+    # 회원 탈퇴: 비밀번호를 다시 확인한 뒤 한 번에 삭제 (accounts.withdraw), 로그인 쿠키도 지움
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.withdraw(conn, user_id, body.password, _client_ip(request))
+    response = JSONResponse({"authenticated": False, "me_id": None, "state": accounts.empty_state()}, headers=NO_STORE)
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax", secure=_cookie_secure(request))
+    return response
 
 
 # ---- 페이지 ----

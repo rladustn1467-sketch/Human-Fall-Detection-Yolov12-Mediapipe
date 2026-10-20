@@ -508,13 +508,38 @@
         }
       },
       async leaveGroup() { applyServer(await API.leaveGroup()); },
-      /* B단계는 '처음 설정 완료(onboarded)'만 서버에 저장. 다른 프로필 항목은 C단계 */
+      /* C단계: 내 정보 (항상 로그인한 본인 것만 바뀜. personId 는 화면 계약상 받기만 함) */
       async updateProfile(personId, patch) {
-        const keys = Object.keys(patch || {});
+        patch = patch || {};
+        const keys = Object.keys(patch);
         if (keys.length === 1 && keys[0] === 'onboarded') { applyServer(await API.setOnboarded(!!patch.onboarded)); return; }
-        if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
-        throw new FD.NotReadyError('updateProfile');
-      }
+        if ('phoneCamera' in patch) {   // 내 폰 카메라 감지는 카메라 단계에서
+          if (FD.UI) FD.UI.toast('내 폰 카메라 감지는 아직 준비 중이에요');
+          throw new FD.NotReadyError('phoneCamera');
+        }
+        const me = person(state, meId);
+        const digits = v => String(v || '').replace(/\D/g, '');
+        if (patch.phone !== undefined && me && digits(patch.phone) !== digits(me.phone)) {
+          throw new FD.ApiError(400, '휴대전화 번호 변경은 문자 인증이 생기면 제공할게요.', 'phone');
+        }
+        const body = { name: patch.name !== undefined ? patch.name : (me && me.name) };
+        ['birth', 'conditions', 'medications'].forEach(k => { if (k in patch) body[k] = patch[k]; });
+        applyServer(await API.updateProfile(body));
+      },
+      async setPref(personId, key, val) { applyServer(await API.setPref(key, !!val)); },
+      /* 처음 설정 완료: 건강 정보 + 집을 서버가 한 번에 저장 (전부 저장되거나 전부 취소) */
+      async finishSetup({ info, home }) { applyServer(await API.finishSetup(info, home)); },
+      async linkHome(personId, homeId) { applyServer(await API.linkHome(homeId)); },
+      async unlinkHome(personId, homeId) { applyServer(await API.unlinkHome(homeId)); },
+      /* 집: 주소만 서버에 저장. 현관 비밀번호는 H단계(암호화 설계 후) */
+      async updateHome(homeId, patch) {
+        const keys = Object.keys(patch || {});
+        if (keys.length === 1 && keys[0] === 'address') { applyServer(await API.updateHomeAddress(homeId, patch.address)); return; }
+        if (FD.UI) FD.UI.toast('현관 비밀번호 등록은 아직 준비 중이에요');
+        throw new FD.NotReadyError('updateHome');
+      },
+      /* 회원 탈퇴: 비밀번호를 다시 확인한 뒤 서버가 한 번에 삭제 */
+      async withdraw(personId, password) { applyServer(await API.withdraw(password), 'session'); }
     };
     Object.keys(Act).forEach(name => {
       if (SERVER_ACTIONS[name]) return;

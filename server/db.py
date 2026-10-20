@@ -4,6 +4,7 @@ Stage A only prepares the database: connection settings and schema versioning.
 Existing data is NOT stored here yet and is not touched by this module:
 events.json, residents.json, access_token.txt, telegram_state.json, .env.
 Later stages add their tables as new migrations (B: users/sessions/groups, C: people/homes, ...).
+events.json and residents.json are still not moved here (stage C leaves residents.json as it is).
 
 The database file defaults to server/fall.db; set FALL_DB_PATH to use another file
 (test copies of the server use their own file, so test data never mixes with real data).
@@ -60,6 +61,32 @@ MIGRATIONS = [
                at   REAL NOT NULL
            )""",
         "CREATE INDEX auth_failures_key ON auth_failures(key, at)",
+    ]),
+    (3, "가족 구성원 정보·집 (people.py)", [
+        # 감지 대상자와 건강 정보 (그룹 가족에게만 보임). 목록은 JSON 문자열, NULL = 아직 입력 안 함, '[]' = 없음
+        "ALTER TABLE users ADD COLUMN is_target INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN birth TEXT",
+        "ALTER TABLE users ADD COLUMN conditions TEXT",
+        "ALTER TABLE users ADD COLUMN medications TEXT",
+        # 알림 받기 설정 {"device": true, "member": true, "home": true} (실제 알림은 G단계)
+        "ALTER TABLE users ADD COLUMN prefs TEXT",
+        # 현관 비밀번호는 H단계 (암호화 설계 후). 여기에는 저장하지 않음
+        """CREATE TABLE homes (
+               id          TEXT PRIMARY KEY,
+               group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               address     TEXT NOT NULL DEFAULT '',
+               created_by  TEXT,
+               created_at  REAL NOT NULL,
+               updated_at  REAL NOT NULL
+           )""",
+        "CREATE INDEX homes_group ON homes(group_id)",
+        """CREATE TABLE home_members (
+               home_id     TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               linked_at   REAL NOT NULL,
+               PRIMARY KEY (home_id, user_id)
+           )""",
+        "CREATE INDEX home_members_user ON home_members(user_id)",
     ]),
 ]
 

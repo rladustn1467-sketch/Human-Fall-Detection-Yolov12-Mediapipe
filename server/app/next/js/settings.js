@@ -4,9 +4,11 @@
 (function () {
   const FD = (window.FD = window.FD || {});
   const UI = FD.UI;
-  const { esc, ic, on, toast, field, setError, val } = UI;
+  const { esc, ic, on, toast, field, setError, val, openSheet, closeSheet } = UI;
   const { Sel, Act } = FD.Store;
   const R = FD.Router;
+  const LIVE = FD.MODE === 'live';
+  const PROFILE_FIELDS = { name: 'pf-name', phone: 'pf-phone' };
 
   R.register('/settings', () => {
     const me = Sel.me();
@@ -42,7 +44,8 @@
       html: `${UI.subHeader('내 프로필')}<div class="page page--tight">
         <form id="profile-form" novalidate>
           ${field({ id: 'pf-name', label: '이름', value: me.name, maxlength: 20, autocomplete: 'name' })}
-          ${field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', value: me.phone, oninput: 'phone-fmt' })}
+          ${LIVE ? field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', value: me.phone, hint: '휴대전화 번호는 로그인 아이디라서, 문자 인증이 생기면 바꿀 수 있어요.' })
+            : field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', value: me.phone, oninput: 'phone-fmt' })}
         </form>
         ${me.isTarget ? `<p class="group-label" style="margin-top:6px">건강 정보 <small>그룹 가족에게 공유돼요</small></p>
           <section class="info-item"><div class="info-item__head"><h3>생년월일</h3></div><input type="date" id="pf-birth" value="${esc(me.birth || '')}" max="${new Date().toISOString().slice(0, 10)}" aria-label="생년월일"></section>
@@ -51,6 +54,7 @@
       </div>`,
       mount: root => {
         editors = {};
+        if (LIVE) { const ph = root.querySelector('#pf-phone'); if (ph) ph.readOnly = true; }   // 번호 변경은 문자 인증 단계에서
         if (!me.isTarget) return;
         [['conditions', UI.SUGGEST_COND], ['medications', UI.SUGGEST_MED]].forEach(([k, s]) => {
           const el = root.querySelector('#pt-' + k);
@@ -60,7 +64,7 @@
     };
   }, { parent: '/settings' });
   on('prof.none', el => { document.getElementById('pt-' + el.dataset.key).hidden = el.checked; });
-  on('prof.save', () => {
+  on('prof.save', async el => {
     const me = Sel.me(); const name = val('pf-name'), phone = val('pf-phone');
     let ok = true;
     if (name.length < 2) { setError('pf-name', '이름을 입력해 주세요.'); ok = false; } else setError('pf-name', '');
@@ -75,7 +79,9 @@
         patch[k] = none ? [] : (tags.length ? tags : null);
       });
     }
-    Act.updateProfile(me.id, patch);
+    try {
+      await UI.busy(el, () => Act.updateProfile(me.id, patch));
+    } catch (e) { UI.showError(e, PROFILE_FIELDS); return; }
     toast('저장했어요', 'ok'); R.back('/settings');
   });
 
@@ -91,7 +97,10 @@
         ${row('home', '집 정보 변경 알림', '같은 집의 주소·비밀번호·기기가 바뀌면 알려드려요')}
       </div></div>`;
   }, { parent: '/settings', live: true });
-  on('pref.toggle', el => { const k = el.dataset.key; const me = Sel.me(); Act.setPref(me.id, k, !(me.prefs[k] !== false)); });
+  on('pref.toggle', async el => {
+    const k = el.dataset.key; const me = Sel.me();
+    try { await Act.setPref(me.id, k, !(me.prefs[k] !== false)); } catch (e) { UI.showError(e); }
+  });
 
   /* ---------------- 로그아웃 ---------------- */
   on('settings.logout', async el => {
@@ -108,8 +117,30 @@
   on('settings.withdraw', async () => {
     const ok = await UI.confirm({ title: '정말 탈퇴할까요?', body: '계정과 개인정보가 삭제되고, 그룹에서도 나가요.', ok: '탈퇴하기', cancel: '취소', danger: true });
     if (!ok) return;
+    if (LIVE) { withdrawSheet(); return; }
     Act.withdraw(Sel.meId());
     FD.Onboarding.resetDraft();
     R.go('/ob/signup', { replace: true });
   });
+
+  /* 실제 모드: 비밀번호를 한 번 더 확인한 뒤 서버가 삭제 */
+  function withdrawSheet() {
+    openSheet({
+      title: '비밀번호 확인',
+      html: `<div class="notice notice--stop" style="margin-bottom:16px">${ic('triangle-exclamation')}<span>탈퇴하면 계정, 로그인 정보, 내 프로필과 건강 정보가 삭제되고 되돌릴 수 없어요. 그룹에 다른 가족이 있으면 그룹과 집 정보는 남아요.</span></div>
+        ${field({ id: 'wd-pw', label: '비밀번호', type: 'password', placeholder: '비밀번호 입력', autocomplete: 'current-password', onenter: 'wd.submit' })}
+        <button class="btn btn--danger btn--lg btn--block" data-action="wd.submit">탈퇴하기</button>`
+    });
+    on('wd.submit', async el => {
+      const e = document.getElementById('wd-pw'); const pw = e ? e.value : '';   // 비밀번호는 공백 포함 그대로
+      if (!pw) { setError('wd-pw', '비밀번호를 입력해 주세요.'); return; }
+      try {
+        await UI.busy(el, () => Act.withdraw(Sel.meId(), pw));
+      } catch (err) { UI.showError(err, { password: 'wd-pw' }); return; }
+      closeSheet();
+      FD.Onboarding.resetDraft();
+      toast('탈퇴했어요. 그동안 이용해 주셔서 고마워요.');
+      R.go('/ob/signup', { replace: true });
+    });
+  }
 })();

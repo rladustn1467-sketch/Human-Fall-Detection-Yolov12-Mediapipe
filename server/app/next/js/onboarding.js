@@ -15,6 +15,10 @@
       central: '', door: '', centralKeep: true, doorKeep: true, devices: [], phoneCamera: false, addrSkipped: false };
   }
   const D = () => (draft = draft || newDraft());
+  const LIVE = FD.MODE === 'live';
+  // 주소 검색을 쓸 수 없으면(api-live.js 의 addressSearch 가 false) 또는 사용자가 '직접 입력하기'를 고르면 직접 입력
+  const manualAddress = () => FD.API.addressSearch === false || !!(draft && draft.addrManual);
+  const NOT_READY_DEVICE = '기기 연결은 아직 준비 중이에요. 기기 연결 단계에서 제공할게요.';
 
   const STEP_NAMES = ['개인정보', '주소', '비밀번호', '기기'];
   function top(idx, total, opts) {
@@ -261,6 +265,10 @@
 
   /* ---------------- O-06 ~ O-09 (ob / enable 공통) ---------------- */
   function flowBase(flow) { return '/' + flow; }
+  /* 버튼 처리기(on)는 이름마다 하나만 저장되어 register('ob')·register('enable') 중 나중 것이 남음.
+     그래서 처리기 안에서는 지금 보고 있는 화면 주소로 흐름을 정함 (처음 설정 /ob/…, 감지 켜기 /enable/…) */
+  const curFlow = () => (R.path().startsWith('/enable/') ? 'enable' : 'ob');
+  const curBase = () => flowBase(curFlow());
   function register(flow) {
     const base = flowBase(flow);
 
@@ -318,7 +326,7 @@
     }
     on('info.next', () => {
       collectInfo();
-      R.go(base + '/address');
+      R.go(curBase() + '/address');
     });
 
     /* O-07 주소 */
@@ -348,6 +356,18 @@
           <button class="btn btn--ghost btn--block" style="margin-top:12px" data-action="addr.other">아니요 (다른 주소 입력하기)</button>`;
         return;
       }
+      if (manualAddress()) {
+        body.innerHTML = `
+          <div class="notice">${ic('location-dot')}<span>119 신고가 필요할 때 이 주소가 전달돼요. 정확한 주소를 입력해 주세요. (동·호수까지) 입력한 주소는 그룹 가족에게 공유돼요.</span></div>
+          <div style="margin-top:18px">
+            ${field({ id: 'addr-base', label: '주소', placeholder: '예) 서울 마포구 월드컵로 100 한빛아파트', value: d.addrBase, maxlength: 150, autocomplete: 'street-address' })}
+            ${field({ id: 'addr-detail', label: '동·호수', placeholder: '예) 101동 1203호', value: d.addrDetail, maxlength: 40, onenter: 'addr.next' })}
+          </div>
+          <button class="btn btn--primary btn--lg btn--block" style="margin-top:6px" data-action="addr.next">다음</button>
+          ${FD.API.addressSearch !== false ? `<button class="link-btn" style="margin-top:12px" data-action="addr.searchmode">주소 검색하기</button>` : ''}
+          ${homes.length ? `<button class="link-btn" style="margin-top:12px" data-action="addr.back-existing">그룹에 등록된 주소 중에서 고르기</button>` : ''}`;
+        return;
+      }
       const picked = d.addrBase;
       body.innerHTML = `
         <div class="notice">${ic('location-dot')}<span>119 신고가 필요할 때 이 주소가 전달돼요. 정확한 주소를 입력해 주세요. (동·호수까지) 입력한 주소는 그룹 가족에게 공유돼요.</span></div>
@@ -355,24 +375,29 @@
           ${picked ? `<div class="addr-picked">${ic('circle-check')}<span style="flex:1">${esc(picked)}</span><button class="link-btn" data-action="addr.change">변경</button></div>
             ${field({ id: 'addr-detail', label: '동·호수', placeholder: '예) 101동 1203호', value: d.addrDetail, onenter: 'addr.next' })}`
             : `<div class="inline-add"><input id="addr-q" type="search" placeholder="도로명, 건물명, 동 이름으로 검색" aria-label="주소 검색" data-onenter="addr.search" autocomplete="off"><button class="btn btn--primary" data-action="addr.search">${ic('magnifying-glass')} 검색</button></div>
-               <div class="addr-list" id="addr-results"></div>`}
+               <div class="addr-list" id="addr-results"></div>
+               ${LIVE ? `<button class="link-btn" style="margin-top:12px" data-action="addr.manual">검색이 안 되나요? 직접 입력하기</button>` : ''}`}
         </div>
         ${picked ? `<button class="btn btn--primary btn--lg btn--block" style="margin-top:6px" data-action="addr.next">다음</button>` : ''}
         ${homes.length ? `<button class="link-btn" style="margin-top:12px" data-action="addr.back-existing">그룹에 등록된 주소 중에서 고르기</button>` : ''}`;
     }
     let lastResults = [];
-    on('addr.same', el => { const d = D(); d.homeMode = 'existing'; d.homeId = el.dataset.id; R.go(base + '/password'); });
+    on('addr.same', el => { const d = D(); d.homeMode = 'existing'; d.homeId = el.dataset.id; R.go(curBase() + '/password'); });
     on('addr.other', () => { const d = D(); d.homeMode = 'new'; d.addrBase = ''; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
     on('addr.back-existing', () => { const d = D(); d.homeMode = null; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), true); });
     on('addr.change', () => { const d = D(); d.addrBase = ''; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
     on('addr.search', async () => {
       const q = document.getElementById('addr-q').value;
       const box = document.getElementById('addr-results');
-      lastResults = await FD.API.searchAddress(q);
+      try {
+        lastResults = await FD.API.searchAddress(q);
+      } catch (e) { UI.showError(e); return; }   // 검색어 문제·횟수 초과·검색 불가 안내
       box.innerHTML = lastResults.length
         ? lastResults.map((a, i) => `<button class="addr-item" data-action="addr.pick" data-i="${i}">${ic('location-dot')}<span>${esc(a)}</span></button>`).join('')
         : `<p class="empty" style="padding:18px">검색 결과가 없어요. 건물명이나 도로명을 다시 입력해 보세요.</p>`;
     });
+    on('addr.manual', () => { const d = D(); d.addrManual = true; d.addrBase = ''; d.homeMode = 'new'; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
+    on('addr.searchmode', () => { const d = D(); d.addrManual = false; d.addrBase = ''; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
     on('addr.pick', el => {
       const d = D(); d.addrBase = lastResults[+el.dataset.i]; d.homeMode = 'new';
       drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false);
@@ -380,20 +405,33 @@
     });
     on('addr.next', () => {
       const d = D(); const det = val('addr-detail');
+      if (manualAddress()) {
+        const b = val('addr-base');
+        if (!b) { setError('addr-base', '주소를 입력해 주세요.'); return; }
+        setError('addr-base', '');
+        d.addrBase = b;
+      }
       if (!det) { setError('addr-detail', '동·호수까지 입력해 주세요.'); return; }
       d.addrDetail = det; d.address = d.addrBase + ' ' + det; d.homeMode = 'new'; d.addrSkipped = false;
-      R.go(base + '/password');
+      R.go(curBase() + '/password');
     });
     on('addr.skip', async () => {
       const ok = await UI.confirm({ title: '주소를 나중에 입력할까요?', body: '주소가 없으면 119 신고 시 위치 전달이 어려울 수 있어요. 나중에 가족 탭의 집 관리에서 언제든 입력할 수 있어요.', ok: '건너뛰기', cancel: '계속 입력' });
       if (!ok) return;
       const d = D(); d.homeMode = 'new'; d.address = ''; d.addrBase = ''; d.addrSkipped = true;
-      R.go(base + '/password');
+      R.go(curBase() + '/password');
     });
 
     /* O-08 비밀번호 */
     R.register(base + '/password', () => {
       const d = D();
+      // 실제 모드: 현관 비밀번호 저장·전달은 H단계(암호화 설계 후). 입력받지 않고 안내만
+      if (LIVE) return page(`
+        ${top(2, 4)}
+        <p class="tag tag--primary">${STEP_NAMES[2]} · 3/4</p>
+        <h1 class="ob__title" style="margin-top:10px">현관 비밀번호 등록은<br>준비 중이에요</h1>
+        <div class="notice notice--lock" style="margin-top:16px">${ic('lock')}<span>119 구급대가 집에 들어갈 수 있도록 현관 비밀번호를 안전하게 보관하는 기능을 준비하고 있어요. 준비가 끝나면 가족 탭의 집 관리에서 등록할 수 있어요. 지금은 비밀번호를 입력받거나 저장하지 않아요.</span></div>`,
+        `<button class="btn btn--primary btn--lg btn--block" data-action="pw.next">다음</button>`);
       const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
       const block = (key, title, reg) => {
         if (h && reg) {
@@ -421,12 +459,12 @@
     }
     on('pw.change', el => { collectPw(); D()[el.dataset.key + 'Keep'] = false; R.go(R.path()); });
     on('pw.keep', el => { collectPw(); const d = D(); d[el.dataset.key + 'Keep'] = true; d[el.dataset.key] = ''; R.go(R.path()); });
-    on('pw.next', () => { collectPw(); R.go(base + '/device'); });
+    on('pw.next', () => { collectPw(); R.go(curBase() + '/device'); });
     on('pw.skip', async () => {
       const ok = await UI.confirm({ title: '비밀번호를 나중에 등록할까요?', body: '비밀번호가 없으면 구급대가 출입하는 데 시간이 걸릴 수 있어요.', ok: '건너뛰기', cancel: '계속 입력' });
       if (!ok) return;
       const d = D(); d.central = ''; d.door = '';
-      R.go(base + '/device');
+      R.go(curBase() + '/device');
     });
 
     /* O-09 기기 연결 */
@@ -437,6 +475,7 @@
         <p class="tag tag--primary">${STEP_NAMES[3]} · 4/4</p>
         <h1 class="ob__title" style="margin-top:10px">감지할 카메라를<br>연결해 주세요</h1>
         <div class="notice" style="margin-top:16px">${ic('eye-slash')}<span>영상은 낙상 판단에만 쓰이고 저장되지 않아요. 낙상이 감지되면 배경과 사람을 가린 이미지만 기록돼요.</span></div>
+        ${LIVE ? `<div class="notice" style="margin-top:10px">${ic('circle-info')}<span>${NOT_READY_DEVICE} 지금은 '나중에 연결할게요'를 눌러 주세요.</span></div>` : ''}
         <div id="dev-added" style="margin-top:18px">${devAddedHtml(d)}</div>
         <div class="stack" style="margin-top:14px">
           <button class="choice" data-action="dev.add"><span class="choice__ic">${ic('video')}</span><span><span class="choice__t">홈캠·CCTV 추가</span><span class="choice__s" style="display:block">집에 설치된 카메라를 연결해요.</span></span></button>
@@ -448,15 +487,19 @@
       return d.devices.map((x, i) => `<div class="dev-added"><i class="fa-solid fa-${UI.DEVICE_ICON[x.type]} ic" aria-hidden="true"></i><span style="flex:1">${esc(UI.DEVICE_TYPE[x.type])} · ${esc(x.location)}<br><small class="muted">연결됨</small></span><button class="icon-btn" data-action="dev.rm" data-i="${i}" aria-label="삭제">${ic('xmark')}</button></div>`).join('');
     }
     on('dev.rm', el => { const d = D(); d.devices.splice(+el.dataset.i, 1); R.go(R.path()); });
-    on('dev.phone', () => { const d = D(); d.phoneCamera = !d.phoneCamera; R.go(R.path()); });
+    on('dev.phone', () => {
+      if (LIVE) { toast('내 폰 카메라 감지는 아직 준비 중이에요'); return; }
+      const d = D(); d.phoneCamera = !d.phoneCamera; R.go(R.path());
+    });
     on('dev.add', () => {
+      if (LIVE) { toast(NOT_READY_DEVICE); return; }   // 연결된 척하지 않도록 시트를 열지 않음
       deviceSheet({ title: '카메라 추가', onSubmit: async (v, api) => {
         api.replace(`<div class="empty"><span class="spinner spinner--dark" style="width:30px;height:30px"></span><p style="margin-top:14px;font-weight:700;color:var(--ink)">${esc(UI.DEVICE_TYPE[v.type])} · ${esc(v.location)} 연결하는 중…</p></div>`);
         await new Promise(r => setTimeout(r, 1100));
         D().devices.push(v); closeSheet(); R.go(R.path());
       } });
     });
-    on('flow.finish', () => finishFlow(flow));
+    on('flow.finish', el => finishFlow(curFlow(), el));
   }
 
   /* 기기 추가 시트 (온보딩, 집 상세 등에서 공통 사용) */
@@ -483,10 +526,21 @@
   }
 
   /* 흐름 완료: 임시 입력값을 한 번에 저장 */
-  function finishFlow(flow) {
+  async function finishFlow(flow, el) {
     const d = D(); const me = Sel.me();
     const info = {};
     ['birth', 'conditions', 'medications'].forEach(k => { info[k] = d.info[k] === undefined ? null : d.info[k]; });
+    if (LIVE) {
+      // 서버가 건강 정보 + 집을 한 트랜잭션으로 저장 (실패하면 아무것도 저장되지 않음). 비밀번호·기기는 아직 없음
+      const home = d.homeMode === 'existing' && d.homeId ? { mode: 'existing', id: d.homeId } : { mode: 'new', address: d.address || '' };
+      try {
+        await UI.busy(el, () => Act.finishSetup({ info, home }));
+      } catch (e) { UI.showError(e); return; }
+      draft = null;
+      toast(flow === 'enable' ? '낙상 감지 대상으로 등록했어요' : '준비가 끝났어요', 'ok');
+      R.go('/', { replace: true });
+      return;
+    }
     Act.enableTarget(me.id, info);
     let homeId = d.homeId;
     if (d.homeMode === 'existing' && homeId) Act.linkHome(me.id, homeId);

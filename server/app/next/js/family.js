@@ -9,6 +9,9 @@
   const { Sel, Act } = FD.Store;
   const R = FD.Router;
   FD.Sheets = FD.Sheets || {};
+  const LIVE = FD.MODE === 'live';
+  // 실제 모드: 현관 비밀번호(H단계)는 아직 입력할 수 없으므로 '입력 필요' 표시는 주소만 기준으로
+  const needsInput = h => !h.address || (!LIVE && (!h.centralPw || !h.doorPw));
 
   /* ------------------------------------------------------------
    * 가족 T-03
@@ -52,7 +55,7 @@
           <div class="card">${homes.length ? homes.map(h => {
             const sum = Sel.homeSummary(h);
             return `<button class="row" data-action="home.open" data-id="${h.id}"><span class="det-ic det-ic--${sum.kind}" style="width:42px;height:42px">${ic('house')}</span>
-              <span class="row__main"><span class="row__title">${esc(Sel.homeName(h, me))}${(!h.address || !h.centralPw || !h.doorPw) ? ' <span class="tag tag--warn">입력 필요</span>' : ''}</span><span class="row__sub">${esc(UI.addr(h))}</span></span>${ic('chevron-right', 'chev')}</button>`;
+              <span class="row__main"><span class="row__title">${esc(Sel.homeName(h, me))}${needsInput(h) ? ' <span class="tag tag--warn">입력 필요</span>' : ''}</span><span class="row__sub">${esc(UI.addr(h))}</span></span>${ic('chevron-right', 'chev')}</button>`;
           }).join('') : `<div class="empty">${ic('house')}등록된 집이 없어요</div>`}</div></section>
         <section class="section" aria-label="그룹 설정"><div class="section__head"><h2 class="section__title">그룹 설정</h2></div>
           <div class="card"><button class="row row--danger" data-action="group.leave"><span class="row__main"><span class="row__title">그룹 나가기</span></span>${ic('chevron-right', 'chev')}</button></div></section>
@@ -149,37 +152,65 @@
   on('dev.add-home', el => FD.Sheets.addDevice(el.dataset.id));
   on('home.unlink', async el => {
     const ok = await UI.confirm({ title: '집 연결을 해제할까요?', body: '이 집의 낙상 알림을 감지 대상자로서 더 이상 받지 않아요. 가족 알림은 계속 받아요.', ok: '해제', cancel: '취소', danger: true });
-    if (ok) { Act.unlinkHome(Sel.meId(), el.dataset.id); toast('연결을 해제했어요'); R.go('/family', { replace: true }); }
+    if (!ok) return;
+    try {
+      await Act.unlinkHome(Sel.meId(), el.dataset.id);
+    } catch (e) { UI.showError(e); return; }
+    toast('연결을 해제했어요'); R.go('/family', { replace: true });
   });
 
   /* ---------------- 주소 수정 시트 ---------------- */
   FD.Sheets.editAddress = function (homeId) {
     const h = Sel.home(homeId); let base = '', results = [];
+    let manual = FD.API.addressSearch === false;   // 검색을 쓸 수 없거나 '직접 입력하기'를 고르면 직접 입력
     const draw = api => {
+      if (manual) {
+        api.replace(`<div class="notice" style="margin-bottom:14px">${ic('location-dot')}<span>119 신고가 필요할 때 이 주소가 전달돼요. 동·호수까지 정확히 입력해 주세요. 입력한 주소는 그룹 가족에게 공유돼요.</span></div>
+          ${field({ id: 'ae-base', label: '주소', placeholder: '예) 서울 마포구 월드컵로 100 한빛아파트', maxlength: 150, autocomplete: 'street-address' })}
+          ${field({ id: 'ae-detail', label: '동·호수', placeholder: '예) 101동 1203호', maxlength: 40, onenter: 'ae.save' })}
+          <button class="btn btn--primary btn--lg btn--block" data-action="ae.save">저장</button>
+          ${FD.API.addressSearch !== false ? `<button class="link-btn" style="margin-top:12px" data-action="ae.searchmode">주소 검색하기</button>` : ''}`);
+        return;
+      }
       api.replace(`${base ? `<div class="addr-picked">${ic('circle-check')}<span style="flex:1">${esc(base)}</span><button class="link-btn" data-action="ae.reset">변경</button></div>
           ${field({ id: 'ae-detail', label: '동·호수', placeholder: '예) 101동 1203호', onenter: 'ae.save' })}
           <button class="btn btn--primary btn--lg btn--block" data-action="ae.save">저장</button>`
         : `<div class="notice" style="margin-bottom:14px">${ic('location-dot')}<span>119 신고가 필요할 때 이 주소가 전달돼요. 동·호수까지 정확히 입력해 주세요. 입력한 주소는 그룹 가족에게 공유돼요.</span></div>
           <div class="inline-add"><input id="ae-q" type="search" placeholder="도로명, 건물명, 동 이름으로 검색" aria-label="주소 검색" data-onenter="ae.search"><button class="btn btn--primary" data-action="ae.search">검색</button></div>
-          <div class="addr-list" id="ae-results">${results.map((a, i) => `<button class="addr-item" data-action="ae.pick" data-i="${i}">${ic('location-dot')}<span>${esc(a)}</span></button>`).join('')}</div>`}`);
+          <div class="addr-list" id="ae-results">${results.map((a, i) => `<button class="addr-item" data-action="ae.pick" data-i="${i}">${ic('location-dot')}<span>${esc(a)}</span></button>`).join('')}</div>
+          ${LIVE ? `<button class="link-btn" style="margin-top:12px" data-action="ae.manual">검색이 안 되나요? 직접 입력하기</button>` : ''}`}`);
     };
     const api = openSheet({ title: h && h.address ? '주소 수정' : '주소 입력', html: '' });
     draw(api);
     on('ae.reset', () => { base = ''; results = []; draw(api); });
+    on('ae.manual', () => { manual = true; base = ''; results = []; draw(api); });
+    on('ae.searchmode', () => { manual = false; base = ''; results = []; draw(api); });
     on('ae.search', async () => {
-      results = await FD.API.searchAddress(document.getElementById('ae-q').value); draw(api);
+      try {
+        results = await FD.API.searchAddress(document.getElementById('ae-q').value);
+      } catch (e) { UI.showError(e); return; }   // 검색어 문제·횟수 초과·검색 불가 안내
+      draw(api);
       if (!results.length) document.getElementById('ae-results').innerHTML = '<p class="empty" style="padding:16px">검색 결과가 없어요.</p>';
     });
     on('ae.pick', el => { base = results[+el.dataset.i]; draw(api); document.getElementById('ae-detail').focus(); });
-    on('ae.save', () => {
+    on('ae.save', async el => {
+      if (manual) {
+        base = val('ae-base');
+        if (!base) { setError('ae-base', '주소를 입력해 주세요.'); return; }
+        setError('ae-base', '');
+      }
       const d = val('ae-detail'); if (!d) { setError('ae-detail', '동·호수까지 입력해 주세요.'); return; }
-      Act.updateHome(homeId, { address: base + ' ' + d }, Sel.meId(), '집 주소를 변경했어요');
+      try {
+        await UI.busy(el, () => Act.updateHome(homeId, { address: base + ' ' + d }, Sel.meId(), '집 주소를 변경했어요'));
+      } catch (e) { UI.showError(e, { address: manual ? 'ae-base' : 'ae-detail' }); return; }
       closeSheet(); toast('주소를 저장했어요', 'ok');
     });
   };
 
   /* ---------------- S-07 비밀번호 변경 시트 ---------------- */
   FD.Sheets.password = function (homeId, key) {
+    // 실제 모드: 비밀번호 저장·전달은 H단계(암호화 설계 후). 입력창을 열지 않음
+    if (LIVE) { toast('현관 비밀번호 등록은 아직 준비 중이에요. 안전하게 보관하는 기능을 만든 뒤 제공할게요.'); return; }
     const h = Sel.home(homeId); const label = key === 'centralPw' ? '중앙 현관 비밀번호' : '집 현관 비밀번호';
     openSheet({
       title: `${label} ${h[key] ? '변경' : '등록'}`,
@@ -202,6 +233,8 @@
 
   /* ---------------- 기기 추가 시트 ---------------- */
   FD.Sheets.addDevice = function (homeId) {
+    // 실제 모드: 기기 연결은 F단계. '연결하는 중…' 화면을 보여 주지 않도록 시트를 열지 않음
+    if (LIVE) { toast('기기 연결은 아직 준비 중이에요. 기기 연결 단계에서 제공할게요.'); return; }
     FD.Onboarding.deviceSheet({
       title: '카메라 추가',
       onSubmit: async (v, api) => {
