@@ -27,7 +27,7 @@ function eventItem(ev) {
       ["감지 시각", ev.time],
       ["처리 상태", eventStatusText(ev)],
       ["응답까지", ev.response_seconds === null || ev.response_seconds === undefined ? "-" : `${ev.response_seconds}초`],
-      ["보호자·119", ev.escalation_label || "-"],
+      ["알림·119", ev.escalation_label || "-"],
       ["감지 기기", ev.device_id],
     ]));
 }

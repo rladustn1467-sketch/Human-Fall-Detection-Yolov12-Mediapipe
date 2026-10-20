@@ -1,7 +1,7 @@
 // 사고 대응 패널: 가장 최근 낙상의 상태에 따라 한 번에 한 가지만 보여 줍니다.
 //   질문(괜찮아요·도움이 필요해요) / 도움 요청 보냄 / 괜찮다고 전함 / 진행 중인 확인 요청 없음
-// 본인 화면(screens/self.js)과, 모든 메뉴 위에 뜨는 사고 대응 레이어(incident/layer.js)가 함께 씁니다.
-// 응답 마감·보호자 알림·119(시뮬레이션) 판단은 모두 서버가 하고, 여기서는 서버 상태를 보여 주고 응답만 보냅니다.
+// 확인 화면(screens/self.js)과, 모든 메뉴 위에 뜨는 사고 대응 레이어(incident/layer.js)가 함께 씁니다.
+// 응답 마감·가족 알림·119(시뮬레이션) 판단은 모두 서버가 하고, 여기서는 서버 상태를 보여 주고 응답만 보냅니다.
 import { AuthError } from "../api.js";
 import { button, el } from "../ui.js";
 
@@ -78,8 +78,8 @@ export function createIncidentPanel({ api, statusPoller, config, onState }) {
 
   function answerButtons() {
     return [
-      button("괜찮아요", "보호자에게 괜찮다고 알려요", { className: "safe", onClick: () => answer("safe") }),
-      button("도움이 필요해요", "보호자에게 바로 알려요", { className: "help", onClick: () => answer("help_needed") }),
+      button("괜찮아요", "가족에게 괜찮다고 알려요", { className: "safe", onClick: () => answer("safe") }),
+      button("도움이 필요해요", "가족에게 바로 알려요", { className: "help", onClick: () => answer("help_needed") }),
     ];
   }
 
@@ -108,7 +108,7 @@ export function createIncidentPanel({ api, statusPoller, config, onState }) {
       if (state === "ask") {
         panel.append(countdown((s) => `${s}초 안에 눌러 주세요`, (e) => (e ? e.remaining_seconds : null)));
       } else {
-        panel.append(el("p", { className: "lead" }, "응답이 없어서 보호자에게 알렸어요. 지금이라도 눌러 주세요."));
+        panel.append(el("p", { className: "lead" }, "응답이 없어서 가족에게 알렸어요. 지금이라도 눌러 주세요."));
         if (reported(ev)) panel.append(el("p", {}, "119 신고(시뮬레이션)를 했어요. 실제 119에는 연락하지 않았어요."));
         else panel.append(reportCountdown());
       }
@@ -118,18 +118,18 @@ export function createIncidentPanel({ api, statusPoller, config, onState }) {
     if (state === "help_sent") {
       body.append(el("div", { className: "panel help" }, testBadge(ev),
         el("p", { className: "question" }, "도움 요청을 보냈어요"),
-        el("p", { className: "lead" }, "보호자에게 알렸어요. 움직이지 말고 기다려 주세요."),
+        el("p", { className: "lead" }, "가족에게 알렸어요. 움직이지 말고 기다려 주세요."),
         reported(ev) ? el("p", {}, "119 신고(시뮬레이션)를 했어요. 실제 119에는 연락하지 않았어요.") : reportCountdown()),
-        button("괜찮아졌어요", "보호자에게 괜찮다고 알려요", { className: "safe", onClick: () => answer("safe") }));
+        button("괜찮아졌어요", "가족에게 괜찮다고 알려요", { className: "safe", onClick: () => answer("safe") }));
       return;
     }
     // safe_sent
     body.append(el("div", { className: "panel safe" }, testBadge(ev),
       el("p", { className: "question" }, "괜찮다고 전했어요"),
       el("p", { className: "lead" }, reported(ev)
-        ? "이미 119 신고(시뮬레이션)가 된 뒤라 보호자에게 신고 취소를 요청했어요."
-        : "보호자에게 알렸어요.")),
-      button("다시 도움이 필요해요", "보호자에게 바로 알려요", { className: "help", onClick: () => answer("help_needed") }));
+        ? "이미 119 신고(시뮬레이션)가 된 뒤라 가족에게 신고 취소를 요청했어요."
+        : "가족에게 알렸어요.")),
+      button("다시 도움이 필요해요", "가족에게 바로 알려요", { className: "help", onClick: () => answer("help_needed") }));
   }
 
   function showNotice(text) {

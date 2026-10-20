@@ -93,12 +93,14 @@ server PC). Turn it off with `SHOW_DETAIL_IN_TELEGRAM=false` before using real i
 messages stay on Telegram's servers and the phone. A web link is added only when `PUBLIC_BASE_URL`
 is set.
 
-**User web app (`/app`, work in progress):** a large-text app for the person and guardians, served by
+**User web app (`/app`, work in progress):** a large-text app for the whole family, served by
 the same server from `server/app/` (plain HTML/CSS/JS, no build step). Log in once with
-`/login?token=...&next=/app`; the device then remembers whether it is the person's or a guardian's.
-The person's screen shows the current fall with big "괜찮아요" / "도움이 필요해요" buttons and the
-remaining time; the guardian screen is a placeholder for now. Colors and sizes are in
-`server/app/css/theme.css`, the polling interval in `server/app/js/config.js`.
+`/login?token=...&next=/app`. Devices are not split into "person" and "guardian": any family member
+can be watched by the detector and can also receive alerts. Menus: 홈, 낙상 예방, 낙상 감지, 생활 관리, 설정.
+While the app is open, a fall that needs an answer is shown on top of any menu with big "괜찮아요" /
+"도움이 필요해요" buttons and the remaining time (no web push yet; Telegram alerts work as before).
+Fall prevention content lives in `server/app/content/prevention/` (see its README). Colors and sizes are
+in `server/app/css/theme.css`, the polling interval in `server/app/js/config.js`.
 
 **Privacy:** only the processed silhouette image leaves the dashboard; original camera frames
 are never sent to the server or saved (the raw fall snapshot option is disabled).

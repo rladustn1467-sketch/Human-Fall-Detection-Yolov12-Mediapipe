@@ -36,7 +36,7 @@ export function render(container, { statusPoller, go }) {
         statusList([
           ["감지 시각", latest.time],
           ["처리 상태", eventStatusText(latest)],
-          ["보호자·119", latest.escalation_label || "-"],
+          ["알림·119", latest.escalation_label || "-"],
           ["감지 기기", latest.device_id],
         ]),
       );
