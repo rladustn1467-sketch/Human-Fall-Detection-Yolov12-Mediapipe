@@ -27,43 +27,52 @@
   }
   const page = (inner, foot) => `<main class="ob"><div class="ob__body">${inner}</div>${foot ? `<div class="ob__foot">${foot}</div>` : ''}</main>`;
 
-  /* ---------------- O-01 가입 ---------------- */
-  let signupMode = 'phone';
+  /* ---------------- O-01 가입 (휴대전화 번호 + 비밀번호) ---------------- */
+  // 비밀번호 규칙: 8~64자, 영문과 숫자를 모두 포함 (서버도 B단계에서 같은 규칙으로 다시 확인)
+  const PW_MIN = 8, PW_MAX = 64;
+  const pwRule = pw => {
+    if (pw.length < PW_MIN || pw.length > PW_MAX) return `비밀번호는 ${PW_MIN}~${PW_MAX}자로 입력해 주세요.`;
+    if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return '비밀번호에 영문과 숫자를 모두 넣어 주세요.';
+    return '';
+  };
+  // 비밀번호는 입력한 그대로 읽음 (val() 은 앞뒤 공백을 지우므로 쓰지 않음)
+  const rawVal = id => { const e = document.getElementById(id); return e ? e.value : ''; };
   R.register('/ob/signup', () => {
     const html = page(`
       ${top(0, 3, { noBack: true })}
       <div class="brand"><span class="brand__mark">${ic('shield-heart')}</span>지킴이</div>
       <div class="hero-art"><i class="fa-solid fa-house-medical" aria-hidden="true"></i><p>혼자 계셔도,<br>가족이 바로 알아요.</p></div>
       <h1 class="ob__title">계정을 만들어 주세요</h1>
-      <p class="ob__sub">사용하시는 분의 이름과 번호를 입력해 주세요.</p>
+      <p class="ob__sub">사용하시는 분의 이름, 휴대전화 번호, 비밀번호를 입력해 주세요.</p>
       <form class="ob__form" id="signup-form" novalidate>
-        <div class="segmented" role="tablist" style="margin-bottom:18px">
-          <button type="button" role="tab" class="${signupMode === 'phone' ? 'is-on' : ''}" data-action="signup.mode" data-mode="phone">휴대전화로 가입</button>
-          <button type="button" role="tab" class="${signupMode === 'email' ? 'is-on' : ''}" data-action="signup.mode" data-mode="email">이메일로 가입</button>
-        </div>
         ${field({ id: 'su-name', label: '이름', placeholder: '예) 김민준', autocomplete: 'name', maxlength: 20 })}
         ${field({ id: 'su-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', placeholder: '010-0000-0000', autocomplete: 'tel', oninput: 'phone-fmt' })}
-        ${signupMode === 'email' ? field({ id: 'su-email', label: '이메일', type: 'email', placeholder: 'name@example.com', autocomplete: 'email' }) : ''}
+        ${field({ id: 'su-pw', label: '비밀번호', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX, hint: `${PW_MIN}자 이상, 영문과 숫자를 모두 넣어 주세요.` })}
+        ${field({ id: 'su-pw2', label: '비밀번호 확인', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX })}
         <label class="check"><input type="checkbox" id="su-agree"><span>서비스 이용약관과 개인정보 수집·이용에 동의해요.</span></label>
         <p class="field__error" id="su-agree-err" role="alert" hidden></p>
       </form>`,
       `<button class="btn btn--primary btn--lg btn--block" data-action="signup.submit">계속하기</button>`);
     return html;
   });
-  on('signup.mode', el => { signupMode = el.dataset.mode; R.go('/ob/signup', { replace: false }); });
   UI.onInput('phone-fmt', t => { const d = t.value.replace(/\D/g, '').slice(0, 11); t.value = d.length > 7 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length > 3 ? `${d.slice(0, 3)}-${d.slice(3)}` : d; });
   on('signup.submit', () => {
-    const name = val('su-name'), phone = val('su-phone'), email = val('su-email');
+    const name = val('su-name'), phone = val('su-phone');
+    const password = rawVal('su-pw'), password2 = rawVal('su-pw2');
     let ok = true;
     setError('su-name', name.length < 2 ? '이름을 입력해 주세요.' : ''); if (name.length < 2) ok = false;
     setError('su-phone', !UI.validPhone(phone) ? '휴대전화 번호를 정확히 입력해 주세요.' : ''); if (!UI.validPhone(phone)) ok = false;
-    if (signupMode === 'email') { const bad = !UI.validEmail(email); setError('su-email', bad ? '이메일 주소를 확인해 주세요.' : ''); if (bad) ok = false; }
+    const pwErr = pwRule(password);
+    setError('su-pw', pwErr); if (pwErr) ok = false;
+    const pw2Err = !pwErr && password !== password2 ? '비밀번호가 서로 달라요. 다시 확인해 주세요.' : '';
+    setError('su-pw2', pw2Err); if (pw2Err) ok = false;
     const agreed = document.getElementById('su-agree').checked;
     const ae = document.getElementById('su-agree-err'); ae.hidden = agreed; ae.textContent = agreed ? '' : '약관에 동의해 주세요.';
     if (!agreed) ok = false;
     if (!ok) return;
     draft = null;
-    Act.createAccount({ name, phone: UI.fmtPhone(phone), email: signupMode === 'email' ? email : '' });
+    // 비밀번호는 서버로만 보냄 (B단계). 테스트 모드의 예시 저장소에는 저장하지 않음 (store.js createAccount 가 쓰지 않음)
+    Act.createAccount({ name, phone: UI.fmtPhone(phone), password });
     R.go('/ob/group');
   });
 
