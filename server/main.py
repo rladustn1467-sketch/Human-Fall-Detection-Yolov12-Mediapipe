@@ -26,6 +26,7 @@ import escalation
 import notify_rules
 import people as people_mod
 import report119
+import report_message
 import residents as residents_mod
 from notifiers import ButtonResult, NotificationDispatcher, build_notifiers, build_receivers
 
@@ -1035,6 +1036,24 @@ def report_page(event_id: str, request: Request):
     if not people_html:
         people_html = "<li>의료 정보 제외 (낙상자 미확인)</li>"
     after = f"<p>{esc(fallen_now)}</p>" if fallen_now else ""
+    # 모의 신고 메시지: 지금 등록된 정보로 화면에서만 만듦 (저장·로그·전송 없음). report_message.py
+    message = report_message.build(ev, report, c, d)
+    missing = esc(", ".join(message["missing"])) if message["missing"] else "없음"
+    message_html = f"""
+    <h3>모의 신고 메시지</h3>
+    <p style="background:#ffe1e1; padding:8px; border:2px solid #c62828"><b>🚫 실제 119에 전송되지 않았습니다.</b>
+       이 문구는 화면에만 표시되며 저장되거나 어디로도 보내지지 않습니다. 실제 신고가 필요하면 직접 119에 전화하세요.</p>
+    <textarea id="mock-report" readonly rows="18" style="width:100%; box-sizing:border-box; font-size:14px">{esc(message['text'])}</textarea>
+    <p><button type="button" id="copy-mock-report">메시지 복사</button> <span id="copy-result" aria-live="polite"></span></p>
+    <p><small>미등록 항목: {missing}</small></p>
+    <script>
+    // 이 기기의 클립보드에만 복사 (전화·문자·전송 없음)
+    document.getElementById("copy-mock-report").addEventListener("click", async function () {{
+      var box = document.getElementById("mock-report"), out = document.getElementById("copy-result");
+      try {{ await navigator.clipboard.writeText(box.value); out.textContent = "복사했어요"; }}
+      catch (e) {{ box.focus(); box.select(); out.textContent = document.execCommand("copy") ? "복사했어요" : "복사하지 못했어요. 직접 선택해 복사하세요"; }}
+    }});
+    </script>"""
     body = f"""
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex"><title>119 신고(시뮬레이션) 기록</title></head>
@@ -1050,6 +1069,7 @@ def report_page(event_id: str, request: Request):
         <li>보호자 연락처: {esc(d['contact'])}</li></ul>
     <h3>거주자 정보</h3><ul>{people_html}</ul>
     <p><small>전달 항목: {esc(', '.join(c['items']))}. 이 페이지의 값은 저장된 것이 아니라 현재 등록된 정보로 표시합니다.</small></p>
+    {message_html}
     <p><a href="/">기록으로</a></p>
     </body></html>"""
     # 브라우저·중간 서버에 저장되지 않게 함
