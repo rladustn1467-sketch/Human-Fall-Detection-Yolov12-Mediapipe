@@ -13,11 +13,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+import accounts
 import db
 import escalation
 import notify_rules
@@ -528,9 +530,83 @@ def get_image(event_id: str):
 
 
 # ---- 새 웹앱(/app/next) API: /api/v2 ----
-# A단계: 저장소 상태와 '로그인한 사람 없음' 상태만 알려 줌 (데이터 없음).
-# B단계부터 사용자 로그인을 확인하고, 로그인한 사람의 그룹 데이터만 돌려줌. 기존 /api/... 는 그대로.
+# 사용자 로그인(fd_session 쿠키)으로만 접근. 기존 /api/... 와 공용 토큰(감지 프로그램·대시보드·Android)은 그대로.
+# 그룹 관련 동작은 모두 '로그인한 사람의 그룹'에만 적용되므로 다른 가족의 그룹은 읽거나 바꿀 수 없음 (accounts.py)
 NO_STORE = {"Cache-Control": "no-store"}
+SESSION_COOKIE = "fd_session"
+# 로그인 쿠키의 Secure 설정: HTTPS 로 접속할 때만 켤 수 있음 (HTTP 에서 켜면 브라우저가 쿠키를 보내지 않아 로그인이 안 됨).
+# 비워 두면 접속 방식(https)에 따라 자동, true/false 로 고정 가능 (HTTPS 운영 시 true 권장)
+SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "").strip().lower()
+
+
+class SignupBody(BaseModel):
+    name: str = Field(max_length=100)
+    phone: str = Field(max_length=30)
+    password: str = Field(max_length=200)
+
+
+class LoginBody(BaseModel):
+    phone: str = Field(max_length=30)
+    password: str = Field(max_length=200)
+
+
+class JoinBody(BaseModel):
+    code: str = Field(max_length=20)
+
+
+class OnboardedBody(BaseModel):
+    onboarded: bool
+
+
+@app.exception_handler(accounts.AccountError)
+def _account_error(request: Request, exc: accounts.AccountError):
+    headers = dict(NO_STORE)
+    if exc.retry_after:
+        headers["Retry-After"] = str(exc.retry_after)
+    return JSONResponse({"message": exc.message, "field": exc.field}, status_code=exc.status, headers=headers)
+
+
+def _cookie_secure(request: Request):
+    if SESSION_COOKIE_SECURE in ("true", "1", "yes", "on"):
+        return True
+    if SESSION_COOKIE_SECURE in ("false", "0", "no", "off"):
+        return False
+    return request.url.scheme == "https"
+
+
+def _client_ip(request: Request):
+    return request.client.host if request.client else "unknown"
+
+
+def _check_origin(request: Request):
+    # 다른 사이트에서 몰래 보낸 요청(CSRF) 차단: 브라우저가 붙이는 Origin 이 이 서버 주소와 다르면 거절
+    origin = request.headers.get("origin")
+    if origin and urlparse(origin).netloc != request.headers.get("host", ""):
+        raise accounts.AccountError(403, "허용되지 않은 요청이에요.")
+
+
+def _current_user(conn, request: Request):
+    return accounts.session_user(conn, request.cookies.get(SESSION_COOKIE))
+
+
+def _require_user(conn, request: Request):
+    user_id = _current_user(conn, request)
+    if not user_id:
+        raise accounts.AccountError(401, "로그인이 필요해요. 다시 로그인해 주세요.")
+    return user_id
+
+
+def _state_response(conn, user_id):
+    return JSONResponse({"authenticated": True, "me_id": user_id, "state": accounts.state_for(conn, user_id)},
+                        headers=NO_STORE)
+
+
+def _logged_in_response(conn, request: Request, user_id):
+    response = _state_response(conn, user_id)
+    response.set_cookie(SESSION_COOKIE, accounts.create_session(conn, user_id),
+                        max_age=accounts.SESSION_DAYS * 86400, path="/",
+                        httponly=True, samesite="lax", secure=_cookie_secure(request))
+    return response
 
 
 @app.get("/api/v2/health")
@@ -540,16 +616,85 @@ def api_v2_health():
 
 
 @app.get("/api/v2/state")
-def api_v2_state():
-    # 젠스파크 store.js 의 상태 형식 (빈 값). 실제 모드에서는 이 값만 쓰고 예시 데이터는 쓰지 않음
-    now_ms = int(time.time() * 1000)
-    state = {
-        "version": 2, "live": True, "anchoredAt": now_ms,
-        "clock": {"realBase": now_ms, "virtBase": now_ms, "speed": 1},
-        "groups": [], "people": [], "homes": [], "devices": [],
-        "incidents": [], "history": [], "notifs": [],
-    }
-    return JSONResponse({"authenticated": False, "me_id": None, "state": state}, headers=NO_STORE)
+def api_v2_state(request: Request):
+    # 로그인한 사람: 본인과 본인 그룹 정보만. 로그인 전: 빈 상태 (예시 데이터는 쓰지 않음)
+    with db.session(DB_PATH) as conn:
+        user_id = _current_user(conn, request)
+        if user_id:
+            return _state_response(conn, user_id)
+    return JSONResponse({"authenticated": False, "me_id": None, "state": accounts.empty_state()}, headers=NO_STORE)
+
+
+@app.post("/api/v2/auth/signup")
+def api_v2_signup(body: SignupBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = accounts.signup(conn, body.name, body.phone, body.password, _client_ip(request))
+        return _logged_in_response(conn, request, user_id)
+
+
+@app.post("/api/v2/auth/login")
+def api_v2_login(body: LoginBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = accounts.authenticate(conn, body.phone, body.password, _client_ip(request))
+        return _logged_in_response(conn, request, user_id)
+
+
+@app.post("/api/v2/auth/logout")
+def api_v2_logout(request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        accounts.end_session(conn, request.cookies.get(SESSION_COOKIE))
+    response = JSONResponse({"authenticated": False, "me_id": None, "state": accounts.empty_state()}, headers=NO_STORE)
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax", secure=_cookie_secure(request))
+    return response
+
+
+@app.post("/api/v2/groups")
+def api_v2_create_group(request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.create_group(conn, user_id)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/groups/invite")
+def api_v2_new_invite(request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.regenerate_invite(conn, user_id)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/groups/join")
+def api_v2_join_group(body: JoinBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.join_group(conn, user_id, body.code)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/groups/leave")
+def api_v2_leave_group(request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.leave_group(conn, user_id)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/me/onboarded")
+def api_v2_onboarded(body: OnboardedBody, request: Request):
+    # B단계: 처음 설정 완료 표시만 (감지 대상·건강 정보 등 프로필은 C단계)
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.set_onboarded(conn, user_id, body.onboarded)
+        return _state_response(conn, user_id)
 
 
 # ---- 페이지 ----

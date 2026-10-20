@@ -16,6 +16,13 @@
      (뒤따르는 '완료했어요' 같은 안내가 잘못 표시되지 않도록). 안내는 store.js 가 보여 줍니다. */
   class NotReadyError extends Error {}
   FD.NotReadyError = NotReadyError;
+
+  /* 서버가 거절한 요청 (잘못된 입력, 로그인 실패, 시도 횟수 초과 등). message 는 사용자에게 그대로 보여 줄 문장,
+     field 는 오류를 표시할 입력 칸 이름(name/phone/password/code), status 0 은 서버에 연결하지 못한 경우 */
+  class ApiError extends Error {
+    constructor(status, message, field) { super(message); this.status = status; this.field = field || null; }
+  }
+  FD.ApiError = ApiError;
   const isNotReady = e => e instanceof NotReadyError;
   window.addEventListener('error', e => { if (isNotReady(e.error)) e.preventDefault(); });
   window.addEventListener('unhandledrejection', e => { if (isNotReady(e.reason)) e.preventDefault(); });

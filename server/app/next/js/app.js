@@ -16,7 +16,8 @@
   R.setGuard(p => {
     const me = Sel.me();
     const inOb = p.startsWith('/ob/') || p.startsWith('/enable/');
-    if (!me) return (p === '/ob/signup' || p === '/ob/join' || p === '/join') ? null : '/ob/signup';
+    if (!me) return (p === '/ob/signup' || p === '/ob/login' || p === '/ob/join' || p === '/join') ? null : '/ob/signup';
+    if (p === '/ob/login') return '/';   // 이미 로그인한 사람
     if (!me.groupId) return (p === '/ob/group' || p === '/ob/invite' || p === '/ob/join' || p === '/join') ? null : '/ob/group';
     if (me.onboarded === false && !inOb && p !== '/join') return '/ob/ask';
     if (p === '/ob/signup') return '/';

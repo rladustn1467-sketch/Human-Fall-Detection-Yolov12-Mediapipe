@@ -259,6 +259,23 @@
     if (i) i.classList.toggle('is-invalid', !!msg);
   }
   const val = id => { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
+  /* 서버 오류 표시 (실제 모드). fields: 서버의 칸 이름 → 화면 입력 칸 id (예: { phone: 'su-phone' }).
+     맞는 칸이 있으면 그 칸 아래에, 없으면 안내창으로. '준비 중' 오류는 이미 안내했으므로 그냥 넘어감 */
+  function showError(err, fields) {
+    if (FD.NotReadyError && err instanceof FD.NotReadyError) return;
+    if (FD.ApiError && err instanceof FD.ApiError) {
+      const id = fields && err.field ? fields[err.field] : null;
+      if (id && document.getElementById(id)) setError(id, err.message); else toast(err.message);
+      return;
+    }
+    console.error(err);
+    toast('문제가 생겼어요. 잠시 후 다시 시도해 주세요.');
+  }
+  /* 버튼을 누른 뒤 서버 응답이 올 때까지 같은 버튼을 다시 누를 수 없게 함 */
+  async function busy(el, fn) {
+    if (el) el.disabled = true;
+    try { return await fn(); } finally { if (el) el.disabled = false; }
+  }
   function toggle(on, action, extra) {
     return `<button type="button" class="switch${on ? ' is-on' : ''}" role="switch" aria-checked="${on ? 'true' : 'false'}" data-action="${action}" ${extra || ''}><span></span></button>`;
   }
@@ -315,6 +332,7 @@
     addr, pwLabel, SUGGEST_COND, SUGGEST_MED,
     esc, pad, mmss, elapsed, ago, clock, hm24, dateLabel, dateTime, secLabel, age, birthLabel, listLabel, fmtPhone, validPhone, validEmail,
     DEVICE_TYPE, DEVICE_ICON, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, qr,
-    tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody
+    tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody,
+    showError, busy
   };
 })();

@@ -20,8 +20,10 @@ import unittest
 import uuid
 from pathlib import Path
 
+import db
+
 SERVER_DIR = Path(__file__).resolve().parents[1]
-CODE_FILES = ["main.py", "db.py", "escalation.py", "notify_rules.py", "notifiers.py", "report119.py", "residents.py"]
+CODE_FILES = ["main.py", "db.py", "accounts.py", "escalation.py", "notify_rules.py", "notifiers.py", "report119.py", "residents.py"]
 
 
 def free_port():
@@ -58,10 +60,11 @@ class ServerCopy:
             raise RuntimeError("test server did not start")
         self.token = (self.dir / "access_token.txt").read_text(encoding="utf-8").strip()
 
-    def request(self, method, path, body=None, token=None):
-        """Raw request (the path is sent exactly as given, ../ included). Returns (status, headers, text)."""
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
-        headers = {}
+    def request(self, method, path, body=None, token=None, headers=None):
+        """Raw request (the path is sent exactly as given, ../ included). Returns (status, headers, text).
+        Response header names are lower case."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
+        headers = dict(headers or {})
         if token:
             headers["X-Access-Token"] = token
         data = None
@@ -72,7 +75,7 @@ class ServerCopy:
         res = conn.getresponse()
         text = res.read().decode("utf-8", errors="replace")
         conn.close()
-        return res.status, dict(res.getheaders()), text
+        return res.status, {k.lower(): v for k, v in res.getheaders()}, text
 
     def close(self):
         self.proc.terminate()
@@ -97,7 +100,7 @@ class ApiV2Test(unittest.TestCase):
     def test_health(self):
         status, headers, text = self.server.request("GET", "/api/v2/health")
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(text), {"ok": True, "db": "ok", "schema_version": 1})
+        self.assertEqual(json.loads(text), {"ok": True, "db": "ok", "schema_version": db.MIGRATIONS[-1][0]})
         self.assertEqual(headers.get("cache-control"), "no-store")
 
     def test_state_is_empty_and_not_logged_in(self):

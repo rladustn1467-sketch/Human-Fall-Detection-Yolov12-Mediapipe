@@ -222,6 +222,17 @@
     switchUser(id) { if (!person(state, id)) return; meId = id; if (!fixedUser) API.writeSession(id); notifySubs('session'); },
 
     signOut() { API.writeSession('__none__'); fixedUser = null; meId = null; notifySubs('session'); },
+    /* 로그인 (테스트 모드: 예시 데이터에 같은 번호가 있으면 로그인. 예시 데이터에는 비밀번호가 없어 확인하지 않음.
+       실제 모드에서는 아래 LIVE 부분이 서버 로그인으로 바꿈) */
+    signIn({ phone }) {
+      const digits = String(phone || '').replace(/\D/g, '');
+      const p = state.people.find(x => String(x.phone || '').replace(/\D/g, '') === digits);
+      if (!p) throw new FD.ApiError(401, '이 번호로 가입한 사람이 없어요 (테스트 모드 예시 데이터).', 'phone');
+      meId = p.id;
+      if (!fixedUser) API.writeSession(p.id);
+      notifySubs('session');
+      return p.id;
+    },
 
     /* 계정 · 그룹 */
     createAccount({ name, phone, email }) {
@@ -445,18 +456,74 @@
     clearIncidents() { commit(st => { st.incidents = []; }); }
   };
 
-  /* 실제 모드: 아직 서버 API 로 바꾸지 않은 동작은 아무것도 바꾸지 않고 안내만 한 뒤 처리를 멈춤
+  /* 실제 모드: 서버에 연결된 동작은 서버를 호출한 뒤 서버가 돌려준 상태로 화면을 다시 그림 (Promise 를 돌려줌).
+     아직 서버 API 로 바꾸지 않은 동작은 아무것도 바꾸지 않고 안내만 한 뒤 처리를 멈춤
      (뒤따르는 '완료했어요' 안내나 화면 이동이 잘못 일어나지 않도록 오류로 멈추고, mode.js 가 그 오류를 조용히 처리).
-     B단계부터 동작을 하나씩 서버 호출로 교체하고, 교체한 동작 이름을 SERVER_ACTIONS 에 추가합니다. */
+     동작을 서버 호출로 바꾸면 SERVER_ACTIONS 에 추가합니다. */
   if (LIVE) {
-    const SERVER_ACTIONS = new Set();
+    // 서버 응답으로 상태 교체. kind: 'session'(로그인한 사람이 바뀜) 또는 'commit'
+    function applyServer(data, kind) {
+      state = data.state;
+      meId = data.me_id || null;
+      notifySubs(kind || 'commit');
+    }
+    const myGroup = () => { const me = person(state, meId); return me && me.groupId ? state.groups.find(g => g.id === me.groupId) : null; };
+
+    /* 다른 가족의 변경(참여·나가기·새 초대 코드 등)을 반영: 화면을 보고 있는 동안 주기적으로,
+       다른 앱을 보다가 돌아왔을 때 바로 서버 상태를 다시 받음 (테스트 모드의 탭 간 저장소 공유를 대신함) */
+    const REFRESH_MS = 10000;
+    const DATA_KEYS = ['groups', 'people', 'homes', 'devices', 'incidents', 'history', 'notifs'];
+    const dataOf = st => JSON.stringify(DATA_KEYS.map(k => st && st[k]));
+    let refreshing = false;
+    async function refreshFromServer() {
+      if (!state || refreshing || document.visibilityState === 'hidden') return;
+      refreshing = true;
+      try {
+        const data = await API.fetchState();
+        if ((data.me_id || null) !== meId) applyServer(data, 'session');      // 다른 곳에서 로그아웃·세션 만료
+        else if (dataOf(data.state) !== dataOf(state)) applyServer(data, 'remote');
+      } catch (e) {
+        /* 잠시 연결이 끊김: 다음 주기에 다시 시도 */
+      } finally {
+        refreshing = false;
+      }
+    }
+    setInterval(refreshFromServer, REFRESH_MS);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromServer(); });
+    const SERVER_ACTIONS = {
+      /* B단계: 계정 · 그룹 */
+      async createAccount({ name, phone, password }) { applyServer(await API.signup({ name, phone, password }), 'session'); return meId; },
+      async signIn({ phone, password }) { applyServer(await API.login({ phone, password }), 'session'); return meId; },
+      async signOut() { applyServer(await API.logout(), 'session'); },
+      async createGroup() { applyServer(await API.createGroup()); return myGroup(); },
+      async regenInvite() { applyServer(await API.regenInvite()); const g = myGroup(); return g ? g.invite : null; },
+      /* 성공: {ok:true, group} / 코드 문제: {ok:false, reason} (화면 계약 그대로). 그 밖의 오류는 던짐 */
+      async joinGroup(personId, code) {
+        try {
+          applyServer(await API.joinGroup(code));
+          return { ok: true, group: myGroup() };
+        } catch (e) {
+          if (e instanceof FD.ApiError && e.field === 'code') return { ok: false, reason: e.message };
+          throw e;
+        }
+      },
+      async leaveGroup() { applyServer(await API.leaveGroup()); },
+      /* B단계는 '처음 설정 완료(onboarded)'만 서버에 저장. 다른 프로필 항목은 C단계 */
+      async updateProfile(personId, patch) {
+        const keys = Object.keys(patch || {});
+        if (keys.length === 1 && keys[0] === 'onboarded') { applyServer(await API.setOnboarded(!!patch.onboarded)); return; }
+        if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
+        throw new FD.NotReadyError('updateProfile');
+      }
+    };
     Object.keys(Act).forEach(name => {
-      if (SERVER_ACTIONS.has(name)) return;
+      if (SERVER_ACTIONS[name]) return;
       Act[name] = function notReady() {
         if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
         throw new FD.NotReadyError(name);
       };
     });
+    Object.assign(Act, SERVER_ACTIONS);
   }
 
   /* 구독 */

@@ -52,11 +52,41 @@
         <label class="check"><input type="checkbox" id="su-agree"><span>서비스 이용약관과 개인정보 수집·이용에 동의해요.</span></label>
         <p class="field__error" id="su-agree-err" role="alert" hidden></p>
       </form>`,
-      `<button class="btn btn--primary btn--lg btn--block" data-action="signup.submit">계속하기</button>`);
+      `<button class="btn btn--primary btn--lg btn--block" data-action="signup.submit">계속하기</button>
+       <button class="btn btn--ghost btn--lg btn--block" data-action="go.login">이미 계정이 있어요 · 로그인</button>`);
     return html;
   });
+  on('go.login', () => R.go('/ob/login'));
+  on('go.signup', () => R.go('/ob/signup'));
+
+  /* ---------------- 로그인 (휴대전화 번호 + 비밀번호) ---------------- */
+  R.register('/ob/login', () => page(`
+      <div class="brand" style="margin-top:22px"><span class="brand__mark">${ic('shield-heart')}</span>지킴이</div>
+      <h1 class="ob__title">다시 오셨네요</h1>
+      <p class="ob__sub">가입할 때 쓴 휴대전화 번호와 비밀번호를 입력해 주세요.</p>
+      <form class="ob__form" id="login-form" novalidate>
+        ${field({ id: 'lg-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', placeholder: '010-0000-0000', autocomplete: 'tel', oninput: 'phone-fmt' })}
+        ${field({ id: 'lg-pw', label: '비밀번호', type: 'password', autocomplete: 'current-password', maxlength: PW_MAX, onenter: 'login.submit' })}
+      </form>
+      <p style="text-align:center;margin-top:10px"><button type="button" class="btn btn--ghost" data-action="login.forgot">비밀번호를 잊으셨나요?</button></p>`,
+    `<button class="btn btn--primary btn--lg btn--block" data-action="login.submit">로그인</button>
+     <button class="btn btn--ghost btn--lg btn--block" data-action="go.signup">처음이에요 · 계정 만들기</button>`));
+  // 비밀번호 재설정은 문자 인증 단계에서 제공 (지금은 안내만)
+  on('login.forgot', () => toast('비밀번호 재설정은 준비 중이에요. 문자 인증이 생기면 제공할게요.'));
+  on('login.submit', async el => {
+    const phone = val('lg-phone'), password = rawVal('lg-pw');
+    let ok = true;
+    setError('lg-phone', !UI.validPhone(phone) ? '휴대전화 번호를 정확히 입력해 주세요.' : ''); if (!UI.validPhone(phone)) ok = false;
+    setError('lg-pw', password ? '' : '비밀번호를 입력해 주세요.'); if (!password) ok = false;
+    if (!ok) return;
+    try {
+      await UI.busy(el, () => Act.signIn({ phone: UI.fmtPhone(phone), password }));
+    } catch (e) { UI.showError(e, { phone: 'lg-phone', password: 'lg-pw' }); return; }
+    toast('로그인했어요', 'ok');
+    R.go('/', { replace: true });
+  });
   UI.onInput('phone-fmt', t => { const d = t.value.replace(/\D/g, '').slice(0, 11); t.value = d.length > 7 ? `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}` : d.length > 3 ? `${d.slice(0, 3)}-${d.slice(3)}` : d; });
-  on('signup.submit', () => {
+  on('signup.submit', async el => {
     const name = val('su-name'), phone = val('su-phone');
     const password = rawVal('su-pw'), password2 = rawVal('su-pw2');
     let ok = true;
@@ -71,8 +101,10 @@
     if (!agreed) ok = false;
     if (!ok) return;
     draft = null;
-    // 비밀번호는 서버로만 보냄 (B단계). 테스트 모드의 예시 저장소에는 저장하지 않음 (store.js createAccount 가 쓰지 않음)
-    Act.createAccount({ name, phone: UI.fmtPhone(phone), password });
+    // 비밀번호는 서버로만 보냄. 테스트 모드의 예시 저장소에는 저장하지 않음 (store.js createAccount 가 쓰지 않음)
+    try {
+      await UI.busy(el, () => Act.createAccount({ name, phone: UI.fmtPhone(phone), password }));
+    } catch (e) { UI.showError(e, { name: 'su-name', phone: 'su-phone', password: 'su-pw' }); return; }
     R.go('/ob/group');
   });
 
@@ -85,9 +117,11 @@
       <button class="choice" data-action="group.create"><span class="choice__ic">${ic('people-roof')}</span><span><span class="choice__t">우리 가족 그룹 만들기</span><span class="choice__s" style="display:block">처음이라면 새 그룹을 만들고 가족을 초대해요.</span></span></button>
       <button class="choice" data-action="group.join"><span class="choice__ic">${ic('qrcode')}</span><span><span class="choice__t">그룹에 참여하기</span><span class="choice__s" style="display:block">가족에게 받은 QR코드나 초대 코드로 들어가요.</span></span></button>
     </div>`));
-  on('group.create', () => {
+  on('group.create', async el => {
     const me = Sel.me();
-    if (!me.groupId) Act.createGroup(me.id);
+    try {
+      if (!me.groupId) await UI.busy(el, () => Act.createGroup(me.id));
+    } catch (e) { UI.showError(e); return; }
     R.go('/ob/invite');
   });
   on('group.join', () => R.go('/ob/join'));
@@ -107,14 +141,15 @@
       <button class="btn btn--soft" data-action="invite.share">${ic('share-nodes')} 공유하기</button>
     </div>`;
   }
-  function inviteMount(root) {
+  async function inviteMount(root) {
     const me = Sel.me();
     if (!me || !me.groupId) return;
-    const inv = Act.regenInvite(me.groupId, me.id);   // 초대할 때마다 새 코드 생성
-    const g = Sel.group(me.groupId);
+    try {
+      await Act.regenInvite(me.groupId, me.id);   // 초대할 때마다 새 코드 생성 (예전 코드는 쓸 수 없게 됨)
+    } catch (e) { UI.showError(e); return; }
+    const g = Sel.group(Sel.me().groupId);
     const card = root.querySelector('#invite-area');
-    if (card) { card.innerHTML = inviteBlock(g); UI.tick(card); }
-    void inv;
+    if (card && g && g.invite) { card.innerHTML = inviteBlock(g); UI.tick(card); }
   }
   on('invite.copy', () => { const g = Sel.group(Sel.me().groupId); UI.copy(g.invite.code, '초대 코드를 복사했어요'); });
   on('invite.share', async () => {
@@ -159,11 +194,16 @@
     };
   });
   UI.onInput('upper', t => { t.value = t.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
-  on('join.submit', () => {
+  on('join.submit', async el => {
     const code = val('join-code');
     if (code.length < 4) { setError('join-code', '초대 코드를 입력해 주세요.'); return; }
     const me = Sel.me();
-    const r = Act.joinGroup(me.id, code);
+    // 그룹 참여에는 계정이 필요함 (초대 링크로 먼저 들어온 경우)
+    if (!me) { toast('먼저 계정을 만들거나 로그인해 주세요.'); R.go('/ob/signup'); return; }
+    let r;
+    try {
+      r = await UI.busy(el, () => Act.joinGroup(me.id, code));
+    } catch (e) { UI.showError(e, { code: 'join-code' }); return; }
     if (!r.ok) { setError('join-code', r.reason); return; }
     stopScan();
     toast('그룹에 참여했어요', 'ok');
@@ -212,7 +252,12 @@
        <button class="btn btn--ghost btn--lg btn--block" data-action="ask.no">아니요 (알림만 받을게요)</button>`);
   });
   on('ask.yes', () => { draft = newDraft(); R.go('/ob/info'); });
-  on('ask.no', () => { Act.updateProfile(Sel.me().id, { onboarded: true }); R.go('/', { replace: true }); });
+  on('ask.no', async el => {
+    try {
+      await UI.busy(el, () => Act.updateProfile(Sel.me().id, { onboarded: true }));
+    } catch (e) { UI.showError(e); return; }
+    R.go('/', { replace: true });
+  });
 
   /* ---------------- O-06 ~ O-09 (ob / enable 공통) ---------------- */
   function flowBase(flow) { return '/' + flow; }

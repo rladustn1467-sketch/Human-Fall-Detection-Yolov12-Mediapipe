@@ -90,8 +90,12 @@
     const me = Sel.me(); const g = Sel.group(me.groupId);
     return {
       html: `${UI.subHeader('가족 초대하기')}<div class="page page--tight"><p class="ob__sub" style="margin-top:0">QR코드를 보여주거나 초대 코드를 알려주세요.</p><div id="invite-area"></div></div>`,
-      mount: root => {
-        const inv = Act.regenInvite(g.id, me.id);
+      mount: async root => {
+        let inv;
+        try {
+          inv = await Act.regenInvite(g.id, me.id);   // 초대할 때마다 새 코드 (예전 코드는 쓸 수 없게 됨)
+        } catch (e) { UI.showError(e); return; }
+        if (!inv) return;
         const link = location.href.split('#')[0] + '#/join?code=' + inv.code;
         root.querySelector('#invite-area').innerHTML = `<div class="invite-card">
           ${UI.qr(link, 176)}
@@ -213,7 +217,9 @@
   on('group.leave', async () => {
     const ok = await UI.confirm({ title: '그룹을 나갈까요?', body: '이 그룹의 알림을 받지 않고 정보를 볼 수 없어요. 계정은 유지돼요.', ok: '나가기', cancel: '취소', danger: true });
     if (!ok) return;
-    Act.leaveGroup(Sel.meId());
+    try {
+      await Act.leaveGroup(Sel.meId());
+    } catch (e) { UI.showError(e); return; }
     FD.Onboarding.resetDraft();
     toast('그룹에서 나갔어요');
     R.go('/ob/group', { replace: true });

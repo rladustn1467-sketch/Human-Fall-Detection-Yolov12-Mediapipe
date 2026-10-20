@@ -23,6 +23,44 @@ MIGRATIONS = [
            )""",
         "INSERT INTO app_meta (key, value) VALUES ('created_at', strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))",
     ]),
+    (2, "계정·로그인·그룹·초대 (accounts.py)", [
+        """CREATE TABLE groups (
+               id          TEXT PRIMARY KEY,
+               name        TEXT NOT NULL,
+               created_by  TEXT,
+               created_at  REAL NOT NULL
+           )""",
+        """CREATE TABLE users (
+               id            TEXT PRIMARY KEY,
+               name          TEXT NOT NULL,
+               phone         TEXT NOT NULL UNIQUE,      -- 숫자만 (01012345678)
+               password_hash TEXT NOT NULL,             -- scrypt$n$r$p$salt$hash (원문 없음)
+               group_id      TEXT REFERENCES groups(id) ON DELETE SET NULL,
+               onboarded     INTEGER NOT NULL DEFAULT 0,
+               created_at    REAL NOT NULL
+           )""",
+        "CREATE INDEX users_group ON users(group_id)",
+        """CREATE TABLE invites (
+               group_id    TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,  -- 그룹마다 유효한 코드 1개
+               code        TEXT NOT NULL UNIQUE,
+               created_by  TEXT,
+               created_at  REAL NOT NULL,
+               expires_at  REAL NOT NULL
+           )""",
+        """CREATE TABLE sessions (
+               token_hash  TEXT PRIMARY KEY,            -- 쿠키 값의 SHA-256 (쿠키 값 자체는 저장 안 함)
+               user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               created_at  REAL NOT NULL,
+               expires_at  REAL NOT NULL
+           )""",
+        "CREATE INDEX sessions_user ON sessions(user_id)",
+        """CREATE TABLE auth_failures (
+               id   INTEGER PRIMARY KEY,
+               key  TEXT NOT NULL,                      -- 예: login-phone:01012345678, login-ip:1.2.3.4
+               at   REAL NOT NULL
+           )""",
+        "CREATE INDEX auth_failures_key ON auth_failures(key, at)",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

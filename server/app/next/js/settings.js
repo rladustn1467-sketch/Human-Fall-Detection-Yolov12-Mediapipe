@@ -20,6 +20,7 @@
           <button class="row" data-action="settings.notif"><span class="det-dev__ic">${ic('bell')}</span><span class="row__main"><span class="row__title">알림 설정</span></span>${ic('chevron-right', 'chev')}</button>
         </div>
         <div class="card" style="margin-top:16px">
+          <button class="row" data-action="settings.logout"><span class="det-dev__ic">${ic('right-from-bracket')}</span><span class="row__main"><span class="row__title">로그아웃</span></span>${ic('chevron-right', 'chev')}</button>
           <button class="row row--danger" data-action="settings.withdraw"><span class="det-dev__ic" style="background:var(--stop-soft);color:var(--stop)">${ic('user-slash')}</span><span class="row__main"><span class="row__title">회원 탈퇴</span></span>${ic('chevron-right', 'chev')}</button>
         </div>
       </div>`;
@@ -91,6 +92,17 @@
       </div></div>`;
   }, { parent: '/settings', live: true });
   on('pref.toggle', el => { const k = el.dataset.key; const me = Sel.me(); Act.setPref(me.id, k, !(me.prefs[k] !== false)); });
+
+  /* ---------------- 로그아웃 ---------------- */
+  on('settings.logout', async el => {
+    const ok = await UI.confirm({ title: '로그아웃할까요?', body: '이 기기에서 로그아웃해요. 다시 쓰려면 휴대전화 번호와 비밀번호로 로그인해 주세요.', ok: '로그아웃', cancel: '취소' });
+    if (!ok) return;
+    try {
+      await UI.busy(el, () => Act.signOut());
+    } catch (e) { UI.showError(e); return; }
+    FD.Onboarding.resetDraft();
+    R.go('/ob/login', { replace: true });
+  });
 
   /* ---------------- S-09 회원 탈퇴 ---------------- */
   on('settings.withdraw', async () => {
