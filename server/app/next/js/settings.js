@@ -48,7 +48,7 @@
             : field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', value: me.phone, oninput: 'phone-fmt' })}
         </form>
         ${me.isTarget ? `<p class="group-label" style="margin-top:6px">건강 정보 <small>그룹 가족에게 공유돼요</small></p>
-          <section class="info-item"><div class="info-item__head"><h3>생년월일</h3></div><input type="date" id="pf-birth" value="${esc(me.birth || '')}" max="${new Date().toISOString().slice(0, 10)}" aria-label="생년월일"></section>
+          <section class="info-item"><div class="info-item__head"><h3>생년월일</h3></div>${UI.birthInput('pf-birth', me.birth)}</section>
           ${listBlock('conditions', '지병', UI.SUGGEST_COND, '지병이 없어요')}${listBlock('medications', '복용약', UI.SUGGEST_MED, '복용하는 약이 없어요')}` : `<div class="notice">${ic('circle-info')}<span>낙상 감지를 켜면 생년월일·지병·복용약을 입력할 수 있어요.</span></div>`}
         <button class="btn btn--primary btn--lg btn--block" style="margin-top:16px" data-action="prof.save">저장</button>
       </div>`,
@@ -69,10 +69,13 @@
     let ok = true;
     if (name.length < 2) { setError('pf-name', '이름을 입력해 주세요.'); ok = false; } else setError('pf-name', '');
     if (!UI.validPhone(phone)) { setError('pf-phone', '휴대전화 번호를 정확히 입력해 주세요.'); ok = false; } else setError('pf-phone', '');
+    const birthEl = document.getElementById('pf-birth');
+    const birth = birthEl ? UI.checkBirth(birthEl.value) : null;   // 감지 대상자만 입력칸이 있음
+    if (birth && birth.error) { setError('pf-birth', birth.error); ok = false; } else if (birthEl) setError('pf-birth', '');
     if (!ok) return;
     const patch = { name, phone: UI.fmtPhone(phone) };
     if (me.isTarget) {
-      const b = document.getElementById('pf-birth').value; patch.birth = b || null;
+      patch.birth = birth ? birth.value : null;   // 'YYYY-MM-DD' 또는 빈 값(null)
       ['conditions', 'medications'].forEach(k => {
         const none = document.getElementById('pn-' + k).checked;
         const tags = editors[k] ? editors[k].get() : [];

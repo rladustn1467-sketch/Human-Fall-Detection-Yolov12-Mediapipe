@@ -51,6 +51,36 @@
     if (d.length === 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
     return v;
   }
+  /* ---------- 생년월일: 숫자 8자리(YYYYMMDD) 입력 → 다 입력하면 1999-01-01 로 표시 ----------
+     저장 형식은 그대로 'YYYY-MM-DD' (서버도 같은 범위 1900-01-01 ~ 오늘을 다시 확인) */
+  const BIRTH_MIN = '1900-01-01';
+  const BIRTH_HINT = '숫자 8자리로 입력해 주세요 (예: 19990101)';
+  const birthDigits = v => String(v || '').replace(/\D/g, '').slice(0, 8);
+  const birthText = d => (d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}` : d);
+  /* { value: 'YYYY-MM-DD' 또는 null(빈 값), error: '' 또는 안내 문구 } */
+  function checkBirth(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return { value: null, error: '' };
+    const d = raw.replace(/\D/g, '');
+    if (d.length !== 8) return { value: null, error: '생년월일 8자리를 모두 입력해 주세요. (예: 19990101)' };
+    const y = +d.slice(0, 4), m = +d.slice(4, 6), day = +d.slice(6);
+    const dt = new Date(y, m - 1, day);
+    if (m < 1 || m > 12 || dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== day) {
+      return { value: null, error: '없는 날짜예요. 년·월·일을 다시 확인해 주세요.' };
+    }
+    const iso = birthText(d);
+    const n = new Date();
+    const today = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
+    if (iso < BIRTH_MIN) return { value: null, error: '1900년 1월 1일 이후 날짜로 입력해 주세요.' };
+    if (iso > today) return { value: null, error: '오늘 이후 날짜는 입력할 수 없어요.' };
+    return { value: iso, error: '' };
+  }
+  function birthInput(id, value) {
+    return `<input id="${id}" type="text" class="birth-input" inputmode="numeric" pattern="[0-9]*" maxlength="10" autocomplete="bday"
+        placeholder="예) 19990101" aria-label="생년월일 (숫자 8자리)" value="${esc(value || '')}" data-oninput="birth-fmt">
+      <p class="field__hint">${BIRTH_HINT}</p>
+      <p class="field__error" id="${id}-err" role="alert" hidden></p>`;
+  }
   const validPhone = v => /^01\d[-\s]?\d{3,4}[-\s]?\d{4}$/.test(String(v || '').trim());
   const validEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 
@@ -133,6 +163,29 @@
   const inputActions = {};
   function onInput(name, fn) { inputActions[name] = fn; }
   document.addEventListener('input', e => { const t = e.target; if (t.dataset && t.dataset.oninput && inputActions[t.dataset.oninput]) inputActions[t.dataset.oninput](t, e); });
+  /* 생년월일 입력: 숫자만 남기고, 8자리가 되면 1999-01-01 로 바꿈. 커서는 '앞에 있던 숫자 개수' 기준으로 되돌려
+     중간 수정·붙여넣기에도 튀지 않게 함. 1999-01-01 상태에서 '-' 바로 뒤를 지우면 그 앞 숫자를 지움 */
+  onInput('birth-fmt', (t, e) => {
+    const old = t.value;
+    const caret = t.selectionStart == null ? old.length : t.selectionStart;
+    let before = old.slice(0, caret).replace(/\D/g, '').length;
+    let d = old.replace(/\D/g, '');
+    const prev = t._birthDigits != null ? t._birthDigits : birthDigits(t.defaultValue);   // 처음 수정이면 화면에 있던 값 기준
+    if (e && e.inputType === 'deleteContentBackward' && d === prev && before > 0) {
+      d = d.slice(0, before - 1) + d.slice(before); before -= 1;
+    }
+    d = d.slice(0, 8);
+    before = Math.min(before, d.length);
+    const next = birthText(d);
+    if (next !== old) {
+      t.value = next;
+      let pos = 0, seen = 0;
+      while (pos < next.length && seen < before) { if (/\d/.test(next[pos])) seen++; pos++; }
+      try { t.setSelectionRange(pos, pos); } catch (err) { /* 일부 브라우저 */ }
+    }
+    t._birthDigits = d;
+    setError(t.id, d.length === 8 ? checkBirth(next).error : '');   // 다 입력했을 때만 검증, 입력 중에는 안내 숨김
+  });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
     const t = e.target;
@@ -331,6 +384,7 @@
   FD.UI = {
     addr, pwLabel, SUGGEST_COND, SUGGEST_MED,
     esc, pad, mmss, elapsed, ago, clock, hm24, dateLabel, dateTime, secLabel, age, birthLabel, listLabel, fmtPhone, validPhone, validEmail,
+    checkBirth, birthInput,
     DEVICE_TYPE, DEVICE_ICON, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, qr,
     tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody,
     showError, busy

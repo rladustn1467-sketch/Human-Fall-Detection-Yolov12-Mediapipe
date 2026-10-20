@@ -190,7 +190,9 @@ i.fa-solid { line-height: 1; }
 .info-item__head h3 { font-size: 16px; font-weight: 800; }
 .info-item__skipmsg { display: none; color: var(--ink-3); font-size: 14px; }
 .info-item.is-skipped .info-item__skipmsg { display: block; margin-top: 4px; }
-.info-item input[type="date"] { width: 100%; min-height: 52px; padding: 0 14px; border: 1.5px solid var(--line); border-radius: 12px; font-size: 17px; background: #fff; }
+.info-item input[type="date"], .info-item input.birth-input { width: 100%; min-height: 52px; padding: 0 14px; border: 1.5px solid var(--line); border-radius: 12px; font-size: 17px; background: #fff; }
+.info-item input.birth-input { letter-spacing: .02em; }
+.info-item input.birth-input.is-invalid { border-color: var(--stop); }
 .info-item .chips { margin: 10px 0; }
 
 /* ---------- 온보딩 ---------- */

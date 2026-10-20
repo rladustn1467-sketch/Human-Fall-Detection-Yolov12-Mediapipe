@@ -288,7 +288,7 @@
           <h1 class="ob__title" style="margin-top:10px">건강 정보를 알려주세요</h1>
           <p class="ob__sub">그룹 가족에게 공유돼요.</p>
           <div style="margin-top:22px">
-            ${card('birth', '생년월일', `<input type="date" id="info-birth" max="${new Date().toISOString().slice(0, 10)}" value="${esc(i.birth || '')}" aria-label="생년월일">`)}
+            ${card('birth', '생년월일', UI.birthInput('info-birth', i.birth))}
             ${listCard('conditions', '지병', UI.SUGGEST_COND, '지병이 없어요')}
             ${listCard('medications', '복용약', UI.SUGGEST_MED, '복용하는 약이 없어요')}
           </div>`,
@@ -316,7 +316,7 @@
     function collectInfo() {
       const d = D(), i = d.info;
       const b = document.getElementById('info-birth');
-      if (b && i.birth !== null) i.birth = b.value || undefined;
+      if (b && i.birth !== null) i.birth = b.value.trim() || undefined;   // 입력한 그대로 보관 (확인은 '다음'에서)
       ['conditions', 'medications'].forEach(k => {
         const el = document.getElementById('tags-' + k), none = document.getElementById('none-' + k);
         if (!el || i[k] === null) return;
@@ -326,6 +326,12 @@
     }
     on('info.next', () => {
       collectInfo();
+      const i = D().info;
+      if (i.birth !== null && i.birth !== undefined) {   // 건너뛰지 않은 생년월일: 실제 있는 날짜인지 확인 후 'YYYY-MM-DD' 로
+        const r = UI.checkBirth(i.birth);
+        if (r.error) { setError('info-birth', r.error); document.getElementById('info-birth').focus(); return; }
+        i.birth = r.value || undefined;
+      }
       R.go(curBase() + '/address');
     });
 
