@@ -1,0 +1,19 @@
+{
+  "name": "fall-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "새 웹앱(server/app/next)을 서버 주소에서 불러오는 Capacitor 안드로이드 앱 (1단계: 감싸기만)",
+  "scripts": {
+    "sync:dev": "node scripts/sync-dev.mjs",
+    "open": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "typescript": "5.9.3"
+  }
+}
