@@ -343,6 +343,24 @@
         }
       });
     },
+    /* 현관 비밀번호 (테스트 모드: 값은 저장하지 않고 등록 여부만. 실제 모드는 아래 SERVER_ACTIONS 가 서버에 암호화 저장)
+       kind: 'central'(중앙 현관) / 'door'(집 현관) */
+    setDoorCode(homeId, kind, code, actorId) {
+      const key = kind === 'central' ? 'centralPw' : 'doorPw', label = kind === 'central' ? '중앙 현관 비밀번호' : '집 현관 비밀번호';
+      const was = !!home(state, homeId)[key];
+      Act.updateHome(homeId, { [key]: true, [kind + 'Access']: 'code' }, actorId, `${label}를 ${was ? '변경' : '등록'}했어요`);
+    },
+    /* 현관 출입 방식 (테스트 모드). 비밀번호가 아닌 방식이면 그 현관의 등록 표시만 지움 (다른 현관은 그대로) */
+    setEntrance(homeId, kind, method, code, actorId) {
+      const key = kind === 'central' ? 'centralPw' : 'doorPw', name = kind === 'central' ? '중앙 현관' : '집 현관';
+      const patch = { [kind + 'Access']: method };
+      if (method !== 'code') patch[key] = false; else if (code) patch[key] = true;
+      Act.updateHome(homeId, patch, actorId, `${name} 출입 방식을 변경했어요`);
+    },
+    deleteDoorCode(homeId, kind, actorId) {
+      const key = kind === 'central' ? 'centralPw' : 'doorPw', label = kind === 'central' ? '중앙 현관 비밀번호' : '집 현관 비밀번호';
+      Act.updateHome(homeId, { [key]: false }, actorId, `${label}를 삭제했어요`);
+    },
 
     /* 기기 */
     addDevice(homeId, { type, location }, actorId) {
@@ -527,17 +545,22 @@
         applyServer(await API.updateProfile(body));
       },
       async setPref(personId, key, val) { applyServer(await API.setPref(key, !!val)); },
-      /* 처음 설정 완료: 건강 정보 + 집을 서버가 한 번에 저장 (전부 저장되거나 전부 취소) */
-      async finishSetup({ info, home }) { applyServer(await API.finishSetup(info, home)); },
+      /* 처음 설정 완료: 건강 정보 + 집 + 현관 출입 방식·비밀번호를 서버가 한 번에 저장 (전부 저장되거나 전부 취소) */
+      async finishSetup({ info, home, entrances }) { applyServer(await API.finishSetup(info, home, entrances)); },
       async linkHome(personId, homeId) { applyServer(await API.linkHome(homeId)); },
       async unlinkHome(personId, homeId) { applyServer(await API.unlinkHome(homeId)); },
-      /* 집: 주소만 서버에 저장. 현관 비밀번호는 H단계(암호화 설계 후) */
+      /* 집: 주소. 현관 비밀번호는 아래 setDoorCode / deleteDoorCode 로 */
       async updateHome(homeId, patch) {
         const keys = Object.keys(patch || {});
         if (keys.length === 1 && keys[0] === 'address') { applyServer(await API.updateHomeAddress(homeId, patch.address)); return; }
-        if (FD.UI) FD.UI.toast('현관 비밀번호 등록은 아직 준비 중이에요');
+        if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
         throw new FD.NotReadyError('updateHome');
       },
+      /* 현관 비밀번호: 서버가 암호화해 저장. 화면은 등록 여부만 받음 (값은 다시 받지 않음) */
+      async setDoorCode(homeId, kind, code) { applyServer(await API.setDoorCode(homeId, kind, code)); },
+      async deleteDoorCode(homeId, kind) { applyServer(await API.deleteDoorCode(homeId, kind)); },
+      /* 현관 출입 방식 (+ 비밀번호 방식이면 입력한 비밀번호). 비워 두면 서버에 등록된 비밀번호는 그대로 */
+      async setEntrance(homeId, kind, method, code) { applyServer(await API.setEntrance(homeId, kind, method, code || null)); },
       /* 회원 탈퇴: 비밀번호를 다시 확인한 뒤 서버가 한 번에 삭제 */
       async withdraw(personId, password) { applyServer(await API.withdraw(password), 'session'); }
     };

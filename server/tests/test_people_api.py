@@ -77,6 +77,25 @@ class PeopleApiTest(unittest.TestCase):
         self.assertEqual(b.call("POST", f"/api/v2/homes/{home_id}/address", {"address": "서울 3"})[0], 403)
         self.assertEqual(b.call("POST", f"/api/v2/homes/{home_id}/link")[0], 200)
 
+    def test_link_existing_home_without_address(self):
+        # 초대한 사람이 주소를 건너뛴 집(주소 없음)에 참여한 가족이 연결: 새 집이 생기지 않음
+        a = self.member("가족에이")
+        self.assertEqual(self.setup(a)[0], 200)
+        home_id = a.state()["state"]["homes"][0]["id"]
+        b = self.member("가족비", self.code(a))
+        c = self.member("알림만씨", self.code(a))
+        status, _, data = self.setup(b, home={"mode": "existing", "id": home_id})
+        self.assertEqual(status, 200, data)
+        self.assertEqual([h["id"] for h in data["state"]["homes"]], [home_id])
+        self.assertEqual(self.me(b)["homeIds"], [home_id])
+        # 알림만 받는 가족(감지 대상 아님)이 연결 주소를 직접 보내도 거절, 수정 권한도 없음
+        status, _, data = c.call("POST", f"/api/v2/homes/{home_id}/link")
+        self.assertEqual(status, 409, data)
+        self.assertEqual(self.me(c)["homeIds"], [])
+        self.assertEqual(c.call("POST", f"/api/v2/homes/{home_id}/address", {"address": "서울"})[0], 403)
+        # 없는 집 id
+        self.assertEqual(b.call("POST", "/api/v2/homes/h_nothing/link")[0], 404)
+
     def test_other_group_ids_sent_directly_are_rejected(self):
         a = self.member("가족에이")
         c = self.member("다른집씨")

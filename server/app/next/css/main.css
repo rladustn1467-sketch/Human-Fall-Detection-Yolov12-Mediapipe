@@ -205,7 +205,8 @@ i.fa-solid { line-height: 1; }
 .ob__title { font-size: 27px; font-weight: 800; letter-spacing: -0.035em; line-height: 1.28; margin-top: 8px; }
 .ob__sub { color: var(--ink-2); margin-top: 10px; font-size: 16px; }
 .ob__form { margin-top: 26px; }
-.ob__foot { position: sticky; bottom: 0; padding: 14px 0 calc(18px + env(safe-area-inset-bottom)); background: linear-gradient(to top, var(--bg) 70%, rgba(244, 241, 234, 0)); display: grid; gap: 10px; }
+/* 가입·처음 설정 아래 버튼: 화면에 고정하지 않고 내용 끝에 둠 (내용이 짧으면 .ob 의 min-height 로 화면 아래쪽에 위치) */
+.ob__foot { padding: 14px 0 calc(18px + env(safe-area-inset-bottom)); display: grid; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--primary-d); }
 .brand__mark { width: 38px; height: 38px; border-radius: 12px; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 18px; }
 .hero-art { margin: 8px 0 4px; height: 120px; border-radius: var(--r-lg); background: linear-gradient(135deg, #1B6A72, #2F8F96 60%, #7CC0B6); position: relative; overflow: hidden; color: #fff; display: flex; align-items: center; padding: 0 22px; gap: 14px; }
@@ -225,11 +226,22 @@ i.fa-solid { line-height: 1; }
 .qr svg { width: 100%; height: 100%; display: block; }
 .qr--none { display: grid; place-items: center; font-size: 60px; color: var(--ink-3); }
 .expire { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; color: var(--ink-2); font-size: 14px; font-weight: 600; }
-.scanner { height: 220px; border-radius: var(--r-lg); background: #0F1D21; position: relative; overflow: hidden; display: grid; place-items: center; color: #9CB5B8; }
-.scanner__frame { width: 150px; height: 150px; border-radius: 22px; border: 3px solid rgba(255, 255, 255, .85); position: relative; }
+/* --scan-gap: 안내 문구 아래 여백 = 사각형과 안내 문구 사이 여백 (같은 값). --scan-line: 안내 문구 한 줄 높이 */
+.scanner { --scan-gap: 14px; --scan-line: 20px; height: 220px; border-radius: var(--r-lg); background: #0F1D21; position: relative; overflow: hidden; display: grid; place-items: center; color: #9CB5B8; }
+.scanner__frame { width: 150px; height: 150px; border-radius: 22px; border: 3px solid rgba(255, 255, 255, .85); position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--scan-gap) * 2 + var(--scan-line)); }
 .scanner__frame::after { content: ''; position: absolute; left: 8px; right: 8px; height: 3px; background: #5EE0D0; border-radius: 3px; top: 10%; animation: scan 2s ease-in-out infinite alternate; box-shadow: 0 0 12px #5EE0D0; }
 @keyframes scan { to { top: 88%; } }
-.scanner p { position: absolute; bottom: 14px; font-size: 14px; }
+.scanner p { position: absolute; bottom: var(--scan-gap); font-size: 14px; left: 16px; right: 16px; text-align: center; line-height: var(--scan-line); text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+.scanner.is-error p { color: #FFD2CC; }
+/* 카메라가 켜졌을 때: 사각형 밖을 어둡게 해서 사각형과 안내가 잘 보이게 */
+.scanner.is-live .scanner__frame { box-shadow: 0 0 0 999px rgba(0, 0, 0, .45); }
+.scanner.is-live p { color: #fff; }
+.scanner.is-live.is-error p { color: #FFD2CC; }
+/* 카메라를 쓰지 못한 경우: 사각형을 숨기고 안내를 가운데에 */
+.scanner.is-error:not(.is-live) .scanner__frame { display: none; }
+.scanner.is-error:not(.is-live) p { bottom: auto; top: 50%; transform: translateY(-50%); font-size: 15px; }
+.scanner__close { position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); color: #fff; font-size: 18px; display: grid; place-items: center; cursor: pointer; }
+.scanner__close[hidden] { display: none; }
 .addr-list { display: grid; gap: 8px; margin-top: 12px; }
 .addr-item { text-align: left; background: #fff; border: 1.5px solid var(--line); border-radius: 14px; padding: 14px 16px; font-weight: 600; display: flex; gap: 10px; align-items: center; }
 .addr-item i { color: var(--primary); }

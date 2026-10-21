@@ -371,10 +371,13 @@ def _person(row, home_ids=()):
     }
 
 
-def _home(row):
-    # centralPw/doorPw: 현관 비밀번호 등록 여부. 저장 기능은 H단계라 지금은 항상 '미등록'
+def _home(row, codes=None, access=None):
+    # centralPw/doorPw: 현관 비밀번호 '등록 여부'만 (값은 화면에 보내지 않음, door_codes.py)
+    # centralAccess/doorAccess: 출입 방식 (code/key/absent, code/key/unlocked, None = 미설정)
+    codes, access = codes or {}, access or {}
     return {"id": row["id"], "groupId": row["group_id"], "address": row["address"],
-            "centralPw": False, "doorPw": False}
+            "centralPw": bool(codes.get("central")), "doorPw": bool(codes.get("door")),
+            "centralAccess": access.get("central"), "doorAccess": access.get("door")}
 
 
 def empty_state(now=None):
@@ -410,5 +413,16 @@ def state_for(conn, user_id, now=None):
                                WHERE h.group_id = ? ORDER BY hm.linked_at""", (me["group_id"],)):
         links.setdefault(row["user_id"], []).append(row["home_id"])
     state["people"] = [_person(m, links.get(m["id"], ())) for m in members]
-    state["homes"] = [_home(h) for h in homes]
+    codes = {}
+    if homes:
+        marks = ",".join("?" * len(homes))
+        for row in conn.execute(f"SELECT home_id, kind FROM home_door_codes WHERE home_id IN ({marks})",
+                                [h["id"] for h in homes]):
+            codes.setdefault(row["home_id"], {})[row["kind"]] = True
+    access = {}
+    if homes:
+        for row in conn.execute(f"SELECT home_id, kind, method FROM home_entrances WHERE home_id IN ({marks})",
+                                [h["id"] for h in homes]):
+            access.setdefault(row["home_id"], {})[row["kind"]] = row["method"]
+    state["homes"] = [_home(h, codes.get(h["id"]), access.get(h["id"])) for h in homes]
     return state

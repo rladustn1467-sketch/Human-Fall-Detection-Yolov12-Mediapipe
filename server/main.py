@@ -12,16 +12,19 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 import accounts
 import address_search
 import db
+import door_codes
 import escalation
 import notify_rules
 import people as people_mod
@@ -390,6 +393,8 @@ _load_events()
 # 새 웹앱 데이터베이스 준비 (없으면 만들고, 필요한 스키마 변경을 적용)
 DB_SCHEMA_VERSION = db.init(DB_PATH)
 print(f"[db] 웹앱 데이터베이스: {DB_PATH.name} (스키마 버전 {DB_SCHEMA_VERSION})")
+# 현관 비밀번호 암호화 키 (server/.env 의 DOOR_CODE_KEY). 키 값은 출력하지 않음
+print(f"[door] 현관 비밀번호 저장: {door_codes.configure(os.environ.get('DOOR_CODE_KEY', ''))}")
 
 
 # ---- API ----
@@ -589,6 +594,19 @@ class SetupHome(BaseModel):
 class SetupBody(BaseModel):
     info: SetupInfo
     home: SetupHome
+    # 현관 비밀번호 {"central": "...", "door": "..."}: 형식 검사는 door_codes.py 에서 (오류 응답에 값이 나오지 않게 Any)
+    doors: Optional[Dict[str, Any]] = None
+    # 현관 출입 방식 {"central": {"method", "code"}, "door": {...}} (검사는 door_codes.py)
+    entrances: Optional[Dict[str, Any]] = None
+
+
+class DoorCodeBody(BaseModel):
+    code: Any = None   # door_codes.clean_code 가 검사 (FastAPI 형식 오류는 입력값을 되돌려 주므로 여기서는 검사하지 않음)
+
+
+class EntranceBody(BaseModel):
+    method: Any = None   # door_codes.clean_method 가 검사
+    code: Any = None     # 비밀번호 방식일 때만. 비워 두면 등록된 비밀번호를 그대로 둠
 
 
 class AddressBody(BaseModel):
@@ -597,6 +615,16 @@ class AddressBody(BaseModel):
 
 class PasswordBody(BaseModel):
     password: str = Field(max_length=200)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    # /api/v2 는 입력값(비밀번호·현관 비밀번호 등)을 오류 응답에 되돌려 주지 않음. 다른 주소는 FastAPI 기본 그대로
+    if not request.url.path.startswith("/api/v2/"):
+        return await request_validation_exception_handler(request, exc)
+    detail = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", ""), "type": e.get("type", "")} for e in exc.errors()]
+    return JSONResponse({"message": "요청 형식이 올바르지 않아요.", "field": None, "detail": detail},
+                        status_code=422, headers=NO_STORE)
 
 
 @app.exception_handler(accounts.AccountError)
@@ -764,7 +792,8 @@ def api_v2_setup(body: SetupBody, request: Request):
     _check_origin(request)
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
-        people_mod.finish_setup(conn, user_id, body.info.model_dump(), body.home.model_dump())
+        people_mod.finish_setup(conn, user_id, body.info.model_dump(), body.home.model_dump(), doors=body.doors,
+                                entrances=body.entrances)
         return _state_response(conn, user_id)
 
 
@@ -792,6 +821,35 @@ def api_v2_home_address(home_id: str, body: AddressBody, request: Request):
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
         people_mod.update_home_address(conn, user_id, home_id, body.address)
+        return _state_response(conn, user_id)
+
+
+# 현관 비밀번호: 등록·변경·삭제만 (값을 돌려주는 주소는 없음). 그 집에 연결된 가족만, 내 그룹의 집만 (door_codes.py)
+@app.put("/api/v2/homes/{home_id}/door-codes/{kind}")
+def api_v2_put_door_code(home_id: str, kind: str, body: DoorCodeBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        door_codes.put(conn, user_id, home_id, kind, body.code)
+        return _state_response(conn, user_id)
+
+
+@app.put("/api/v2/homes/{home_id}/entrances/{kind}")
+def api_v2_put_entrance(home_id: str, kind: str, body: EntranceBody, request: Request):
+    # 현관 출입 방식 (+ 비밀번호 방식이면 비밀번호). 다른 방식으로 바꾸면 이 현관의 비밀번호만 삭제
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        door_codes.set_entrance(conn, user_id, home_id, kind, body.method, body.code)
+        return _state_response(conn, user_id)
+
+
+@app.delete("/api/v2/homes/{home_id}/door-codes/{kind}")
+def api_v2_delete_door_code(home_id: str, kind: str, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        door_codes.delete(conn, user_id, home_id, kind)
         return _state_response(conn, user_id)
 
 

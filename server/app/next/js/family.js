@@ -10,8 +10,8 @@
   const R = FD.Router;
   FD.Sheets = FD.Sheets || {};
   const LIVE = FD.MODE === 'live';
-  // 실제 모드: 현관 비밀번호(H단계)는 아직 입력할 수 없으므로 '입력 필요' 표시는 주소만 기준으로
-  const needsInput = h => !h.address || (!LIVE && (!h.centralPw || !h.doorPw));
+  // 주소가 없거나, 현관 출입 방식이 미설정이거나, 비밀번호 방식인데 미등록이면 '입력 필요' (열쇠·없음은 해당 없음)
+  const needsInput = h => !h.address || UI.entrance(h, 'central').needsInput || UI.entrance(h, 'door').needsInput;
 
   /* ------------------------------------------------------------
    * 가족 T-03
@@ -129,13 +129,15 @@
     const can = Sel.canEditHome(h.id, me);
     const people = Sel.linked(h.id);
     const devs = Sel.devices(h.id);
-    const pw = (label, reg, key) => `<div class="kv__row" style="align-items:center"><span class="kv__k">${label}</span><span class="kv__v" style="display:flex;align-items:center;gap:10px"><span class="tag ${reg ? 'tag--ok' : 'tag--warn'}">${ic(reg ? 'lock' : 'lock-open')} ${UI.pwLabel(reg)}</span>${can ? `<button class="link-btn" data-action="pw.edit" data-id="${h.id}" data-key="${key}">${reg ? '변경' : '등록'}</button>` : ''}</span></div>`;
+    // 현관: 실제 출입 방식과 비밀번호 등록 여부만 표시 (값은 없음). 수정·삭제는 그 집에 연결된 가족만
+    const entRow = kind => { const e = UI.entrance(h, kind);
+      return `<div class="kv__row" style="align-items:center"><span class="kv__k">${e.name}</span><span class="kv__v" style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px 10px"><span class="tag ${e.needsInput ? 'tag--warn' : 'tag--ok'}" data-entrance="${kind}">${ic(e.icon)} ${e.label}</span>${can ? `<button class="link-btn" data-action="ent.edit" data-id="${h.id}" data-kind="${kind}">${e.method ? '변경' : '설정'}</button>` : ''}${can && e.registered ? `<button class="link-btn" style="color:var(--stop)" data-action="pw.delete" data-id="${h.id}" data-key="${e.pwKey}">삭제</button>` : ''}</span></div>`; };
     return `${UI.subHeader('집 상세')}
       <div class="page page--tight">
         <div class="card card--pad"><div class="kv">
           <div class="kv__row"><span class="kv__k">집 이름</span><span class="kv__v">${esc(Sel.homeName(h, me))}</span></div>
           <div class="kv__row"><span class="kv__k">주소</span><span class="kv__v" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><span class="${h.address ? '' : 'muted'}">${esc(UI.addr(h))}</span>${can ? `<button class="link-btn" data-action="addr.edit" data-id="${h.id}">${h.address ? '수정' : '입력'}</button>` : ''}</span></div>
-          ${pw('중앙 현관 비밀번호', h.centralPw, 'centralPw')}${pw('집 현관 비밀번호', h.doorPw, 'doorPw')}
+          ${entRow('central')}${entRow('door')}
         </div>
         <div class="notice notice--lock" style="margin-top:8px">${ic('lock')}<span>비밀번호는 가족에게도 보이지 않고, 119 신고가 접수될 때만 구급대에 전달돼요.</span></div></div>
         <section class="section"><div class="section__head"><h2 class="section__title">연결된 사람</h2></div>
@@ -144,12 +146,41 @@
           <div class="card">${devs.length ? devs.map(d => `<button class="row" data-action="dev.open" data-id="${d.id}"><span class="det-dev__ic" style="${d.status === 'disconnected' ? 'background:var(--stop-soft);color:var(--stop)' : ''}">${ic(UI.DEVICE_ICON[d.type])}</span>
             <span class="row__main"><span class="row__title">${esc(UI.deviceName(d))}</span></span><span class="tag ${d.status === 'ok' ? 'tag--ok' : d.status === 'off' ? '' : 'tag--stop'}">${UI.STATUS_LABEL[d.status]}</span></button>`).join('') : `<div class="empty">${ic('video-slash')}연결된 기기가 없어요</div>`}</div></section>
         ${can ? '' : `<div class="notice" style="margin-top:20px">${ic('circle-info')}<span>이 집에 연결된 가족만 정보를 수정할 수 있어요.</span></div>`}
-        ${can ? `<button class="btn btn--ghost btn--block" style="margin-top:20px" data-action="home.unlink" data-id="${h.id}">이 집에서 나를 연결 해제</button>` : (me.isTarget ? '' : '')}
+        ${can ? `<button class="btn btn--ghost btn--block" style="margin-top:20px" data-action="home.unlink" data-id="${h.id}">이 집에서 나를 연결 해제</button>`
+          : me.isTarget ? `<button class="btn btn--soft btn--block" style="margin-top:20px" data-action="home.link" data-id="${h.id}">${ic('link')} 이 집에 나도 연결하기</button>` : ''}
       </div>`;
   }, { parent: '/family', live: true });
   on('pw.edit', el => FD.Sheets.password(el.dataset.id, el.dataset.key));
+  on('ent.edit', el => FD.Sheets.entrance(el.dataset.id, el.dataset.kind));
+  /* 현관 비밀번호 삭제: 확인한 뒤 (서버도 그 집에 연결된 가족인지 다시 확인) */
+  on('pw.delete', async el => {
+    const key = el.dataset.key, kind = key === 'centralPw' ? 'central' : 'door';
+    const label = kind === 'central' ? '중앙 현관 비밀번호' : '집 현관 비밀번호';
+    const ok = await UI.confirm({ title: `${label}를 삭제할까요?`, body: '삭제하면 위급할 때 구급대 출입에 쓸 비밀번호가 없어져요. 다시 등록할 수 있어요.', ok: '삭제', cancel: '취소', danger: true });
+    if (!ok) return;
+    try {
+      await Act.deleteDoorCode(el.dataset.id, kind, Sel.meId());
+    } catch (e) { UI.showError(e); return; }
+    toast(`${label}를 삭제했어요`);
+  });
   on('addr.edit', el => FD.Sheets.editAddress(el.dataset.id));
   on('dev.add-home', el => FD.Sheets.addDevice(el.dataset.id));
+  /* 기존 집에 연결: 감지 대상인 사람이 같은 그룹의 다른 집에 함께 사는 경우 (처음 설정에서 다른 집을 고른 뒤 바로잡기 등).
+     서버가 다시 확인: 로그인, 같은 그룹의 집, 감지 대상. 지금 연결된 집은 그대로 둠 (해제는 그 집 상세에서) */
+  on('home.link', async el => {
+    const me = Sel.me(), h = Sel.home(el.dataset.id);
+    if (!h) return;
+    const others = me.homeIds.filter(id => id !== h.id).length;
+    const ok = await UI.confirm({ title: '이 집에 연결할까요?',
+      body: `${Sel.homeName(h, me)}에 함께 사시는 경우에만 연결해 주세요. 연결하면 이 집의 감지 대상이 되고, 주소와 현관 정보를 함께 관리할 수 있어요.`
+        + (others ? ' 지금 연결된 집은 그대로예요. 그 집에 살지 않으면 그 집 상세에서 연결을 해제해 주세요.' : ''),
+      ok: '연결하기', cancel: '취소' });
+    if (!ok) return;
+    try {
+      await UI.busy(el, () => Act.linkHome(me.id, h.id));
+    } catch (e) { UI.showError(e); return; }
+    toast('이 집에 연결했어요'); R.go(R.path());
+  });
   on('home.unlink', async el => {
     const ok = await UI.confirm({ title: '집 연결을 해제할까요?', body: '이 집의 낙상 알림을 감지 대상자로서 더 이상 받지 않아요. 가족 알림은 계속 받아요.', ok: '해제', cancel: '취소', danger: true });
     if (!ok) return;
@@ -208,28 +239,50 @@
   };
 
   /* ---------------- S-07 비밀번호 변경 시트 ---------------- */
-  FD.Sheets.password = function (homeId, key) {
-    // 실제 모드: 비밀번호 저장·전달은 H단계(암호화 설계 후). 입력창을 열지 않음
-    if (LIVE) { toast('현관 비밀번호 등록은 아직 준비 중이에요. 안전하게 보관하는 기능을 만든 뒤 제공할게요.'); return; }
-    const h = Sel.home(homeId); const label = key === 'centralPw' ? '중앙 현관 비밀번호' : '집 현관 비밀번호';
-    openSheet({
-      title: `${label} ${h[key] ? '변경' : '등록'}`,
-      html: `<div class="notice notice--lock" style="margin-bottom:16px">${ic('lock')}<span>비밀번호는 암호화되어 저장되며, 119 신고가 접수될 때만 구급대에게 전달돼요. 가족에게도 보이지 않아요.</span></div>
-        ${field({ id: 'pw-new', label: '새 비밀번호', type: 'password', placeholder: '새 비밀번호 입력', autocomplete: 'new-password' })}
-        ${field({ id: 'pw-new2', label: '새 비밀번호 확인', type: 'password', placeholder: '한 번 더 입력', autocomplete: 'new-password', onenter: 'pw.save' })}
-        <button class="btn btn--primary btn--lg btn--block" data-action="pw.save">저장</button>`
-    });
-    on('pw.save', () => {
-      const a = val('pw-new'), b = val('pw-new2');
-      let ok = true;
-      if (!a) { setError('pw-new', '비밀번호를 입력해 주세요.'); ok = false; } else setError('pw-new', '');
-      if (a && a !== b) { setError('pw-new2', '비밀번호가 서로 달라요.'); ok = false; } else setError('pw-new2', '');
-      if (!ok) return;
-      const patch = {}; patch[key] = true;
-      Act.updateHome(homeId, patch, Sel.meId(), `${label}를 ${h[key] ? '변경' : '등록'}했어요`);
-      closeSheet(); toast('비밀번호를 저장했어요', 'ok');
+  /* 현관 출입 방식·비밀번호 시트. 값은 서버가 암호화해 저장하고 화면에는 다시 보내지 않음 (입력칸 가림·자동완성 끔).
+     - 비밀번호 방식: 입력칸 표시. 이미 등록돼 있으면 비워 두고 저장해도 그대로 (덮어쓰지 않음)
+     - 열쇠·없음: 입력칸 없음. 등록된 비밀번호가 있으면 확인을 받은 뒤 그 현관의 비밀번호만 삭제 */
+  FD.Sheets.entrance = function (homeId, kind) {
+    const e0 = UI.entrance(Sel.home(homeId), kind);
+    let method = e0.method;
+    const html = () => `
+      <div class="label">출입 방식</div>
+      <div class="segmented" style="margin-bottom:16px">${e0.options.map(([m, t]) => `<button type="button" class="${method === m ? 'is-on' : ''}" aria-pressed="${method === m}" data-action="ent.pick" data-m="${m}">${t}</button>`).join('')}</div>
+      ${method === 'code' ? `<div class="notice notice--lock" style="margin-bottom:16px">${ic('lock')}<span>비밀번호는 암호화되어 저장되며, 119 신고가 접수될 때만 구급대에게 전달돼요. 가족에게도 보이지 않아요.</span></div>
+        ${e0.registered ? `<p class="field__hint" style="margin:-4px 0 12px">등록된 비밀번호가 있어요. 바꿀 때만 입력해 주세요.</p>` : ''}
+        ${field({ id: 'pw-new', label: '현관 비밀번호', type: 'password', inputmode: 'tel', maxlength: 20 })}
+        ${field({ id: 'pw-new2', label: '비밀번호 확인', type: 'password', inputmode: 'tel', maxlength: 20, placeholder: '한 번 더 입력', onenter: 'ent.save' })}` : ''}
+      ${method && method !== 'code' && e0.registered ? `<div class="notice notice--stop" style="margin-bottom:16px">${ic('triangle-exclamation')}<span>저장하면 등록된 ${e0.name} 비밀번호가 삭제돼요.</span></div>` : ''}
+      <button class="btn btn--primary btn--lg btn--block" data-action="ent.save" ${method ? '' : 'disabled'}>저장</button>`;
+    const api = openSheet({ title: `${e0.name} 출입 방식`, html: html() });
+    on('ent.pick', el => { method = el.dataset.m; api.replace(html()); });
+    on('ent.save', async el => {
+      if (!method) return;
+      let code = null;
+      if (method === 'code') {
+        const a = val('pw-new'), b = val('pw-new2');
+        if (a || b) {   // 입력했을 때만 확인·등록 (비워 두면 비밀번호는 그대로)
+          const rule = UI.doorCodeProblem(a);
+          setError('pw-new', rule);
+          setError('pw-new2', !rule && a !== b ? '비밀번호가 서로 달라요.' : '');
+          if (rule || a !== b) return;
+          code = a;
+        }
+      }
+      if (method === e0.method && !code) { closeSheet(); return; }   // 바뀐 것 없음
+      if (method !== 'code' && e0.registered) {
+        const ok = await UI.confirm({ title: `${e0.name} 비밀번호를 삭제할까요?`, body: `출입 방식을 바꾸면 등록된 ${e0.name} 비밀번호가 삭제돼요. 다른 현관 정보는 그대로예요.`, ok: '삭제하고 저장', cancel: '취소', danger: true });
+        if (!ok) return;
+      }
+      try {
+        await UI.busy(el, () => Act.setEntrance(homeId, kind, method, code, Sel.meId()));
+      } catch (err) { UI.showError(err, { code: 'pw-new' }); return; }
+      closeSheet();
+      toast(code ? `${e0.name} 비밀번호를 ${e0.registered ? '변경' : '등록'}했어요` : `${e0.name} 출입 방식을 저장했어요`, 'ok');
     });
   };
+  // 예전 이름 (홈 할 일 등에서 사용): 현관 출입 방식 시트로
+  FD.Sheets.password = (homeId, key) => FD.Sheets.entrance(homeId, key === 'centralPw' ? 'central' : 'door');
 
   /* ---------------- 기기 추가 시트 ---------------- */
   FD.Sheets.addDevice = function (homeId) {

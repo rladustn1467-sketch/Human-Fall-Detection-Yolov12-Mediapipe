@@ -82,6 +82,26 @@
       <p class="field__error" id="${id}-err" role="alert" hidden></p>`;
   }
   const validPhone = v => /^01\d[-\s]?\d{3,4}[-\s]?\d{4}$/.test(String(v || '').trim());
+  /* 현관 비밀번호 규칙: 숫자, *, # 만 3~20자 (서버 door_codes.py 와 같음). 맞으면 '', 아니면 안내 문구 */
+  const DOOR_CODE_RULE = '현관 비밀번호는 숫자와 *, # 만 써서 3~20자로 입력해 주세요.';
+  const doorCodeProblem = v => (/^[0-9*#]{3,20}$/.test(String(v == null ? '' : v)) ? '' : DOOR_CODE_RULE);
+  /* 현관 출입 방식 (서버 door_codes.py 와 같은 값). 중앙현관 없음 = 'absent', 집 현관 잠금장치 없음 = 'unlocked' */
+  const ENTRANCES = {
+    central: { name: '중앙 현관', pwKey: 'centralPw', accessKey: 'centralAccess', options: [['code', '비밀번호'], ['key', '열쇠'], ['absent', '중앙현관 없음']] },
+    door: { name: '집 현관', pwKey: 'doorPw', accessKey: 'doorAccess', options: [['code', '비밀번호'], ['key', '열쇠'], ['unlocked', '잠금장치 없음']] }
+  };
+  /* 집의 한 현관 정보: { method(null=미설정), registered, label, icon, needsInput } — 값(비밀번호)은 없음 */
+  function entrance(h, kind) {
+    const e = ENTRANCES[kind], reg = !!(h && h[e.pwKey]);
+    let method = h ? h[e.accessKey] : null;
+    if (method === undefined) method = reg ? 'code' : null;   // 테스트 모드 예시 데이터: 등록돼 있으면 비밀번호 방식
+    const registered = method === 'code' && reg;
+    const optLabel = (e.options.find(o => o[0] === method) || [])[1];
+    const label = !method ? '미설정' : method === 'code' ? `비밀번호 · ${registered ? '등록됨' : '미등록'}` : optLabel;
+    const icon = !method ? 'circle-question' : method === 'code' ? (registered ? 'lock' : 'lock-open') : method === 'key' ? 'key' : 'door-open';
+    return { kind, name: e.name, pwKey: e.pwKey, options: e.options, method, registered, label, icon,
+      needsInput: !method || (method === 'code' && !registered) };   // 할 일·'입력 필요'는 미설정·비밀번호 미등록일 때만
+  }
   const validEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 
   /* ---------- 라벨 ---------- */
@@ -384,7 +404,7 @@
   FD.UI = {
     addr, pwLabel, SUGGEST_COND, SUGGEST_MED,
     esc, pad, mmss, elapsed, ago, clock, hm24, dateLabel, dateTime, secLabel, age, birthLabel, listLabel, fmtPhone, validPhone, validEmail,
-    checkBirth, birthInput,
+    checkBirth, birthInput, doorCodeProblem, entrance,
     DEVICE_TYPE, DEVICE_ICON, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, qr,
     tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody,
     showError, busy

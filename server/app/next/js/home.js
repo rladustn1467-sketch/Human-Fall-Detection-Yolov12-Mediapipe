@@ -134,9 +134,12 @@
     me.homeIds.map(id => Sel.home(id)).filter(Boolean).forEach(h => {
       const nm = Sel.homeName(h, me);
       if (!h.address) out.push({ t: `${nm} 주소를 입력해 주세요`, a: 'todo.address', id: h.id });
-      if (FD.MODE === 'live') return;   // 실제 모드: 현관 비밀번호 등록은 H단계 전까지 할 수 없으므로 할 일에 넣지 않음
-      if (!h.centralPw) out.push({ t: `${nm} 중앙 현관 비밀번호를 등록해 주세요`, a: 'todo.pw', id: h.id, key: 'centralPw' });
-      if (!h.doorPw) out.push({ t: `${nm} 집 현관 비밀번호를 등록해 주세요`, a: 'todo.pw', id: h.id, key: 'doorPw' });
+      // 현관: 출입 방식이 미설정이거나 비밀번호 방식인데 미등록일 때만 (열쇠·현관 없음·잠금장치 없음은 할 일 없음)
+      ['central', 'door'].forEach(kind => {
+        const e = UI.entrance(h, kind);
+        if (!e.method) out.push({ t: `${nm} ${e.name} 출입 방식을 알려 주세요`, a: 'todo.pw', id: h.id, key: e.pwKey });
+        else if (e.needsInput) out.push({ t: `${nm} ${e.name} 비밀번호를 등록해 주세요`, a: 'todo.pw', id: h.id, key: e.pwKey });
+      });
     });
     if (me.isTarget) {
       const missing = [];

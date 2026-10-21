@@ -45,11 +45,11 @@
     const html = page(`
       ${top(0, 3, { noBack: true })}
       <div class="brand"><span class="brand__mark">${ic('shield-heart')}</span>지킴이</div>
-      <div class="hero-art"><i class="fa-solid fa-house-medical" aria-hidden="true"></i><p>혼자 계셔도,<br>가족이 바로 알아요.</p></div>
+      <div class="hero-art"><i class="fa-solid fa-house-medical" aria-hidden="true"></i><p>일상 속 낙상 사고에<br>대비하세요.</p></div>
       <h1 class="ob__title">계정을 만들어 주세요</h1>
       <p class="ob__sub">사용하시는 분의 이름, 휴대전화 번호, 비밀번호를 입력해 주세요.</p>
       <form class="ob__form" id="signup-form" novalidate>
-        ${field({ id: 'su-name', label: '이름', placeholder: '예) 김민준', autocomplete: 'name', maxlength: 20 })}
+        ${field({ id: 'su-name', label: '이름', placeholder: '예) 홍길동', autocomplete: 'name', maxlength: 20 })}
         ${field({ id: 'su-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', placeholder: '010-0000-0000', autocomplete: 'tel', oninput: 'phone-fmt' })}
         ${field({ id: 'su-pw', label: '비밀번호', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX, hint: `${PW_MIN}자 이상, 영문과 숫자를 모두 넣어 주세요.` })}
         ${field({ id: 'su-pw2', label: '비밀번호 확인', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX })}
@@ -110,6 +110,19 @@
       await UI.busy(el, () => Act.createAccount({ name, phone: UI.fmtPhone(phone), password }));
     } catch (e) { UI.showError(e, { name: 'su-name', phone: 'su-phone', password: 'su-pw' }); return; }
     R.go('/ob/group');
+  });
+  /* 가입 화면: 빨간 안내가 뜬 칸을 다시 입력하면 그 칸의 안내를 지움 (맞는지는 '계속하기'에서 다시 확인) */
+  const SIGNUP_FIELDS = ['su-name', 'su-phone', 'su-pw', 'su-pw2'];
+  document.addEventListener('input', e => {
+    const id = e.target && e.target.id;
+    if (!SIGNUP_FIELDS.includes(id)) return;
+    setError(id, '');
+    if (id === 'su-pw') setError('su-pw2', '');   // 비밀번호를 고치면 '서로 달라요' 안내도 지움
+  });
+  document.addEventListener('change', e => {
+    if (!e.target || e.target.id !== 'su-agree' || !e.target.checked) return;
+    const ae = document.getElementById('su-agree-err');
+    if (ae) { ae.hidden = true; ae.textContent = ''; }
   });
 
   /* ---------------- O-02 그룹 선택 ---------------- */
@@ -177,8 +190,155 @@
   on('ob.toAsk', () => R.go('/ob/ask'));
 
   /* ---------------- O-04 그룹 참여 ---------------- */
-  let scanStream = null;
-  function stopScan() { if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; } }
+  /* QR 인식: 브라우저 내장 인식기(BarcodeDetector)가 있으면 쓰고, 없으면 jsQR (버튼을 누를 때만 불러옴).
+     카메라는 보안 연결(HTTPS 또는 localhost)에서만 쓸 수 있음. 읽은 초대 코드는 기존 '그룹 참여하기'로 넘겨
+     서버가 확인함 (코드·만료·시도 횟수). 카메라는 닫기·인식·화면 이동·앱 숨김 때 반드시 끔 */
+  const JSQR_URL = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+  const JSQR_SRI = 'sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx';   // 파일이 바뀌면 불러오지 않음
+  const INVITE_CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;   // 서버 초대 코드 규칙과 같음 (accounts.py)
+  const SCAN_GIVE_UP_MS = 20000;
+  const SCAN_MSG = {
+    idle: 'QR코드를 사각형 안에 맞춰 주세요',
+    insecure: '보안 연결(HTTPS)이 아니라서 카메라를 쓸 수 없어요. 아래에 초대 코드를 입력해 주세요.',
+    unsupported: '이 브라우저에서는 카메라를 쓸 수 없어요. 아래에 초대 코드를 입력해 주세요.',
+    nolib: 'QR 인식 기능을 불러오지 못했어요. 인터넷 연결을 확인하거나 아래에 초대 코드를 입력해 주세요.',
+    denied: '카메라 권한이 거부됐어요. 브라우저 설정에서 카메라를 허용하거나 아래에 초대 코드를 입력해 주세요.',
+    nocamera: '사용할 수 있는 카메라가 없어요. 아래에 초대 코드를 입력해 주세요.',
+    busy: '다른 앱이 카메라를 쓰고 있어요. 그 앱을 닫고 다시 시도하거나 아래에 초대 코드를 입력해 주세요.',
+    starting: '카메라를 켜는 중이에요',
+    scanning: 'QR코드를 찾는 중이에요',
+    notinvite: '초대 QR코드가 아니에요',   // 카메라 화면 위에 나오므로 한 줄로
+    timeout: '20초 동안 QR코드를 찾지 못했어요. 다시 시도하거나 아래에 초대 코드를 입력해 주세요.',
+    hidden: '화면을 벗어나서 카메라를 껐어요. 다시 인식하려면 버튼을 눌러 주세요.',
+    found: 'QR코드를 읽었어요'   // 사각형 아래 한 줄 (참여 결과는 아래 칸·다음 화면에서)
+  };
+  const SCAN_ERRORS = ['insecure', 'unsupported', 'nolib', 'denied', 'nocamera', 'busy', 'timeout', 'hidden'];
+  let scan = { state: 'idle', stream: null, timer: null, giveUp: null, run: 0 };
+
+  /* QR 내용에서 초대 코드만 꺼냄: 초대 링크(…#/join?code=XXXXXX) 또는 코드 6자리. 규칙에 맞지 않으면 null */
+  function inviteCodeFrom(raw) {
+    const text = String(raw || '').trim();
+    const m = /[?&#]code=([A-Za-z0-9]+)/.exec(text);
+    const code = (m ? m[1] : text).toUpperCase();
+    return INVITE_CODE_RE.test(code) ? code : null;
+  }
+  function scanUi() {   // 지금 상태를 화면에 반영 (화면을 다시 그려도 같은 상태로 복원)
+    const box = document.getElementById('scanner'); if (!box) return;
+    const video = document.getElementById('scan-video'), msg = document.getElementById('scan-msg');
+    const close = document.getElementById('scan-close'), btn = document.querySelector('[data-action="join.scan"]');
+    const live = !!scan.stream;
+    if (live && video.srcObject !== scan.stream) { video.srcObject = scan.stream; video.play().catch(() => {}); }
+    video.hidden = !live;                                   // 카메라가 실제로 켜졌을 때만 영상 표시
+    close.hidden = !(live || scan.state === 'starting');
+    msg.textContent = SCAN_MSG[scan.state] || SCAN_MSG.idle;
+    box.classList.toggle('is-live', live);
+    box.classList.toggle('is-error', SCAN_ERRORS.includes(scan.state) || scan.state === 'notinvite');
+    if (btn) {
+      const busy = live || scan.state === 'starting';
+      btn.disabled = busy;
+      btn.innerHTML = `${ic('camera')} ${busy ? '인식 중이에요' : SCAN_ERRORS.includes(scan.state) ? '다시 인식하기' : 'QR코드 인식하기'}`;
+    }
+  }
+  function setScan(state) { scan.state = state; scanUi(); }
+  function stopScan(state) {
+    scan.run++;                                             // 진행 중인 인식 반복을 멈춤
+    clearTimeout(scan.timer); clearTimeout(scan.giveUp);
+    if (scan.stream) { scan.stream.getTracks().forEach(t => t.stop()); scan.stream = null; }
+    const video = document.getElementById('scan-video'); if (video) video.srcObject = null;
+    if (state) setScan(state); else scanUi();
+  }
+  function loadJsQR() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = JSQR_URL; s.integrity = JSQR_SRI; s.crossOrigin = 'anonymous';
+      s.onload = () => (window.jsQR ? resolve(window.jsQR) : reject(new Error('jsQR')));
+      s.onerror = () => reject(new Error('jsQR'));
+      document.head.appendChild(s);
+    });
+  }
+  /* 내장 인식기가 실제로 읽는지 확인: 직접 만든 작은 QR 한 장을 읽혀 봄.
+     (구글 서비스가 없는 기기 등은 '지원함'으로 나와도 아무것도 못 읽음 → 그때는 jsQR) */
+  async function builtinWorks(det) {
+    if (!window.qrcode) return false;
+    const text = 'FD-QR-SELFTEST';
+    const q = window.qrcode(0, 'M'); q.addData(text); q.make();
+    const n = q.getModuleCount(), k = 6, m = 4;
+    const c = document.createElement('canvas'); c.width = c.height = (n + 2 * m) * k;
+    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#000';
+    for (let r = 0; r < n; r++) for (let cc = 0; cc < n; cc++) if (q.isDark(r, cc)) x.fillRect((cc + m) * k, (r + m) * k, k, k);
+    try { return (await det.detect(c)).some(v => v.rawValue === text); } catch (e) { return false; }
+  }
+  /* 한 장면에서 QR 글자를 읽어 돌려줌 (없으면 null) */
+  async function makeReader() {
+    if ('BarcodeDetector' in window) {
+      try {
+        const formats = await window.BarcodeDetector.getSupportedFormats();
+        if (formats.includes('qr_code')) {
+          const det = new window.BarcodeDetector({ formats: ['qr_code'] });
+          if (await builtinWorks(det)) {
+            return async video => { const r = await det.detect(video); return r.length ? r[0].rawValue : null; };
+          }
+        }
+      } catch (e) { /* 아래 jsQR 사용 */ }
+    }
+    const jsQR = await loadJsQR();
+    const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+    return async video => {
+      const w = video.videoWidth, h = video.videoHeight; if (!w || !h) return null;
+      const k = Math.min(1, 640 / Math.max(w, h));          // 큰 영상은 줄여서 빠르게 읽음
+      canvas.width = Math.round(w * k); canvas.height = Math.round(h * k);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+      return r ? r.data : null;
+    };
+  }
+  function cameraError(e) {
+    const n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError') return 'denied';
+    if (n === 'NotReadableError' || n === 'TrackStartError' || n === 'AbortError') return 'busy';
+    return 'nocamera';   // NotFoundError, OverconstrainedError 등
+  }
+  async function startScan() {
+    stopScan();
+    if (!window.isSecureContext) { setScan('insecure'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setScan('unsupported'); return; }
+    const run = ++scan.run;
+    setScan('starting');
+    let read;
+    try { read = await makeReader(); } catch (e) { if (run === scan.run) setScan('nolib'); return; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });   // 휴대폰은 후면 카메라 우선
+    } catch (e) { if (run === scan.run) setScan(cameraError(e)); return; }
+    if (run !== scan.run || R.path() !== '/ob/join') { stream.getTracks().forEach(t => t.stop()); return; }   // 그새 닫았거나 화면을 떠남
+    scan.stream = stream;
+    setScan('scanning');
+    scan.giveUp = setTimeout(() => { if (run === scan.run) stopScan('timeout'); }, SCAN_GIVE_UP_MS);
+    const tick = async () => {
+      if (run !== scan.run) return;
+      let raw = null;
+      try { raw = await read(document.getElementById('scan-video')); } catch (e) { /* 다음 장면 */ }
+      if (run !== scan.run) return;
+      if (raw != null) {
+        const code = inviteCodeFrom(raw);
+        if (code) {
+          stopScan('found');
+          const input = document.getElementById('join-code'); input.value = code; setError('join-code', '');
+          const b = document.querySelector('[data-action="join.submit"]'); if (b) b.click();   // 서버 확인은 기존 참여 절차 그대로
+          return;
+        }
+        if (scan.state !== 'notinvite') setScan('notinvite');   // 다른 QR: 서버로 보내지 않고 계속 찾음
+      }
+      scan.timer = setTimeout(tick, 200);
+    };
+    tick();
+  }
+  // 다른 화면으로 가거나 앱을 숨기면 카메라를 끔
+  window.addEventListener('hashchange', () => { if (R.path() !== '/ob/join') stopScan('idle'); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && scan.stream) stopScan('hidden'); });
+
   R.register('/ob/join', () => {
     const preset = (R.query().get('code') || '').toUpperCase();
     return {
@@ -187,14 +347,15 @@
         <h1 class="ob__title">초대받은 그룹에<br>참여해요</h1>
         <p class="ob__sub">가족의 QR코드를 인식하거나 초대 코드를 입력해 주세요.</p>
         <div class="scanner" id="scanner" style="margin-top:22px"><video id="scan-video" playsinline muted style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" hidden></video>
-          <div class="scanner__frame"></div><p id="scan-msg">QR코드를 사각형 안에 맞춰 주세요</p></div>
+          <div class="scanner__frame"></div><p id="scan-msg" aria-live="polite">${SCAN_MSG.idle}</p>
+          <button type="button" class="scanner__close" id="scan-close" data-action="join.scan-close" aria-label="카메라 닫기" hidden>${ic('xmark')}</button></div>
         <button class="btn btn--soft btn--block" style="margin-top:12px" data-action="join.scan">${ic('camera')} QR코드 인식하기</button>
         <p class="group-label" style="justify-content:center;margin-top:22px">또는</p>
         <form id="join-form" novalidate>
           ${field({ id: 'join-code', label: '초대 코드', placeholder: '6자리 코드', maxlength: 8, value: preset, onenter: 'join.submit', oninput: 'upper' })}
         </form>`,
         `<button class="btn btn--primary btn--lg btn--block" data-action="join.submit">그룹 참여하기</button>`),
-      mount: () => { }
+      mount: () => { scanUi(); }   // 화면을 다시 그려도 카메라·안내 상태 유지
     };
   });
   UI.onInput('upper', t => { t.value = t.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
@@ -213,36 +374,8 @@
     toast('그룹에 참여했어요', 'ok');
     R.go('/ob/ask');
   });
-  on('join.scan', async () => {
-    const msg = document.getElementById('scan-msg'), video = document.getElementById('scan-video');
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !('BarcodeDetector' in window)) {
-      toast('이 기기에서는 QR 인식을 쓸 수 없어요. 초대 코드를 입력해 주세요.'); return;
-    }
-    try {
-      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      video.srcObject = scanStream; video.hidden = false; await video.play();
-      const det = new window.BarcodeDetector({ formats: ['qr_code'] });
-      msg.textContent = 'QR코드를 찾는 중이에요';
-      const loop = async () => {
-        if (!scanStream) return;
-        try {
-          const codes = await det.detect(video);
-          if (codes.length) {
-            const raw = codes[0].rawValue || '';
-            const m = /code=([A-Za-z0-9]+)/.exec(raw);
-            const code = (m ? m[1] : raw).toUpperCase();
-            document.getElementById('join-code').value = code;
-            stopScan(); video.hidden = true; msg.textContent = 'QR코드를 인식했어요';
-            on_join_after_scan();
-            return;
-          }
-        } catch (e) { /* 다음 프레임 */ }
-        setTimeout(loop, 250);
-      };
-      loop();
-    } catch (e) { toast('카메라를 사용할 수 없어요. 초대 코드를 입력해 주세요.'); }
-  });
-  function on_join_after_scan() { const b = document.querySelector('[data-action="join.submit"]'); if (b) b.click(); }
+  on('join.scan', () => startScan());
+  on('join.scan-close', () => stopScan('idle'));
 
   /* ---------------- O-05 감지 대상 설정 질문 ---------------- */
   R.register('/ob/ask', () => {
@@ -335,10 +468,13 @@
       R.go(curBase() + '/address');
     });
 
-    /* O-07 주소 */
+    /* O-07 주소
+       그룹에 이미 집이 있으면 먼저 '같은 집에 사시나요?'를 물음 (주소를 아직 입력하지 않은 집도 후보).
+       같은 집이면 새 집을 만들지 않고 그 집에 연결. 다른 집을 고른 뒤에만 주소 입력·건너뛰기(새 집) */
+    const groupHomes = () => { const me = Sel.me(); return me && me.groupId ? Sel.homes(me.groupId) : []; };
     R.register(base + '/address', () => {
-      const me = Sel.me(); const d = D();
-      const homes = me.groupId ? Sel.homes(me.groupId).filter(h => h.address) : [];
+      const d = D();
+      const homes = groupHomes();
       const hasHomes = homes.length > 0 && d.homeMode !== 'new';
       return {
         html: page(`
@@ -346,20 +482,21 @@
           <p class="tag tag--primary">${STEP_NAMES[1]} · 2/4</p>
           <h1 class="ob__title" style="margin-top:10px">${hasHomes ? '같은 집에 사시나요?' : '사시는 곳의 주소를 입력해 주세요'}</h1>
           <div id="addr-body" style="margin-top:20px"></div>`,
-          `<button class="btn btn--ghost btn--block" data-action="addr.skip">건너뛰기</button>`),
+          hasHomes ? '' : `<button class="btn btn--ghost btn--block" data-action="addr.skip">건너뛰기</button>`),
         mount: root => { drawAddr(root.querySelector('#addr-body'), homes, hasHomes); }
       };
     });
     function drawAddr(body, homes, hasHomes) {
       const d = D();
       if (hasHomes) {
-        body.innerHTML = `<p class="ob__sub" style="margin-top:0">그룹에 등록된 주소가 있어요.</p>
+        const me = Sel.me();
+        body.innerHTML = `<p class="ob__sub" style="margin-top:0">가족이 등록한 집이 있어요.</p>
           <div class="stack" style="margin-top:14px">${homes.map(h => `
-            <div class="card card--pad"><p style="font-weight:800;font-size:17px">${esc(h.address)}</p>
-              <p class="row__sub">이 주소와 같은 집에 사시나요?</p>
+            <div class="card card--pad"><p style="font-weight:800;font-size:17px">${esc(h.address || Sel.homeName(h, me))}</p>
+              <p class="row__sub">${h.address ? '이 주소와 같은 집에 사시나요?' : '아직 주소를 입력하지 않은 집이에요. 이 집에 함께 사시나요?'}</p>
               <button class="btn btn--primary btn--block" style="margin-top:12px" data-action="addr.same" data-id="${h.id}">네, 같아요</button></div>`).join('')}
           </div>
-          <button class="btn btn--ghost btn--block" style="margin-top:12px" data-action="addr.other">아니요 (다른 주소 입력하기)</button>`;
+          <button class="btn btn--ghost btn--block" style="margin-top:12px" data-action="addr.other">아니요, 다른 집이에요</button>`;
         return;
       }
       if (manualAddress()) {
@@ -371,7 +508,7 @@
           </div>
           <button class="btn btn--primary btn--lg btn--block" style="margin-top:6px" data-action="addr.next">다음</button>
           ${FD.API.addressSearch !== false ? `<button class="link-btn" style="margin-top:12px" data-action="addr.searchmode">주소 검색하기</button>` : ''}
-          ${homes.length ? `<button class="link-btn" style="margin-top:12px" data-action="addr.back-existing">그룹에 등록된 주소 중에서 고르기</button>` : ''}`;
+          ${homes.length ? `<button class="link-btn" style="margin-top:12px" data-action="addr.back-existing">가족이 등록한 집 중에서 고르기</button>` : ''}`;
         return;
       }
       const picked = d.addrBase;
@@ -385,13 +522,14 @@
                ${LIVE ? `<button class="link-btn" style="margin-top:12px" data-action="addr.manual">검색이 안 되나요? 직접 입력하기</button>` : ''}`}
         </div>
         ${picked ? `<button class="btn btn--primary btn--lg btn--block" style="margin-top:6px" data-action="addr.next">다음</button>` : ''}
-        ${homes.length ? `<button class="link-btn" style="margin-top:12px" data-action="addr.back-existing">그룹에 등록된 주소 중에서 고르기</button>` : ''}`;
+        ${homes.length ? `<button class="link-btn" style="margin-top:12px" data-action="addr.back-existing">가족이 등록한 집 중에서 고르기</button>` : ''}`;
     }
     let lastResults = [];
     on('addr.same', el => { const d = D(); d.homeMode = 'existing'; d.homeId = el.dataset.id; R.go(curBase() + '/password'); });
-    on('addr.other', () => { const d = D(); d.homeMode = 'new'; d.addrBase = ''; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
-    on('addr.back-existing', () => { const d = D(); d.homeMode = null; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), true); });
-    on('addr.change', () => { const d = D(); d.addrBase = ''; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
+    // '다른 집'·'가족이 등록한 집 중에서 고르기'는 화면 전체를 다시 그림 (아래 건너뛰기 버튼이 다른 집일 때만 보이도록)
+    on('addr.other', () => { const d = D(); d.homeMode = 'new'; d.homeId = null; d.addrBase = ''; R.go(R.path()); });
+    on('addr.back-existing', () => { const d = D(); d.homeMode = null; d.homeId = null; R.go(R.path()); });
+    on('addr.change', () => { const d = D(); d.addrBase = ''; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
     on('addr.search', async () => {
       const q = document.getElementById('addr-q').value;
       const box = document.getElementById('addr-results');
@@ -402,11 +540,11 @@
         ? lastResults.map((a, i) => `<button class="addr-item" data-action="addr.pick" data-i="${i}">${ic('location-dot')}<span>${esc(a)}</span></button>`).join('')
         : `<p class="empty" style="padding:18px">검색 결과가 없어요. 건물명이나 도로명을 다시 입력해 보세요.</p>`;
     });
-    on('addr.manual', () => { const d = D(); d.addrManual = true; d.addrBase = ''; d.homeMode = 'new'; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
-    on('addr.searchmode', () => { const d = D(); d.addrManual = false; d.addrBase = ''; drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false); });
+    on('addr.manual', () => { const d = D(); d.addrManual = true; d.addrBase = ''; d.homeMode = 'new'; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
+    on('addr.searchmode', () => { const d = D(); d.addrManual = false; d.addrBase = ''; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
     on('addr.pick', el => {
       const d = D(); d.addrBase = lastResults[+el.dataset.i]; d.homeMode = 'new';
-      drawAddr(document.getElementById('addr-body'), Sel.homes(Sel.me().groupId).filter(h => h.address), false);
+      drawAddr(document.getElementById('addr-body'), groupHomes(), false);
       const i = document.getElementById('addr-detail'); if (i) i.focus();
     });
     on('addr.next', () => {
@@ -428,34 +566,42 @@
       R.go(curBase() + '/password');
     });
 
-    /* O-08 비밀번호 */
+    /* O-08 현관 출입 방식 · 비밀번호
+       중앙 현관(비밀번호/열쇠/중앙현관 없음)과 집 현관(비밀번호/열쇠/잠금장치 없음)을 따로 고름. 비밀번호일 때만 입력칸.
+       입력한 값은 이 흐름의 임시 보관(메모리)에만 두었다가 '완료' 때 서버로 보냄 (실제 모드는 서버가 암호화 저장).
+       같은 집을 고른 가족: 지금 방식을 미리 선택. 등록된 비밀번호는 '그대로 사용'이 기본이라 덮어쓰지 않음 */
+    function entranceDraft(d, h) {
+      const key = d.homeMode === 'existing' ? d.homeId : 'new';
+      if (d.entFor !== key) {   // 집을 바꿔 고르면 처음부터
+        d.entFor = key; d.entSkipped = false; d.central = ''; d.door = ''; d.centralKeep = true; d.doorKeep = true;
+        ['central', 'door'].forEach(k => { d[k + 'Method'] = h ? UI.entrance(h, k).method : null; });
+      }
+    }
     R.register(base + '/password', () => {
       const d = D();
-      // 실제 모드: 현관 비밀번호 저장·전달은 H단계(암호화 설계 후). 입력받지 않고 안내만
-      if (LIVE) return page(`
-        ${top(2, 4)}
-        <p class="tag tag--primary">${STEP_NAMES[2]} · 3/4</p>
-        <h1 class="ob__title" style="margin-top:10px">현관 비밀번호 등록은<br>준비 중이에요</h1>
-        <div class="notice notice--lock" style="margin-top:16px">${ic('lock')}<span>119 구급대가 집에 들어갈 수 있도록 현관 비밀번호를 안전하게 보관하는 기능을 준비하고 있어요. 준비가 끝나면 가족 탭의 집 관리에서 등록할 수 있어요. 지금은 비밀번호를 입력받거나 저장하지 않아요.</span></div>`,
-        `<button class="btn btn--primary btn--lg btn--block" data-action="pw.next">다음</button>`);
       const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
-      const block = (key, title, reg) => {
-        if (h && reg) {
-          const keep = d[key + 'Keep'];
-          return `<section class="pw-card" id="pw-${key}"><div class="pw-card__head"><h3>${title}</h3><span class="tag tag--ok">${ic('lock')} 등록됨</span></div>
-            ${keep ? `<div class="pw-card__actions"><button class="btn btn--soft btn--sm" data-action="pw.keep" data-key="${key}" aria-pressed="true">${ic('check')} 그대로 사용</button><button class="btn btn--ghost btn--sm" data-action="pw.change" data-key="${key}">변경하기</button></div>`
-              : `${field({ id: 'pw-' + key + '-in', label: '새 비밀번호', type: 'password', placeholder: '새 비밀번호 입력', value: d[key] })}<div class="pw-card__actions"><button class="btn btn--ghost btn--sm" data-action="pw.keep" data-key="${key}">그대로 사용</button></div>`}
-          </section>`;
+      entranceDraft(d, h);
+      const block = kind => {
+        const now = UI.entrance(h, kind), m = d[kind + 'Method'];
+        const seg = `<div class="segmented" style="margin:10px 0 12px">${now.options.map(([v, t]) => `<button type="button" class="${m === v ? 'is-on' : ''}" aria-pressed="${m === v}" data-action="obent.pick" data-kind="${kind}" data-m="${v}">${t}</button>`).join('')}</div>`;
+        let inner = '';
+        if (m === 'code' && now.registered) {   // 같은 집에 이미 등록된 비밀번호
+          inner = d[kind + 'Keep']
+            ? `<div class="pw-card__actions"><button class="btn btn--soft btn--sm" data-action="pw.keep" data-key="${kind}" aria-pressed="true">${ic('check')} 그대로 사용</button><button class="btn btn--ghost btn--sm" data-action="pw.change" data-key="${kind}">변경하기</button></div>`
+            : `${field({ id: 'pw-' + kind + '-in', label: '현관 비밀번호', type: 'password', inputmode: 'tel', maxlength: 20, value: d[kind] })}<div class="pw-card__actions"><button class="btn btn--ghost btn--sm" data-action="pw.keep" data-key="${kind}">그대로 사용</button></div>`;
+        } else if (m === 'code') {
+          inner = field({ id: 'pw-' + kind + '-in', type: 'password', inputmode: 'tel', maxlength: 20, value: d[kind] });
+        } else if (m && now.registered) {
+          inner = `<div class="notice notice--stop">${ic('triangle-exclamation')}<span>완료하면 등록된 ${now.name} 비밀번호가 삭제돼요.</span></div>`;
         }
-        return `<section class="pw-card"><div class="pw-card__head"><h3>${title}</h3></div>
-          ${field({ id: 'pw-' + key + '-in', type: 'password', placeholder: '비밀번호 입력', value: d[key], autocomplete: 'new-password' })}</section>`;
+        return `<section class="pw-card" id="pw-${kind}"><div class="pw-card__head"><h3>${now.name}</h3>${m === 'code' && now.registered ? `<span class="tag tag--ok">${ic('lock')} 등록됨</span>` : ''}</div>${seg}${inner}</section>`;
       };
       return page(`
         ${top(2, 4)}
         <p class="tag tag--primary">${STEP_NAMES[2]} · 3/4</p>
-        <h1 class="ob__title" style="margin-top:10px">현관 비밀번호를<br>등록해 주세요</h1>
-        <div class="notice notice--lock" style="margin-top:16px">${ic('lock')}<span>낙상 사고 시 119 구급대가 집에 들어갈 수 있도록 비밀번호를 등록해 주세요. 비밀번호는 암호화되어 저장되며, 119 신고가 접수될 때만 구급대에게 전달돼요. 비밀번호는 가족에게도 보이지 않아요.</span></div>
-        <div style="margin-top:18px">${block('central', '중앙 현관 비밀번호', h && h.centralPw)}${block('door', '집 현관 비밀번호', h && h.doorPw)}</div>`,
+        <h1 class="ob__title" style="margin-top:10px">현관 출입 방식을<br>알려 주세요</h1>
+        <div class="notice notice--lock" style="margin-top:16px">${ic('lock')}<span>낙상 사고 시 119 구급대가 집에 들어갈 수 있도록 현관 출입 방식을 알려 주세요. 비밀번호는 암호화되어 저장되며, 119 신고가 접수될 때만 구급대에게 전달돼요. 비밀번호는 가족에게도 보이지 않아요.</span></div>
+        <div style="margin-top:18px">${block('central')}${block('door')}</div>`,
         `<button class="btn btn--primary btn--lg btn--block" data-action="pw.next">다음</button>
          <button class="btn btn--ghost btn--block" data-action="pw.skip">건너뛰기</button>`);
     });
@@ -463,13 +609,40 @@
       const d = D();
       ['central', 'door'].forEach(k => { const e = document.getElementById('pw-' + k + '-in'); if (e) d[k] = e.value; });
     }
-    on('pw.change', el => { collectPw(); D()[el.dataset.key + 'Keep'] = false; R.go(R.path()); });
-    on('pw.keep', el => { collectPw(); const d = D(); d[el.dataset.key + 'Keep'] = true; d[el.dataset.key] = ''; R.go(R.path()); });
-    on('pw.next', () => { collectPw(); R.go(curBase() + '/device'); });
-    on('pw.skip', async () => {
-      const ok = await UI.confirm({ title: '비밀번호를 나중에 등록할까요?', body: '비밀번호가 없으면 구급대가 출입하는 데 시간이 걸릴 수 있어요.', ok: '건너뛰기', cancel: '계속 입력' });
+    // 같은 화면을 다시 그릴 때 보던 위치 유지 (라우터는 화면을 그릴 때 맨 위로 올림)
+    function redrawHere() { const y = window.scrollY; R.go(R.path()); window.scrollTo(0, y); }
+    on('obent.pick', el => {
+      collectPw(); const d = D(), k = el.dataset.kind;
+      d[k + 'Method'] = el.dataset.m;
+      if (el.dataset.m !== 'code') d[k] = '';   // 비밀번호가 아닌 방식이면 입력하던 값은 버림
+      redrawHere();
+    });
+    on('pw.change', el => { collectPw(); D()[el.dataset.key + 'Keep'] = false; redrawHere(); });
+    on('pw.keep', el => { collectPw(); const d = D(); d[el.dataset.key + 'Keep'] = true; d[el.dataset.key] = ''; redrawHere(); });
+    on('pw.next', async () => {
+      collectPw();
+      const d = D(); let ok = true;
+      ['central', 'door'].forEach(k => {   // 입력한 칸만 규칙 확인 (비워 두면 등록하지 않음)
+        if (!document.getElementById('pw-' + k + '-in')) return;
+        const problem = d[k] ? UI.doorCodeProblem(d[k]) : '';
+        setError('pw-' + k + '-in', problem); if (problem) ok = false;
+      });
       if (!ok) return;
-      const d = D(); d.central = ''; d.door = '';
+      // 같은 집에 등록된 비밀번호를 다른 방식으로 바꾸면 확인을 받음 (그 현관의 비밀번호만 삭제됨)
+      const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
+      const losing = h ? ['central', 'door'].map(k => UI.entrance(h, k)).filter(e => e.registered && d[e.kind + 'Method'] !== 'code') : [];
+      if (losing.length) {
+        const names = losing.map(e => e.name).join('·');
+        const yes = await UI.confirm({ title: `${names} 비밀번호를 삭제할까요?`, body: `출입 방식을 바꾸면 처음 설정을 완료할 때 등록된 ${names} 비밀번호가 삭제돼요. 다른 현관 정보는 그대로예요.`, ok: '계속', cancel: '취소', danger: true });
+        if (!yes) return;
+      }
+      d.entSkipped = false;
+      R.go(curBase() + '/device');
+    });
+    on('pw.skip', async () => {
+      const ok = await UI.confirm({ title: '현관 정보를 나중에 알려 줄까요?', body: '비밀번호가 없으면 구급대가 출입하는 데 시간이 걸릴 수 있어요. 나중에 가족 탭의 집 관리에서 설정할 수 있어요.', ok: '건너뛰기', cancel: '계속 입력' });
+      if (!ok) return;
+      const d = D(); d.central = ''; d.door = ''; d.entSkipped = true;   // 건너뛰면 현관 정보는 아무것도 바꾸지 않음
       R.go(curBase() + '/device');
     });
 
@@ -531,16 +704,29 @@
     });
   }
 
+  /* 처음 설정에서 바뀐 현관 정보만 보냄: 고른 방식이 지금과 다르거나 비밀번호를 입력한 현관 (건너뛰기·'그대로 사용'은 보내지 않음) */
+  function entrancesToSend(d) {
+    if (d.entSkipped || d.entFor === undefined) return null;
+    const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
+    const out = {};
+    ['central', 'door'].forEach(k => {
+      const m = d[k + 'Method'], before = h ? UI.entrance(h, k).method : null, code = m === 'code' ? (d[k] || '') : '';
+      if (m && (m !== before || code)) out[k] = { method: m, code: code || null };
+    });
+    return Object.keys(out).length ? out : null;
+  }
+
   /* 흐름 완료: 임시 입력값을 한 번에 저장 */
   async function finishFlow(flow, el) {
     const d = D(); const me = Sel.me();
     const info = {};
     ['birth', 'conditions', 'medications'].forEach(k => { info[k] = d.info[k] === undefined ? null : d.info[k]; });
     if (LIVE) {
-      // 서버가 건강 정보 + 집을 한 트랜잭션으로 저장 (실패하면 아무것도 저장되지 않음). 비밀번호·기기는 아직 없음
+      // 서버가 건강 정보 + 집 + 현관 출입 방식·비밀번호를 한 트랜잭션으로 저장 (실패하면 아무것도 저장되지 않음). 기기는 아직 없음
       const home = d.homeMode === 'existing' && d.homeId ? { mode: 'existing', id: d.homeId } : { mode: 'new', address: d.address || '' };
+      const entrances = entrancesToSend(d);
       try {
-        await UI.busy(el, () => Act.finishSetup({ info, home }));
+        await UI.busy(el, () => Act.finishSetup({ info, home, entrances }));
       } catch (e) { UI.showError(e); return; }
       draft = null;
       toast(flow === 'enable' ? '낙상 감지 대상으로 등록했어요' : '준비가 끝났어요', 'ok');
@@ -551,10 +737,8 @@
     let homeId = d.homeId;
     if (d.homeMode === 'existing' && homeId) Act.linkHome(me.id, homeId);
     else homeId = Act.addHome(me.id, d.address || '');
-    const patch = {}; let changed = [];
-    if (d.central) { patch.centralPw = true; changed.push('중앙 현관 비밀번호'); }
-    if (d.door) { patch.doorPw = true; changed.push('집 현관 비밀번호'); }
-    if (Object.keys(patch).length) Act.updateHome(homeId, patch, me.id, changed.join('·') + '를 변경했어요');
+    const entrances = entrancesToSend(d) || {};
+    Object.keys(entrances).forEach(k => Act.setEntrance(homeId, k, entrances[k].method, entrances[k].code, me.id));
     d.devices.forEach(x => Act.addDevice(homeId, x, me.id));
     Act.updateProfile(me.id, { phoneCamera: d.phoneCamera, onboarded: true });
     draft = null;

@@ -5,7 +5,8 @@ checks permissions here on the server; ids sent by the browser are only looked u
   - profile, health information, notification settings: only your own
   - homes: only homes of your own group; you can link yourself to any home of your group (Genspark design),
     and only people linked to a home can change it; a home of another group is answered as "not found"
-Not in this stage: door codes (stage H), devices (stage F), notifications to other members (stage G),
+Door codes are in door_codes.py (finish_setup saves them in its transaction). Not in this stage: devices (stage F),
+notifications to other members (stage G),
 phone number change (needs SMS verification). residents.json is not read or changed here.
 """
 import json
@@ -156,6 +157,10 @@ def link_home(conn, user_id, home_id, now=None):
     with db.transaction(conn):
         me = _my_group(conn, user_id)
         home = _group_home(conn, me, home_id)
+        # 집 연결 = 그 집에 사는 감지 대상. 알림만 받는 가족이 연결해 현관 정보 수정 권한을 얻지 않도록 막음
+        # (처음 설정의 '같은 집' 선택은 finish_setup 이 감지 대상으로 바꾸면서 연결)
+        if not me["is_target"]:
+            raise AccountError(409, "낙상 감지를 켠 뒤 집에 연결할 수 있어요.", "home")
         _link(conn, home["id"], user_id, now)
 
 
@@ -181,14 +186,19 @@ def update_home_address(conn, user_id, home_id, address, now=None):
 
 
 # ---- 처음 설정 완료 (감지 대상 켜기) ----
-def finish_setup(conn, user_id, info, home, now=None, today=None):
+def finish_setup(conn, user_id, info, home, now=None, today=None, doors=None, key=None, entrances=None):
     """Finish the 'detection target' setup in ONE transaction: all saved, or nothing saved.
 
     info: {birth, conditions, medications} (None = not entered)
     home: {"mode": "existing", "id": ...} to link a home of your group, or {"mode": "new", "address": ...}
           (address may be empty when the user skipped it)
-    Door codes and devices are not part of this stage.
+    entrances: {"central": {"method", "code"}, "door": {...}} - entrance methods and, for 'code', the codes the
+           user entered (stage H, door_codes.py). Entrances not sent are left as they are.
+    doors: older form {"central": code, "door": code}, treated as method 'code'.
+           Codes are encrypted in the same transaction; without a valid key the whole setup fails (503).
+    Devices are not part of this stage.
     """
+    import door_codes   # door_codes 도 이 모듈을 쓰므로 함수 안에서 불러옴
     now = time.time() if now is None else now
     info = info if isinstance(info, dict) else {}
     home = home if isinstance(home, dict) else {}
@@ -199,6 +209,13 @@ def finish_setup(conn, user_id, info, home, now=None, today=None):
     if mode not in ("existing", "new"):
         raise AccountError(400, "집 정보를 다시 선택해 주세요.", "home")
     address = clean_address(home.get("address"), required=False) if mode == "new" else None
+    key = key if key is not None else door_codes.current_key()
+    merged = dict(entrances) if isinstance(entrances, dict) else {}
+    if isinstance(doors, dict):   # 예전 형식: 입력한 비밀번호 = '비밀번호' 방식
+        for kind in door_codes.KINDS:
+            if kind not in merged and doors.get(kind) not in (None, ""):
+                merged[kind] = {"method": "code", "code": doors[kind]}
+    checked = door_codes.clean_entrances(merged, key)   # 트랜잭션 전에 모두 검사 (틀리면 아무것도 저장 안 함)
     with db.transaction(conn):
         me = _my_group(conn, user_id)
         # 순서: 건강 정보 → 집. 집 단계에서 오류가 나도 위 변경까지 함께 취소됨 (db.transaction 의 ROLLBACK)
@@ -209,4 +226,6 @@ def finish_setup(conn, user_id, info, home, now=None, today=None):
         else:
             home_id = _create_home(conn, me, address, now)
         _link(conn, home_id, user_id, now)
+        # 현관 출입 방식·비밀번호: 연결이 끝난 뒤 (이 사람은 이제 이 집에 연결된 가족) 같은 트랜잭션으로 저장
+        door_codes.apply_entrances_in_transaction(conn, user_id, home_id, checked, key, now)
     return home_id

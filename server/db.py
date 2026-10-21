@@ -88,6 +88,53 @@ MIGRATIONS = [
            )""",
         "CREATE INDEX home_members_user ON home_members(user_id)",
     ]),
+    (4, "현관 비밀번호 암호화 저장·작업 기록 (door_codes.py)", [
+        # 값은 AES-256-GCM 암호문만 저장 (키는 server/.env 의 DOOR_CODE_KEY, DB 와 분리). 평문 칸 없음
+        """CREATE TABLE home_door_codes (
+               home_id     TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               kind        TEXT NOT NULL CHECK (kind IN ('central', 'door')),   -- 중앙(공동) 현관 / 집 현관
+               ciphertext  BLOB NOT NULL,
+               nonce       BLOB NOT NULL,
+               key_id      TEXT NOT NULL,          -- 어떤 키로 암호화했는지 (키의 해시 앞부분, 키 자체 아님)
+               updated_by  TEXT,
+               updated_at  REAL NOT NULL,
+               PRIMARY KEY (home_id, kind)
+           )""",
+        # 집 정보 작업 기록: 누가 언제 무엇을 했는지만 (비밀번호 값은 남기지 않음)
+        """CREATE TABLE home_events (
+               id        INTEGER PRIMARY KEY,
+               home_id   TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               actor_id  TEXT,
+               action    TEXT NOT NULL,             -- door_code_set / door_code_changed / door_code_deleted
+               kind      TEXT,
+               at        REAL NOT NULL
+           )""",
+        "CREATE INDEX home_events_home ON home_events(home_id, at)",
+    ]),
+    (5, "현관 출입 방식 (door_codes.py)", [
+        # 집·현관마다 출입 방식 하나. 줄이 없으면 '미설정'.
+        # '없음'은 현관마다 다른 값으로 저장해 섞이지 않게 함: 중앙현관 없음 = absent, 집 현관 잠금장치 없음 = unlocked
+        """CREATE TABLE home_entrances (
+               home_id     TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               kind        TEXT NOT NULL CHECK (kind IN ('central', 'door')),
+               method      TEXT NOT NULL,
+               updated_by  TEXT,
+               updated_at  REAL NOT NULL,
+               PRIMARY KEY (home_id, kind),
+               CHECK ((kind = 'central' AND method IN ('code', 'key', 'absent'))
+                   OR (kind = 'door' AND method IN ('code', 'key', 'unlocked')))
+           )""",
+        # 기존 데이터 보존: 이미 등록된 비밀번호는 '비밀번호' 방식으로 (비밀번호는 그대로 둠)
+        """INSERT INTO home_entrances (home_id, kind, method, updated_by, updated_at)
+           SELECT home_id, kind, 'code', updated_by, updated_at FROM home_door_codes""",
+        # 안전장치: 출입 방식이 비밀번호가 아닌 현관에는 비밀번호를 저장할 수 없음 (프로그램 실수가 있어도 DB 가 막음)
+        """CREATE TRIGGER home_door_codes_need_code_insert BEFORE INSERT ON home_door_codes
+           WHEN EXISTS (SELECT 1 FROM home_entrances WHERE home_id = NEW.home_id AND kind = NEW.kind AND method != 'code')
+           BEGIN SELECT RAISE(ABORT, 'entrance method is not code'); END""",
+        """CREATE TRIGGER home_door_codes_need_code_update BEFORE UPDATE ON home_door_codes
+           WHEN EXISTS (SELECT 1 FROM home_entrances WHERE home_id = NEW.home_id AND kind = NEW.kind AND method != 'code')
+           BEGIN SELECT RAISE(ABORT, 'entrance method is not code'); END""",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

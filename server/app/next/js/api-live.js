@@ -80,10 +80,15 @@
     /* ---- 내 정보 · 집 · 탈퇴 (C단계) ---- 사람·집 id 는 서버가 로그인한 사람의 그룹 안에서만 찾음 */
     async updateProfile(body) { return remember(await call('POST', '/api/v2/me/profile', body)); },   // { name, birth?, conditions?, medications? }
     async setPref(key, value) { return remember(await call('POST', '/api/v2/me/prefs', { key, value })); },
-    async finishSetup(info, home) { return remember(await call('POST', '/api/v2/me/setup', { info, home })); },
+    async finishSetup(info, home, entrances) { return remember(await call('POST', '/api/v2/me/setup', entrances ? { info, home, entrances } : { info, home })); },
     async linkHome(homeId) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/link`)); },
     async unlinkHome(homeId) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/unlink`)); },
     async updateHomeAddress(homeId, address) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/address`, { address })); },
-    async withdraw(password) { return remember(await call('POST', '/api/v2/me/withdraw', { password })); }
+    async withdraw(password) { return remember(await call('POST', '/api/v2/me/withdraw', { password })); },
+
+    /* ---- 현관 비밀번호 (H단계) ---- 등록·변경·삭제만. 값을 받아 오는 주소는 없음 (응답은 등록 여부만) */
+    async setDoorCode(homeId, kind, code) { return remember(await call('PUT', `/api/v2/homes/${encodeURIComponent(homeId)}/door-codes/${encodeURIComponent(kind)}`, { code })); },
+    async setEntrance(homeId, kind, method, code) { return remember(await call('PUT', `/api/v2/homes/${encodeURIComponent(homeId)}/entrances/${encodeURIComponent(kind)}`, code ? { method, code } : { method })); },
+    async deleteDoorCode(homeId, kind) { return remember(await call('DELETE', `/api/v2/homes/${encodeURIComponent(homeId)}/door-codes/${encodeURIComponent(kind)}`)); }
   };
 })();

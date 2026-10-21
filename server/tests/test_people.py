@@ -105,7 +105,7 @@ class SetupTest(PeopleTestBase):
         self.assertEqual(me["homeIds"], [home_id])
         home = self.state(self.b)["homes"][0]
         self.assertEqual(home, {"id": home_id, "groupId": self.g1, "address": "서울 마포구 월드컵로 100 101동 1203호",
-                                "centralPw": False, "doorPw": False})
+                                "centralPw": False, "doorPw": False, "centralAccess": None, "doorAccess": None})
 
     def test_existing_home_of_own_group(self):
         home_id = self.setup(self.a)
@@ -144,15 +144,24 @@ class SetupTest(PeopleTestBase):
 class HomeTest(PeopleTestBase):
     def test_link_unlink_and_address_permissions(self):
         home_id = self.setup(self.a)
-        # 연결 안 된 가족은 주소 수정 불가, 연결하면 가능 (젠스파크 설계)
+        # 알림만 받는 가족(감지 대상 아님)은 집에 연결할 수 없음 → 현관·주소 수정 권한도 생기지 않음
+        err = self.assertAccountError(409, people.link_home, self.conn, self.b, home_id, self.now)
+        self.assertEqual(err.field, "home")
+        self.assertEqual(self.me(self.b)["homeIds"], [])
+        # 비가 감지를 켜면서 다른 집을 고른 경우: 연결 안 된 집은 주소 수정 불가, 연결하면 가능 (젠스파크 설계)
+        own = self.setup(self.b)
         self.assertAccountError(403, people.update_home_address, self.conn, self.b, home_id, "서울 1", self.now)
         people.link_home(self.conn, self.b, home_id, self.now)
+        people.link_home(self.conn, self.b, home_id, self.now)          # 다시 연결해도 한 번만
+        self.assertEqual(sorted(self.me(self.b)["homeIds"]), sorted([own, home_id]))   # 지금 집은 그대로
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM home_members WHERE home_id = ? AND user_id = ?",
+                                           (home_id, self.b)).fetchone()[0], 1)
         people.update_home_address(self.conn, self.b, home_id, "서울 마포구 1", self.now)
         self.assertEqual(self.state(self.a)["homes"][0]["address"], "서울 마포구 1")
         people.unlink_home(self.conn, self.b, home_id)
-        self.assertEqual(self.me(self.b)["homeIds"], [])
+        self.assertEqual(self.me(self.b)["homeIds"], [own])
         self.assertAccountError(409, people.unlink_home, self.conn, self.b, home_id)
-        self.assertEqual(self.count("homes"), 1)                # 집은 그룹에 남음
+        self.assertEqual(self.count("homes"), 2)                # 집은 그룹에 남음 (에이의 집, 비의 집)
 
     def test_other_group_home_ids_are_not_found(self):
         home_a = self.setup(self.a, home={"mode": "new", "address": "에이네 집"})

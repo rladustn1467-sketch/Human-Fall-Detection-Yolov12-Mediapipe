@@ -166,13 +166,16 @@
   function viewConfirm(inc, me) {
     const h = Sel.home(inc.homeId);
     const people = flow.selected.map(id => Sel.person(id)).filter(Boolean);
-    const pw = (label, reg) => `<div class="kv__row"><span class="kv__k">${label}</span><span class="kv__v">${reg ? `<span class="tag tag--ok">${ic('lock')} 등록됨 (구급대에 전달돼요)</span>` : '<span class="muted">미등록</span>'}</span></div>`;
+    // 현관: 실제 출입 방식과 등록 여부만 (비밀번호 값은 화면에 없음, 실제 전달 기능 없음)
+    const ent = kind => { const e = UI.entrance(h, kind);
+      const v = e.registered ? `<span class="tag tag--ok">${ic('lock')} 등록됨</span>` : e.needsInput ? `<span class="muted">${e.method ? '미등록' : '미설정'}</span>` : esc(e.label);
+      return `<div class="kv__row"><span class="kv__k">${e.name}</span><span class="kv__v">${v}</span></div>`; };
     return wrap('ov--dark', `${top('119 신고 확인', { back: true })}<div class="ov__body">
       <h1 class="ov__title" style="font-size:24px">119에 다음과 같은 내용으로 신고돼요.<br>확인 후 전송을 눌러주세요.</h1>
       <div class="confirm-doc">
         <h3>위치</h3>
         <div class="kv"><div class="kv__row"><span class="kv__k">주소</span><span class="kv__v${h.address ? '' : ' muted'}">${esc(UI.addr(h))}</span></div>
-          ${pw('중앙 현관 비밀번호', h.centralPw)}${pw('집 현관 비밀번호', h.doorPw)}
+          ${ent('central')}${ent('door')}
           <div class="kv__row"><span class="kv__k">낙상 위치</span><span class="kv__v">${esc(inc.location)}</span></div></div>
         <h3 style="margin-top:6px">낙상 대상자 ${people.length > 1 ? `(${people.length}명 모두 포함)` : ''}</h3>
         ${people.map(p => `<div class="person-block"><h4>${esc(p.name)}</h4><div class="kv">

@@ -23,7 +23,7 @@ from pathlib import Path
 import db
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
-CODE_FILES = ["main.py", "db.py", "accounts.py", "people.py", "address_search.py", "report_message.py", "escalation.py", "notify_rules.py", "notifiers.py", "report119.py", "residents.py"]
+CODE_FILES = ["main.py", "db.py", "accounts.py", "people.py", "address_search.py", "report_message.py", "door_codes.py", "escalation.py", "notify_rules.py", "notifiers.py", "report119.py", "residents.py"]
 
 
 def free_port():
