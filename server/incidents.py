@@ -276,6 +276,8 @@ def dismiss(conn, user_id, incident_id, now=None):
 # ---- 알림 ----
 def _notify(conn, inc, user_ids, kind, actor_id, now, n=0, sms=False):
     alerts.record(conn, inc["group_id"], inc["id"], user_ids, kind, actor_id, now, n=n, sms=sms)
+    # 그룹에 연결된 텔레그램 대화방에도 같은 알림을 한 번 (글자만, 버튼 없음)
+    alerts.queue_telegram(conn, inc["group_id"], inc["id"], kind, actor_id, now, n=n)
 
 
 def _notify_family(conn, inc, kind, actor_id, now, n=0, sms=False):

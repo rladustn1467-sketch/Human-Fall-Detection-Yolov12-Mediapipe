@@ -232,6 +232,36 @@ MIGRATIONS = [
                created_at REAL NOT NULL
            )""",
     ]),
+    (7, "옛 감지 기기 처리 방식·텔레그램을 새 사고의 알림 수단으로 (legacy_devices.py, alerts.py)", [
+        # incident = 새 사고만 (옛 타이머·텔레그램 버튼 알림·옛 모의 신고는 시작하지 않음), both = 두 흐름 모두.
+        # 이미 등록된 줄은 지금 동작(두 흐름)을 그대로 두도록 both, 새 등록의 기본값은 legacy_devices.py 가 incident 로 정함
+        """ALTER TABLE legacy_device_homes ADD COLUMN mode TEXT NOT NULL DEFAULT 'both'
+           CHECK (mode IN ('incident', 'both'))""",
+        # 어느 그룹의 사고 알림을 어느 텔레그램 대화방에 보낼지 (관리자가 legacy_devices.py 로 등록)
+        """CREATE TABLE telegram_routes (
+               group_id   TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               chat_id    TEXT NOT NULL,
+               created_at REAL NOT NULL,
+               PRIMARY KEY (group_id, chat_id)
+           )""",
+        # 사고 알림의 텔레그램 전달 (사고·대화방·종류·회차마다 한 번). simulated = 가짜 발송기 (실제로 보내지 않음)
+        """CREATE TABLE telegram_deliveries (
+               id              INTEGER PRIMARY KEY AUTOINCREMENT,
+               incident_id     TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               chat_id         TEXT NOT NULL,
+               kind            TEXT NOT NULL,
+               n               INTEGER NOT NULL DEFAULT 0,
+               status          TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'simulated', 'sent', 'failed')),
+               body            TEXT NOT NULL,
+               attempts        INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at INTEGER,
+               last_error      TEXT,
+               created_at      INTEGER NOT NULL,
+               updated_at      INTEGER NOT NULL,
+               UNIQUE (incident_id, chat_id, kind, n)
+           )""",
+        "CREATE INDEX telegram_deliveries_due ON telegram_deliveries (status, next_attempt_at)",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

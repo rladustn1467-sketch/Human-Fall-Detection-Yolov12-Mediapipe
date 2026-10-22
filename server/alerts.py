@@ -6,6 +6,9 @@ Two different things are recorded separately:
   notification_deliveries  each attempt to deliver it through a channel. Only SMS for now, and only through
                            MockSmsSender: status 'simulated' means nothing was sent. 'sent' is reserved for a real
                            SMS company, which is connected later (G stage) by implementing SmsSender.
+  telegram_deliveries      the incident's alerts for the group's registered Telegram chats (legacy_devices.py
+                           'telegram add'), text only, once per incident/chat/kind/number. Sent with the existing
+                           guardian bot (TelegramChannel); tests use FakeTelegramSender ('simulated').
 
 No real SMS, call or 119 request is made anywhere in this module.
 """
@@ -166,4 +169,119 @@ def process_due(conn, sender, now):
             conn.execute("""UPDATE notification_deliveries SET status = ?, provider = ?, provider_ref = ?, last_error = ?,
                             next_attempt_at = ?, updated_at = ? WHERE id = ?""",
                          (status, sender.name, ref, error, next_at, now, r["id"]))
+    return len(rows)
+
+
+# ---- 텔레그램: 새 사고의 알림 수단 (기존 보호자 대화방, 글자만, 버튼 없음) ----
+# 그룹 단위로 사고·대화방·종류·회차마다 한 번. 응답·확인·종료는 새 웹앱에서 (텔레그램 버튼 연동은 나중 단계)
+TELEGRAM_TEXT = {
+    "family_alert": "[지킴이] {home} {loc}에서 낙상이 감지됐는데 60초 동안 응답이 없어요. 앱에서 확인해 주세요.",
+    "help": "[지킴이] {home} {loc}: 낙상 후 {name}님이 도움을 요청했어요 ({n}번째). 앱에서 확인해 주세요.",
+    "self_ok": "[지킴이] {home} {loc}: {name}님이 괜찮다고 응답했어요.",
+    "checked": "[지킴이] {home} {loc}: {name}님이 확인하고 있어요. 자동 신고는 멈췄어요.",
+    "closed": "[지킴이] {home} {loc}: {name}님이 괜찮은 것을 확인하고 종료했어요.",
+    "reported": "[지킴이] {home} {loc}: {name}님이 119 신고를 기록했어요 (모의 신고, 실제 119에는 연락되지 않았어요).",
+    "auto_reported": "[지킴이] {home} {loc}: 아무도 확인하지 않아 자동 119 신고가 기록됐어요 (모의 신고, 실제 119에는 연락되지 않았어요).",
+}
+
+
+class TelegramChannel:
+    """Sends text through the existing TelegramNotifier (notifiers.py). Real messages: successes are 'sent'."""
+    name = "telegram"
+    simulated = False
+
+    def __init__(self, token):
+        self._token = token
+
+    def send(self, chat_id, text):
+        from notifiers import Notification, NotifyError, TelegramNotifier
+        try:
+            TelegramNotifier(self._token, chat_id).send(Notification(kind="incident", event_id="incident", text=text))
+        except NotifyError as e:
+            raise SmsError(str(e), retryable=e.retryable)
+        return None
+
+
+class FakeTelegramSender:
+    """For tests: records messages, never uses the network. Successes are recorded as 'simulated'."""
+    name = "fake-telegram"
+    simulated = True
+
+    def __init__(self, fail_plan=None):
+        self.sent = []
+        self.fail_plan = list(fail_plan or [])
+
+    def send(self, chat_id, text):
+        if self.fail_plan:
+            error = self.fail_plan.pop(0)
+            if error is not None:
+                raise error
+        self.sent.append({"chat_id": chat_id, "text": text})
+        return None
+
+
+def build_telegram(env):
+    """The Telegram channel when TELEGRAM_BOT_TOKEN is set (the same bot as the old guardian alerts), else None."""
+    token = (env.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    return TelegramChannel(token) if token else None
+
+
+def _group_home_name(conn, home_id, names):
+    """Home name for a group chat (no '우리 집'): the detection targets' names, else the linked people's."""
+    linked = conn.execute("""SELECT u.id, u.is_target FROM users u JOIN home_members hm ON hm.user_id = u.id
+                             WHERE hm.home_id = ? ORDER BY hm.linked_at""", (home_id,)).fetchall()
+    people = [r["id"] for r in linked if r["is_target"]] or [r["id"] for r in linked]
+    shown = [names[p] for p in people if p in names]
+    return "·".join(shown) + "님 댁" if shown else "등록된 집"
+
+
+def queue_telegram(conn, group_id, incident_id, kind, actor_id, now, n=0):
+    """Queue one text message per registered chat of the group (inside the incident's transaction)."""
+    if kind not in TELEGRAM_TEXT:
+        return
+    chats = [r["chat_id"] for r in conn.execute("SELECT chat_id FROM telegram_routes WHERE group_id = ?", (group_id,))]
+    if not chats:
+        return
+    inc = conn.execute("SELECT home_id, location, source FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+    names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users WHERE group_id = ?", (group_id,))}
+    body = TELEGRAM_TEXT[kind].format(home=_group_home_name(conn, inc["home_id"], names), loc=inc["location"],
+                                      name=names.get(actor_id, "가족"), n=n or 1)
+    if inc["source"] == "dev":
+        body = "[개발 시험] " + body
+    for chat_id in chats:
+        conn.execute("""INSERT OR IGNORE INTO telegram_deliveries (incident_id, chat_id, kind, n, status, body,
+                                                                   next_attempt_at, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+                     (incident_id, chat_id, kind, n, body, now, now, now))
+
+
+def process_telegram_due(conn, sender, now):
+    """Send the Telegram messages that are due (same claim / retry rules as SMS). Without a Telegram channel
+    (no TELEGRAM_BOT_TOKEN) due messages are marked failed so they do not pile up."""
+    with db.transaction(conn):
+        rows = conn.execute("""SELECT * FROM telegram_deliveries WHERE status IN ('pending', 'retry') AND next_attempt_at <= ?
+                               ORDER BY id LIMIT ?""", (now, BATCH)).fetchall()
+        for r in rows:
+            conn.execute("UPDATE telegram_deliveries SET attempts = attempts + 1, next_attempt_at = ?, updated_at = ? "
+                         "WHERE id = ?", (now + LEASE_MS, now, r["id"]))
+    for r in rows:
+        attempts = r["attempts"] + 1
+        if sender is None:
+            status, error, next_at = "failed", "텔레그램 설정 없음 (TELEGRAM_BOT_TOKEN)", None
+        else:
+            try:
+                sender.send(r["chat_id"], r["body"])
+                status, error, next_at = ("simulated" if sender.simulated else "sent"), None, None
+            except SmsError as e:
+                error = str(e)[:200]
+                if e.retryable and attempts < MAX_ATTEMPTS:
+                    status, next_at = "retry", now + RETRY_BACKOFF_MS[min(attempts, len(RETRY_BACKOFF_MS)) - 1]
+                else:
+                    status, next_at = "failed", None
+            except Exception as e:
+                error = f"{type(e).__name__}: {e}"[:200]
+                status, next_at = ("retry", now + RETRY_BACKOFF_MS[0]) if attempts < MAX_ATTEMPTS else ("failed", None)
+        with db.transaction(conn):
+            conn.execute("""UPDATE telegram_deliveries SET status = ?, last_error = ?, next_attempt_at = ?, updated_at = ?
+                            WHERE id = ?""", (status, error, next_at, now, r["id"]))
     return len(rows)

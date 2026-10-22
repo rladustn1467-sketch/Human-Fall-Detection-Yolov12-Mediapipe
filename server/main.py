@@ -122,6 +122,8 @@ STATUS_LABELS = {
     "fallen_confirmed": "낙상자 확정",
     "fallen_confirmed_after_report": "신고 후 확정(참고용)",
     "report_detail_sent": "상세 보기 전송",
+    # incident 방식으로 등록된 기기 (legacy_devices.py): 새 웹앱 사고가 처리하고 옛 흐름은 시작하지 않음
+    "handed_over": "새 웹앱에서 처리",
 }
 LATE_PREFIX = "시간 초과 후 "  # 제한 시간이 지난 뒤 누른 응답의 표시 앞말
 
@@ -142,6 +144,7 @@ def _timeout_watcher(stop):
             with db.session(DB_PATH) as conn:
                 incidents.tick(conn)
                 alerts.process_due(conn, SMS_SENDER, incidents.now_ms())
+                alerts.process_telegram_due(conn, TELEGRAM_CHANNEL, incidents.now_ms())
         except Exception as e:
             print(f"[incident] 사고 시간 처리 오류: {type(e).__name__}: {e}")
 
@@ -408,9 +411,12 @@ print(f"[door] 현관 비밀번호 저장: {door_codes.configure(os.environ.get(
 # 새 웹앱 낙상 사고 (incidents.py). 문자는 모의 발송만 (alerts.py, 실제 문자 업체 연결은 G단계).
 # 개발용 낙상 발생(/api/v2/dev/falls)은 FD_DEV_TOOLS=1 로 켠 복사본 서버에서만 (운영 .env 에는 넣지 않음)
 SMS_SENDER = alerts.build_sender(os.environ)
+# 텔레그램: 새 사고의 알림도 같은 보호자 봇으로 (글자만, 버튼 없음). 받을 대화방은 legacy_devices.py 'telegram add'
+TELEGRAM_CHANNEL = alerts.build_telegram(os.environ)
 DEV_TOOLS = os.environ.get("FD_DEV_TOOLS", "").strip() == "1"
 print(f"[incident] 문자 알림: {SMS_SENDER.name} (모의 발송 - 실제 문자를 보내지 않음) / "
-      f"개발용 낙상 발생: {'켜짐 (FD_DEV_TOOLS=1 - 운영 서버에서는 켜지 마세요)' if DEV_TOOLS else '꺼짐'}")
+      f"개발용 낙상 발생: {'켜짐 (FD_DEV_TOOLS=1 - 운영 서버에서는 켜지 마세요)' if DEV_TOOLS else '꺼짐'} / "
+      f"사고 알림 텔레그램: {'사용 (등록한 그룹의 대화방에만)' if TELEGRAM_CHANNEL else '없음'}")
 
 
 # ---- API ----
@@ -445,10 +451,10 @@ def add_event(event: FallEvent):
     with _lock:
         # 재시도로 같은 이벤트가 다시 오면 새로 만들지 않고 기존 기록을 돌려줌
         if event_id in events:
-            ev = events[event_id]
-            # 첫 요청 때 사고 연결이 실패했어도 재시도에서 연결됨 (같은 event_id 로는 사고가 하나만 생김)
-            return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "duplicate": True,
-                    "incident_id": _legacy_incident(event, event_id)}
+            return _duplicate_event(event, event_id)
+        # incident 방식 기기: 새 사고를 먼저 만들고, 성공했을 때만 옛 흐름을 넘김 (실패하면 옛 흐름으로 처리해 알림이 사라지지 않게).
+        # 잠금 안에서 해서 같은 event_id 가 동시에 와도 '새 사고' 와 '옛 흐름' 이 나뉘어 둘 다 시작되지 않게 함
+        handed_to = _handover_incident(event, event_id)
 
         now = time.time()
         ev = {
@@ -479,23 +485,58 @@ def add_event(event: FallEvent):
                 (IMAGE_DIR / f"{event_id}.jpg").write_bytes(image)
                 ev["image"] = f"/images/{event_id}.jpg"
 
-        ev["status"] = "awaiting_response"
-        _add_history(ev, "awaiting_response", now)
-        # 거주자가 1명이면 그 사람으로 낙상자 자동 확정 (얼굴 인식 등 식별 기능은 쓰지 않음)
-        people = _residents()
-        if len(people) == 1:
-            _apply_steps(ev, escalation.select_fallen(ev, people[0], None, now, how="auto"), now)
+        if handed_to:
+            # 새 사고가 처리: 응답 대기·시간 초과·텔레그램 버튼 알림·옛 모의 신고를 시작하지 않음 (기록과 사진만 남김)
+            ev["status"] = "handed_over"
+            ev["incident_id"] = handed_to
+            ev["deadline"] = now
+            _add_history(ev, "handed_over", now)
+        else:
+            ev["status"] = "awaiting_response"
+            _add_history(ev, "awaiting_response", now)
+            # 거주자가 1명이면 그 사람으로 낙상자 자동 확정 (얼굴 인식 등 식별 기능은 쓰지 않음)
+            people = _residents()
+            if len(people) == 1:
+                _apply_steps(ev, escalation.select_fallen(ev, people[0], None, now, how="auto"), now)
         events[event_id] = ev
         _save_events()
+    # both 방식은 옛 흐름과 함께 새 사고도 만듦 (미등록 기기는 None)
     return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "count": len(events),
-            "incident_id": _legacy_incident(event, event_id)}
+            "incident_id": handed_to or _legacy_incident(event, event_id)}
+
+
+def _duplicate_event(event, event_id):
+    """Retry of an event already saved: same answer, no new record. (Called with _lock held.)
+    넘긴 이벤트는 그 사고 id. both 기기는 첫 요청 때 사고 연결이 실패했어도 재시도에서 연결됨 (같은 event_id 로는 사고 하나).
+    incident 기기인데 첫 요청이 옛 흐름으로 처리됐으면 재시도에서도 사고를 만들지 않음 (두 흐름이 함께 돌지 않게)"""
+    ev = events[event_id]
+    return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "duplicate": True,
+            "incident_id": ev.get("incident_id") or _legacy_incident(event, event_id)}
+
+
+def _handover_incident(event, event_id):
+    """For a device registered in 'incident' mode (not test events): create the incident and return its id,
+    so the old flow is not started. None for other devices, or when it fails (then the old flow runs)."""
+    if event.is_test:
+        return None
+    try:
+        with db.session(DB_PATH) as conn:
+            if legacy_devices.mode_for(conn, event.device_id) != "incident":
+                return None
+            return legacy_devices.incident_for_event(conn, event.device_id, event_id, event.is_test)
+    except Exception as e:
+        print(f"[incident] 새 사고로 넘기지 못해 옛 흐름으로 처리 (알림 유지): {type(e).__name__}: {e}")
+        return None
 
 
 def _legacy_incident(event, event_id):
-    """New web app incident for an old-API fall, only for a device an administrator registered (legacy_devices.py).
+    """New web app incident NEXT TO the old flow: only for a device registered in 'both' mode.
+    An 'incident' device whose hand-over failed keeps the old flow alone (never both flows for one fall).
     Failures are logged and never break the old flow."""
     try:
         with db.session(DB_PATH) as conn:
+            if legacy_devices.mode_for(conn, event.device_id) != "both":
+                return None
             return legacy_devices.incident_for_event(conn, event.device_id, event_id, event.is_test)
     except Exception as e:
         print(f"[incident] 옛 이벤트를 사고로 연결하지 못함 (옛 흐름은 그대로): {type(e).__name__}: {e}")
@@ -526,6 +567,9 @@ def respond(event_id: str, body: UserResponse):
         ev = events.get(event_id)
         if not ev:
             raise HTTPException(status_code=404, detail="Event not found")
+        if ev.get("status") == "handed_over":
+            # 새 웹앱 사고가 처리하는 낙상: 옛 응답으로 옛 흐름(텔레그램 버튼·옛 모의 신고)을 다시 시작하지 않음
+            raise HTTPException(status_code=409, detail="이 낙상은 새 웹앱에서 응답해 주세요.")
         now = time.time()
         _apply_timeout(ev, now)
 

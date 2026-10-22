@@ -17,7 +17,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
 
-TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/{method}"
+# 시험 때만 TELEGRAM_API_URL 로 가짜 텔레그램 서버를 가리킴 (운영 .env 에는 넣지 않음, 없으면 실제 주소)
+TELEGRAM_API_URL = os.environ.get("TELEGRAM_API_URL") or "https://api.telegram.org/bot{token}/{method}"
 
 
 @dataclass
