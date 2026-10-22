@@ -532,13 +532,13 @@
         const keys = Object.keys(patch);
         if (keys.length === 1 && keys[0] === 'onboarded') { applyServer(await API.setOnboarded(!!patch.onboarded)); return; }
         if ('phoneCamera' in patch) {   // 내 폰 카메라 감지는 카메라 단계에서
-          if (FD.UI) FD.UI.toast('내 폰 카메라 감지는 아직 준비 중이에요');
+          if (FD.UI) FD.UI.toast('내 폰 카메라 감지는 지금 사용할 수 없어요');
           throw new FD.NotReadyError('phoneCamera');
         }
         const me = person(state, meId);
         const digits = v => String(v || '').replace(/\D/g, '');
         if (patch.phone !== undefined && me && digits(patch.phone) !== digits(me.phone)) {
-          throw new FD.ApiError(400, '휴대전화 번호 변경은 문자 인증이 생기면 제공할게요.', 'phone');
+          throw new FD.ApiError(400, '휴대전화 번호는 로그인 아이디라서 지금은 바꿀 수 없어요.', 'phone');
         }
         const body = { name: patch.name !== undefined ? patch.name : (me && me.name) };
         ['birth', 'conditions', 'medications'].forEach(k => { if (k in patch) body[k] = patch[k]; });
@@ -553,7 +553,7 @@
       async updateHome(homeId, patch) {
         const keys = Object.keys(patch || {});
         if (keys.length === 1 && keys[0] === 'address') { applyServer(await API.updateHomeAddress(homeId, patch.address)); return; }
-        if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
+        if (FD.UI) FD.UI.toast('지금은 이 기능을 사용할 수 없어요');
         throw new FD.NotReadyError('updateHome');
       },
       /* 현관 비밀번호: 서버가 암호화해 저장. 화면은 등록 여부만 받음 (값은 다시 받지 않음) */
@@ -567,7 +567,7 @@
     Object.keys(Act).forEach(name => {
       if (SERVER_ACTIONS[name]) return;
       Act[name] = function notReady() {
-        if (FD.UI) FD.UI.toast('이 기능은 아직 서버와 연결 중이에요');
+        if (FD.UI) FD.UI.toast('지금은 이 기능을 사용할 수 없어요');
         throw new FD.NotReadyError(name);
       };
     });

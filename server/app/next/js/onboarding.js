@@ -18,7 +18,7 @@
   const LIVE = FD.MODE === 'live';
   // 주소 검색을 쓸 수 없으면(api-live.js 의 addressSearch 가 false) 또는 사용자가 '직접 입력하기'를 고르면 직접 입력
   const manualAddress = () => FD.API.addressSearch === false || !!(draft && draft.addrManual);
-  const NOT_READY_DEVICE = '기기 연결은 아직 준비 중이에요. 기기 연결 단계에서 제공할게요.';
+  const NOT_READY_DEVICE = '카메라 연결은 지금 사용할 수 없어요.';
 
   const STEP_NAMES = ['개인정보', '주소', '비밀번호', '기기'];
   function top(idx, total, opts) {
@@ -76,7 +76,7 @@
     `<button class="btn btn--primary btn--lg btn--block" data-action="login.submit">로그인</button>
      <button class="btn btn--ghost btn--lg btn--block" data-action="go.signup">처음이에요 · 계정 만들기</button>`));
   // 비밀번호 재설정은 문자 인증 단계에서 제공 (지금은 안내만)
-  on('login.forgot', () => toast('비밀번호 재설정은 준비 중이에요. 문자 인증이 생기면 제공할게요.'));
+  on('login.forgot', () => toast('비밀번호 재설정은 지금 사용할 수 없어요.'));
   on('login.submit', async el => {
     const phone = val('lg-phone'), password = rawVal('lg-pw');
     let ok = true;
@@ -654,7 +654,7 @@
         <p class="tag tag--primary">${STEP_NAMES[3]} · 4/4</p>
         <h1 class="ob__title" style="margin-top:10px">감지할 카메라를<br>연결해 주세요</h1>
         <div class="notice" style="margin-top:16px">${ic('eye-slash')}<span>영상은 낙상 판단에만 쓰이고 저장되지 않아요. 낙상이 감지되면 배경과 사람을 가린 이미지만 기록돼요.</span></div>
-        ${LIVE ? `<div class="notice" style="margin-top:10px">${ic('circle-info')}<span>${NOT_READY_DEVICE} 지금은 '나중에 연결할게요'를 눌러 주세요.</span></div>` : ''}
+        ${LIVE ? `<div class="notice" style="margin-top:10px">${ic('circle-info')}<span>${NOT_READY_DEVICE} '나중에 연결할게요'를 눌러 설정을 마쳐 주세요.</span></div>` : ''}
         <div id="dev-added" style="margin-top:18px">${devAddedHtml(d)}</div>
         <div class="stack" style="margin-top:14px">
           <button class="choice" data-action="dev.add"><span class="choice__ic">${ic('video')}</span><span><span class="choice__t">홈캠·CCTV 추가</span><span class="choice__s" style="display:block">집에 설치된 카메라를 연결해요.</span></span></button>
@@ -667,7 +667,7 @@
     }
     on('dev.rm', el => { const d = D(); d.devices.splice(+el.dataset.i, 1); R.go(R.path()); });
     on('dev.phone', () => {
-      if (LIVE) { toast('내 폰 카메라 감지는 아직 준비 중이에요'); return; }
+      if (LIVE) { toast('내 폰 카메라 감지는 지금 사용할 수 없어요'); return; }
       const d = D(); d.phoneCamera = !d.phoneCamera; R.go(R.path());
     });
     on('dev.add', () => {

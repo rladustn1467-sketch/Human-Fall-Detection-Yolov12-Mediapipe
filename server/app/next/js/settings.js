@@ -44,7 +44,7 @@
       html: `${UI.subHeader('내 프로필')}<div class="page page--tight">
         <form id="profile-form" novalidate>
           ${field({ id: 'pf-name', label: '이름', value: me.name, maxlength: 20, autocomplete: 'name' })}
-          ${LIVE ? field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', value: me.phone, hint: '휴대전화 번호는 로그인 아이디라서, 문자 인증이 생기면 바꿀 수 있어요.' })
+          ${LIVE ? field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', value: me.phone, hint: '휴대전화 번호는 로그인 아이디라서 지금은 바꿀 수 없어요.' })
             : field({ id: 'pf-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', value: me.phone, oninput: 'phone-fmt' })}
         </form>
         ${me.isTarget ? `<p class="group-label" style="margin-top:6px">건강 정보 <small>그룹 가족에게 공유돼요</small></p>

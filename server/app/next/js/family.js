@@ -287,7 +287,7 @@
   /* ---------------- 기기 추가 시트 ---------------- */
   FD.Sheets.addDevice = function (homeId) {
     // 실제 모드: 기기 연결은 F단계. '연결하는 중…' 화면을 보여 주지 않도록 시트를 열지 않음
-    if (LIVE) { toast('기기 연결은 아직 준비 중이에요. 기기 연결 단계에서 제공할게요.'); return; }
+    if (LIVE) { toast('카메라 연결은 지금 사용할 수 없어요.'); return; }
     FD.Onboarding.deviceSheet({
       title: '카메라 추가',
       onSubmit: async (v, api) => {
