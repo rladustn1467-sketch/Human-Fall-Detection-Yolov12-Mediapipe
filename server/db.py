@@ -176,6 +176,21 @@ def schema_version(conn):
     return row[0] or 0
 
 
+def _use_wal(conn):
+    """Switch to WAL once. The switch needs the whole database for a moment and SQLite does not wait for it
+    (busy_timeout does not apply), so when another server process is starting at the same time, retry briefly."""
+    deadline = time.monotonic() + BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                conn.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 def init(path, migrations=None):
     """Create the database file if needed and apply pending migrations in order.
 
@@ -190,7 +205,7 @@ def init(path, migrations=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     with session(path) as conn:
         # 여러 스레드가 읽고 쓰는 서버에 맞는 저장 방식 (파일 옆에 -wal, -shm 파일이 생김)
-        conn.execute("PRAGMA journal_mode = WAL")
+        _use_wal(conn)
         conn.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
                             version     INTEGER PRIMARY KEY,
                             description TEXT NOT NULL,
@@ -201,6 +216,10 @@ def init(path, migrations=None):
             if version in done:
                 continue
             with transaction(conn):
+                # 위에서 목록을 읽은 뒤 다른 서버 프로세스가 먼저 적용했을 수 있으므로,
+                # 쓰기 잠금(BEGIN IMMEDIATE)을 잡은 뒤 다시 확인하고 아직일 때만 적용
+                if conn.execute("SELECT 1 FROM schema_migrations WHERE version = ?", (version,)).fetchone():
+                    continue
                 for sql in statements:
                     conn.execute(sql)
                 conn.execute("INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
