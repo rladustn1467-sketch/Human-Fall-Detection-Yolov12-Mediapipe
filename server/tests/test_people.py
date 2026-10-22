@@ -84,6 +84,19 @@ class ProfileTest(PeopleTestBase):
         me = self.me(self.a)
         self.assertEqual((me["conditions"], me["medications"]), (["당뇨"], None))
 
+    def test_group_name_follows_the_creators_new_name(self):
+        group_name = lambda user: self.state(user)["groups"][0]["name"]
+        stored = lambda: self.conn.execute("SELECT name FROM groups WHERE id = ?", (self.g1,)).fetchone()[0]
+        self.assertEqual((group_name(self.a), group_name(self.b), stored()), ("가족에이님의 가족",) * 3)
+        people.update_profile(self.conn, self.a, "옥수수", today=TODAY)                # 만든 사람이 이름을 바꿈
+        self.assertEqual(self.me(self.a)["name"], "옥수수")
+        self.assertEqual((group_name(self.a), group_name(self.b)), ("옥수수님의 가족", "옥수수님의 가족"))
+        self.assertEqual(stored(), "가족에이님의 가족")                                   # 저장값은 그대로
+        people.update_profile(self.conn, self.b, "새비", today=TODAY)                  # 다른 구성원은 그룹 이름과 무관
+        self.assertEqual(group_name(self.b), "옥수수님의 가족")
+        accounts.leave_group(self.conn, self.a)                                         # 만든 사람이 나가면 저장된 이름
+        self.assertEqual(group_name(self.b), "가족에이님의 가족")
+
     def test_invalid_name_changes_nothing(self):
         self.assertAccountError(400, people.update_profile, self.conn, self.a, "가", None, TODAY)
         self.assertEqual(self.me(self.a)["name"], "가족에이")

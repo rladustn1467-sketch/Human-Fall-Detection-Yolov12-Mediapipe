@@ -38,6 +38,8 @@ SIGNUP_LIMIT_PER_IP = (20, 60 * 60)
 SCRYPT_N, SCRYPT_R, SCRYPT_P, SCRYPT_LEN = 2 ** 14, 8, 1, 32
 INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 헷갈리는 0/O, 1/I 제외 (젠스파크 화면과 같음)
 INVITE_LENGTH = 6
+# 그룹 이름은 그룹을 만들 때 '만든 사람 이름 + 이 말' 로 자동으로 정해짐 (그룹 이름을 바꾸는 기능은 없음)
+GROUP_NAME_SUFFIX = "님의 가족"
 
 
 
@@ -243,7 +245,7 @@ def create_group(conn, user_id, now=None):
             raise AccountError(409, "이미 가족 그룹에 속해 있어요.")
         group_id = _new_id("g")
         conn.execute("INSERT INTO groups (id, name, created_by, created_at) VALUES (?, ?, ?, ?)",
-                     (group_id, f"{me['name']}님의 가족", user_id, now))
+                     (group_id, f"{me['name']}{GROUP_NAME_SUFFIX}", user_id, now))
         conn.execute("UPDATE users SET group_id = ? WHERE id = ?", (group_id, user_id))
         _issue_invite(conn, group_id, user_id, now)
     return group_id
@@ -395,6 +397,16 @@ def empty_state(now=None):
     }
 
 
+def _group_name(group, members):
+    """Group name to show. The stored name is the creator's name at creation + GROUP_NAME_SUFFIX and there is no
+    rename feature, so while the creator is still in the group, show it with the creator's current name
+    (after '내 정보' name changes, home/family tabs match the profile). The stored value is not changed."""
+    creator = next((m for m in members if m["id"] == group["created_by"]), None)
+    if creator and (group["name"] or "").endswith(GROUP_NAME_SUFFIX):
+        return f"{creator['name']}{GROUP_NAME_SUFFIX}"
+    return group["name"]
+
+
 def state_for(conn, user_id, now=None):
     """Only the logged-in user's own record and, if any, their own group, its members and its homes."""
     state = empty_state(now)
@@ -406,7 +418,7 @@ def state_for(conn, user_id, now=None):
     invite = conn.execute("SELECT * FROM invites WHERE group_id = ?", (me["group_id"],)).fetchone()
     members = conn.execute("SELECT * FROM users WHERE group_id = ? ORDER BY created_at", (me["group_id"],)).fetchall()
     state["groups"] = [{
-        "id": group["id"], "name": group["name"],
+        "id": group["id"], "name": _group_name(group, members),
         "invite": None if not invite else {
             "code": invite["code"], "createdAt": int(invite["created_at"] * 1000),
             "expiresAt": int(invite["expires_at"] * 1000), "createdBy": invite["created_by"],
