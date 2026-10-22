@@ -164,6 +164,8 @@
   }
   on('hist.list', () => R.go('/history'));
 
+  // 결과 표시. 실제 모드의 119 신고는 모의 신고로만 기록됨 (reportKind 'simulation')
+  const resultLabel = x => UI.RESULT_LABEL[x.result] + (x.reportKind === 'simulation' ? ' (모의 신고)' : '');
   function resultIcon(r) { return { self: 'user-check', family: 'people-group', reported: 'truck-medical', auto_reported: 'robot' }[r] || 'bell'; }
   function historyRow(x) {
     const h = Sel.home(x.homeId);
@@ -172,7 +174,7 @@
       <span class="recent-ic recent-ic--${x.result}">${ic(resultIcon(x.result))}</span>
       <span style="flex:1;min-width:0"><span class="row__title" style="display:block">${esc(name)} · ${esc(x.location)}</span>
       <span class="row__sub" style="display:block">${UI.dateTime(x.detectedAt)}</span></span>
-      <span class="tag ${x.result === 'self' ? 'tag--ok' : x.result === 'family' ? 'tag--info' : 'tag--stop'}">${UI.RESULT_LABEL[x.result]}</span></button>`;
+      <span class="tag ${x.result === 'self' ? 'tag--ok' : x.result === 'family' ? 'tag--info' : 'tag--stop'}">${resultLabel(x)}</span></button>`;
   }
   on('hist.open', el => R.go('/history/' + el.dataset.id));
 
@@ -185,7 +187,8 @@
     const td = todos(me);
     const hr = new Date(FD.Store.now()).getHours();
     const hello = hr < 6 ? '늦은 시간이에요' : hr < 12 ? '좋은 아침이에요' : hr < 18 ? '안녕하세요' : '편안한 저녁이에요';
-    return `<header class="home-head"><p class="home-head__hello">${hello}, ${esc(me.name)}님</p><h1 class="home-head__title">${esc(Sel.group(me.groupId) ? Sel.group(me.groupId).name : '낙상 감지')}</h1></header>
+    const unread = Sel.notifsFor(me).filter(n => n.read === false).length;
+    return `<header class="home-head"><button class="icon-btn home-head__bell" data-action="notif.open" aria-label="알림${unread ? ` (읽지 않은 알림 ${unread}개)` : ''}">${ic('bell')}${unread ? '<i class="home-head__dot" aria-hidden="true"></i>' : ''}</button><p class="home-head__hello">${hello}, ${esc(me.name)}님</p><h1 class="home-head__title">${esc(Sel.group(me.groupId) ? Sel.group(me.groupId).name : '낙상 감지')}</h1></header>
       <div class="home-body">
         ${incs.map(i => incidentBanner(i, me)).join('')}
         <section aria-labelledby="det-h"><div class="section__head"><h2 class="section__title" id="det-h">감지 현황</h2></div>${homesSection(me)}</section>
@@ -195,6 +198,34 @@
         ${recentSection(me)}
       </div>`;
   }, { tab: 'home', live: true });
+
+  /* ------------------------------------------------------------
+   * 알림센터: 나에게 온 알림 기록 (낙상 사고 진행, 가족·집 변경). 열면 읽음으로 표시
+   * ---------------------------------------------------------- */
+  const NOTIF_ICON = { family_alert: 'triangle-exclamation', help: 'hand', self_ok: 'user-check', checked: 'user-check',
+    closed: 'circle-check', reported: 'truck-medical', auto_reported: 'truck-medical' };
+  on('notif.open', () => R.go('/notifications'));
+  on('notif.item', el => {
+    const inc = Sel.incident(el.dataset.inc);
+    if (!inc) return;
+    if (Sel.isTerminal(inc)) R.go('/history/' + inc.id);
+    else if (FD.Emergency) FD.Emergency.open(inc.id);
+  });
+  R.register('/notifications', () => {
+    const me = Sel.me();
+    const list = Sel.notifsFor(me).slice().sort((a, b) => b.at - a.at);
+    return {
+      html: `${UI.subHeader('알림')}<div class="page page--tight">
+        <div class="card">${list.length ? list.map(n => `<button class="row" data-action="notif.item" data-inc="${esc(n.incidentId || '')}" ${n.incidentId ? '' : 'disabled'}>
+          <span class="det-dev__ic">${ic(NOTIF_ICON[n.kind] || 'bell')}</span>
+          <span class="row__main"><span class="row__title"${n.read === false ? ' style="font-weight:800"' : ''}>${esc(n.text)}</span><span class="row__sub">${UI.dateTime(n.at)}</span></span>
+          ${n.incidentId ? ic('chevron-right', 'chev') : ''}</button>`).join('') : `<div class="empty">${ic('bell-slash')}받은 알림이 없어요</div>`}</div>
+      </div>`,
+      mount: () => {
+        if (list.some(n => n.read === false)) Promise.resolve().then(() => Act.markNotifsRead()).catch(() => { /* 다음에 다시 표시 */ });
+      }
+    };
+  }, { parent: '/', live: true });
 
   /* ------------------------------------------------------------
    * S-01 기기 상세 (바텀시트)
@@ -316,9 +347,9 @@
     } else if (x.result === 'self') {
       const c = Sel.person(x.closedBy); ender = `${esc(c ? c.name : '본인')}님이 ${UI.hm24(x.closedAt)}에 괜찮다고 응답하고 종료`;
     } else if (x.result === 'reported') {
-      const c = Sel.person(x.reportedBy); ender = `${esc(c ? c.name : '가족')}님이 ${UI.hm24(x.reportedAt || x.closedAt)}에 119에 신고`;
+      const c = Sel.person(x.reportedBy); ender = `${esc(c ? c.name : '가족')}님이 ${UI.hm24(x.reportedAt || x.closedAt)}에 119에 신고${x.reportKind === 'simulation' ? ' (모의 신고 · 실제 119 연락 없음)' : ''}`;
     } else if (x.result === 'auto_reported') {
-      ender = `${UI.hm24(x.reportedAt || x.closedAt)}에 자동으로 119 신고`;
+      ender = `${UI.hm24(x.reportedAt || x.closedAt)}에 자동으로 119 신고${x.reportKind === 'simulation' ? ' (모의 신고 · 실제 119 연락 없음)' : ''}`;
     }
     return `${UI.subHeader('낙상 이력')}
       <div class="page page--tight">
@@ -328,7 +359,7 @@
           <div class="kv__row"><span class="kv__k">집 · 위치</span><span class="kv__v">${esc(h ? Sel.homeName(h) : '집')} · ${esc(x.location)}</span></div>
           <div class="kv__row"><span class="kv__k">대상자</span><span class="kv__v">${esc(who || '-')}</span></div>
           <div class="kv__row"><span class="kv__k">응답 방식</span><span class="kv__v">${UI.RESPONSE_LABEL[x.response] || '-'}</span></div>
-          <div class="kv__row"><span class="kv__k">결과</span><span class="kv__v"><span class="tag ${x.result === 'self' ? 'tag--ok' : x.result === 'family' ? 'tag--info' : 'tag--stop'}">${UI.RESULT_LABEL[x.result]}</span></span></div>
+          <div class="kv__row"><span class="kv__k">결과</span><span class="kv__v"><span class="tag ${x.result === 'self' ? 'tag--ok' : x.result === 'family' ? 'tag--info' : 'tag--stop'}">${resultLabel(x)}</span></span></div>
           ${ender ? `<div class="kv__row"><span class="kv__k">처리</span><span class="kv__v">${ender}</span></div>` : ''}
         </div></div>
         <section class="section"><div class="section__head"><h2 class="section__title">진행 기록</h2></div>

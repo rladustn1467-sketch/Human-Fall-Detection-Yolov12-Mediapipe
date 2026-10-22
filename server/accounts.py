@@ -297,6 +297,10 @@ def leave_group(conn, user_id):
         if not group_id:
             return
         conn.execute("DELETE FROM home_members WHERE user_id = ?", (user_id,))
+        # 이 그룹에서 받은 알림(대기 중인 문자 포함)과 사고 화면 닫음 기록도 지움 (사고 기록 자체는 그룹에 남음)
+        conn.execute("DELETE FROM notifications WHERE user_id = ? AND group_id = ?", (user_id, group_id))
+        conn.execute("""DELETE FROM incident_dismissals WHERE user_id = ?
+                        AND incident_id IN (SELECT id FROM incidents WHERE group_id = ?)""", (user_id, group_id))
         conn.execute("""UPDATE users SET group_id = NULL, onboarded = 0, is_target = 0,
                         birth = NULL, conditions = NULL, medications = NULL WHERE id = ?""", (user_id,))
         _delete_group_if_empty(conn, group_id)
@@ -387,6 +391,7 @@ def empty_state(now=None):
         "clock": {"realBase": now_ms, "virtBase": now_ms, "speed": 1},
         "groups": [], "people": [], "homes": [], "devices": [],
         "incidents": [], "history": [], "notifs": [],
+        "serverNow": now_ms,   # 화면이 서버 시각 기준으로 남은 시간을 계산하도록 (store.js)
     }
 
 
@@ -425,4 +430,7 @@ def state_for(conn, user_id, now=None):
                                 [h["id"] for h in homes]):
             access.setdefault(row["home_id"], {})[row["kind"]] = row["method"]
     state["homes"] = [_home(h, codes.get(h["id"]), access.get(h["id"])) for h in homes]
+    # 낙상 사고와 내 알림 (incidents.py, alerts.py). incidents 가 이 모듈을 쓰므로 함수 안에서 불러옴
+    import incidents
+    state["incidents"], state["notifs"] = incidents.state_part(conn, user_id, me["group_id"])
     return state

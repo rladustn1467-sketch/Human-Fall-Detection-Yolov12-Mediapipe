@@ -23,9 +23,12 @@ from pydantic import BaseModel, Field
 
 import accounts
 import address_search
+import alerts
 import db
 import door_codes
 import escalation
+import incidents
+import legacy_devices
 import notify_rules
 import people as people_mod
 import report119
@@ -134,6 +137,13 @@ def _timeout_watcher(stop):
                 _refresh_timeouts()
         except Exception as e:  # 감시 작업이 멈추지 않도록 오류는 기록만 함
             print(f"[server] 시간 초과 검사 오류: {type(e).__name__}: {e}")
+        # 새 웹앱 낙상 사고: 60초 무응답·자동 신고(모의) 시간 처리, 대기 중인 문자(모의 발송) 처리
+        try:
+            with db.session(DB_PATH) as conn:
+                incidents.tick(conn)
+                alerts.process_due(conn, SMS_SENDER, incidents.now_ms())
+        except Exception as e:
+            print(f"[incident] 사고 시간 처리 오류: {type(e).__name__}: {e}")
 
 
 @asynccontextmanager
@@ -395,6 +405,12 @@ DB_SCHEMA_VERSION = db.init(DB_PATH)
 print(f"[db] 웹앱 데이터베이스: {DB_PATH.name} (스키마 버전 {DB_SCHEMA_VERSION})")
 # 현관 비밀번호 암호화 키 (server/.env 의 DOOR_CODE_KEY). 키 값은 출력하지 않음
 print(f"[door] 현관 비밀번호 저장: {door_codes.configure(os.environ.get('DOOR_CODE_KEY', ''))}")
+# 새 웹앱 낙상 사고 (incidents.py). 문자는 모의 발송만 (alerts.py, 실제 문자 업체 연결은 G단계).
+# 개발용 낙상 발생(/api/v2/dev/falls)은 FD_DEV_TOOLS=1 로 켠 복사본 서버에서만 (운영 .env 에는 넣지 않음)
+SMS_SENDER = alerts.build_sender(os.environ)
+DEV_TOOLS = os.environ.get("FD_DEV_TOOLS", "").strip() == "1"
+print(f"[incident] 문자 알림: {SMS_SENDER.name} (모의 발송 - 실제 문자를 보내지 않음) / "
+      f"개발용 낙상 발생: {'켜짐 (FD_DEV_TOOLS=1 - 운영 서버에서는 켜지 마세요)' if DEV_TOOLS else '꺼짐'}")
 
 
 # ---- API ----
@@ -430,7 +446,9 @@ def add_event(event: FallEvent):
         # 재시도로 같은 이벤트가 다시 오면 새로 만들지 않고 기존 기록을 돌려줌
         if event_id in events:
             ev = events[event_id]
-            return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "duplicate": True}
+            # 첫 요청 때 사고 연결이 실패했어도 재시도에서 연결됨 (같은 event_id 로는 사고가 하나만 생김)
+            return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "duplicate": True,
+                    "incident_id": _legacy_incident(event, event_id)}
 
         now = time.time()
         ev = {
@@ -469,7 +487,19 @@ def add_event(event: FallEvent):
             _apply_steps(ev, escalation.select_fallen(ev, people[0], None, now, how="auto"), now)
         events[event_id] = ev
         _save_events()
-    return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "count": len(events)}
+    return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "count": len(events),
+            "incident_id": _legacy_incident(event, event_id)}
+
+
+def _legacy_incident(event, event_id):
+    """New web app incident for an old-API fall, only for a device an administrator registered (legacy_devices.py).
+    Failures are logged and never break the old flow."""
+    try:
+        with db.session(DB_PATH) as conn:
+            return legacy_devices.incident_for_event(conn, event.device_id, event_id, event.is_test)
+    except Exception as e:
+        print(f"[incident] 옛 이벤트를 사고로 연결하지 못함 (옛 흐름은 그대로): {type(e).__name__}: {e}")
+        return None
 
 
 @app.get("/api/events", dependencies=[Depends(require_auth)])
@@ -850,6 +880,88 @@ def api_v2_delete_door_code(home_id: str, kind: str, request: Request):
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
         door_codes.delete(conn, user_id, home_id, kind)
+        return _state_response(conn, user_id)
+
+
+# ---- 낙상 사고 (D단계, incidents.py): 같은 그룹만, 다른 그룹 사고는 404. 동시에 누르면 먼저 처리된 것이 기준 (나머지 409) ----
+class ReportBody(BaseModel):
+    targetIds: Any = None   # 낙상 대상자 id 목록 (incidents.report 가 그 집의 감지 대상자인지 검사, 비우면 전원)
+
+
+class DevFallBody(BaseModel):
+    homeId: Any = None
+    location: Any = None
+    agoSeconds: Any = 0     # 개발 시험용: 몇 초 전에 감지된 것으로 (0~600)
+
+
+def _incident_action(request: Request, action, *args):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        action(conn, user_id, *args)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/incidents/{incident_id}/self-ok")
+def api_v2_incident_self_ok(incident_id: str, request: Request):
+    return _incident_action(request, incidents.self_ok, incident_id)
+
+
+@app.post("/api/v2/incidents/{incident_id}/help")
+def api_v2_incident_help(incident_id: str, request: Request):
+    return _incident_action(request, incidents.self_help, incident_id)
+
+
+@app.post("/api/v2/incidents/{incident_id}/take-over")
+def api_v2_incident_take_over(incident_id: str, request: Request):
+    return _incident_action(request, incidents.take_over, incident_id)
+
+
+@app.post("/api/v2/incidents/{incident_id}/close")
+def api_v2_incident_close(incident_id: str, request: Request):
+    return _incident_action(request, incidents.close_checked, incident_id)
+
+
+@app.post("/api/v2/incidents/{incident_id}/report")
+def api_v2_incident_report(incident_id: str, body: ReportBody, request: Request):
+    # 119 신고는 모의 기록만 (report_kind='simulation'). 실제 119 전화·문자·외부 요청은 없음
+    return _incident_action(request, incidents.report, incident_id, body.targetIds)
+
+
+@app.post("/api/v2/incidents/{incident_id}/dismiss")
+def api_v2_incident_dismiss(incident_id: str, request: Request):
+    return _incident_action(request, incidents.dismiss, incident_id)
+
+
+@app.post("/api/v2/notifications/read")
+def api_v2_notifications_read(request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        alerts.mark_read(conn, user_id, incidents.now_ms())
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/dev/falls")
+def api_v2_dev_fall(body: DevFallBody, request: Request):
+    """Developer fall for copy servers (FD_DEV_TOOLS=1). Same incident logic as real devices; source 'dev'."""
+    if not DEV_TOOLS:
+        raise accounts.AccountError(404, "찾을 수 없어요.")
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        me = people_mod._my_group(conn, user_id)
+        home = people_mod._group_home(conn, me, body.homeId)
+        try:
+            ago = int(body.agoSeconds or 0)
+        except (TypeError, ValueError):
+            ago = -1
+        if not 0 <= ago <= 600:
+            raise accounts.AccountError(400, "agoSeconds 는 0~600 이에요.", "agoSeconds")
+        now = incidents.now_ms()
+        incidents.create(conn, home["id"], body.location if body.location is not None else "거실", "dev",
+                         source_ref=user_id, now=now, detected_at=now - ago * 1000)
+        incidents.tick(conn, now)   # 지난 시각으로 만든 경우 바로 시간 처리
         return _state_response(conn, user_id)
 
 

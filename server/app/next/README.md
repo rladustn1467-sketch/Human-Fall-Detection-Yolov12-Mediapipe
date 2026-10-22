@@ -59,6 +59,17 @@
   - 처음 설정(`#/ob/…`)과 감지 켜기(`#/enable/…`)는 같은 화면 처리기를 쓰므로, 처리기는 지금 화면 주소로 흐름을 정합니다 (`onboarding.js` 의 `curFlow`).
   - 그룹을 나가면 젠스파크 설계대로 감지 대상 표시·건강 정보·집 연결도 지워지고, 마지막 구성원이면 그룹과 집이 삭제됩니다 (탈퇴도 같음).
 
+- **낙상 사고 (D단계, `server/incidents.py`·`alerts.py`·`legacy_devices.py`, DB 6번 변경)**: 테스트 모드의 사고 모델을 서버가 처리.
+  - 상태 detected → no_response(60초 무응답, 가족 알림) / help(도움 요청, 가족 알림) → checking(가족 확인, 자동 신고 멈춤) → closed / reported.
+    자동 신고는 가족 알림 뒤 180초(도움 요청도 처음 요청 뒤 180초). 시각은 서버 기준(상태의 `serverNow` 로 화면 시계를 맞춤).
+  - **119 신고는 모의 신고 기록만** (`reportKind: 'simulation'`). 실제 119 전화·문자·외부 요청은 코드에 없음. 실제 모드 화면은 "모의 신고"로 표시.
+  - 사고를 만드는 길은 하나(`incidents.create`): F단계 기기 API(예정), 옛 `/api/events` 연결(관리자가 `legacy_devices.py add` 로 등록한 기기만,
+    시험 이벤트 제외), 개발용 낙상(`POST /api/v2/dev/falls`, `FD_DEV_TOOLS=1` 로 켠 복사본 서버에서만. 운영 `.env` 에 넣지 말 것).
+  - 동작 API `POST /api/v2/incidents/{id}/self-ok|help|take-over|close|report|dismiss`: 같은 그룹만(다른 그룹 404), 동시에 누르면 먼저 처리된 것이
+    기준(나머지 409, 화면은 최신 상태로 다시 그림). 같은 이벤트 재시도·같은 집 진행 중 사고는 새 사고를 만들지 않음.
+  - 알림센터(`#/notifications`, 홈 종 버튼): 알림 기록. 실제 전달 여부는 따로(`notification_deliveries`). 문자는 **모의 발송만**
+    (`status: simulated` = 보내지 않음, `sent` 는 실제 업체 연결 뒤에만). 진행 중 사고가 있으면 2초, 평소 5초마다 서버 상태를 다시 읽음.
+
 ## 진입 경로 (URL)
 
 | 경로 | 설명 |
@@ -68,6 +79,7 @@
 | `#/history` · `#/history/:id` | 낙상 이력 목록 · 상세 |
 | `#/family/member/:id` · `#/family/home/:id` · `#/family/invite` | 구성원 · 집 상세 · 초대 |
 | `#/settings/profile` · `#/settings/notifications` | 프로필 수정 · 알림 설정 |
+| `#/notifications` | 알림센터 (홈 화면 종 버튼) |
 | `#/ob/signup` `#/ob/group` `#/ob/invite` `#/ob/join` `#/ob/ask` `#/ob/info` `#/ob/address` `#/ob/password` `#/ob/device` | 온보딩 |
 | `#/enable/info` … `#/enable/device` | 감지 켜기(S-12, 온보딩 O-06~O-09 재사용) |
 | `#/join?code=XXXXXX` | 초대 링크 |

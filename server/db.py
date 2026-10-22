@@ -135,6 +135,103 @@ MIGRATIONS = [
            WHEN EXISTS (SELECT 1 FROM home_entrances WHERE home_id = NEW.home_id AND kind = NEW.kind AND method != 'code')
            BEGIN SELECT RAISE(ABORT, 'entrance method is not code'); END""",
     ]),
+    (6, "낙상 사고·진행 기록·알림·문자 발송 기록·옛 감지 기기 연결 (incidents.py, alerts.py, legacy_devices.py)", [
+        # 시각은 웹앱 화면과 같은 밀리초 정수(ms). 사람 이름·건강 정보는 저장하지 않고 사용자 id 만 (문장은 화면에 보낼 때 만듦)
+        # 상태: detected → no_response | help → checking → closed | reported (store.js 의 사고 모델과 같음)
+        """CREATE TABLE incidents (
+               id                 TEXT PRIMARY KEY,
+               group_id           TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               home_id            TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               source             TEXT NOT NULL CHECK (source IN ('device', 'legacy', 'dev')),
+               source_ref         TEXT,
+               dedupe_key         TEXT UNIQUE,
+               location           TEXT NOT NULL,
+               detected_at        INTEGER NOT NULL,
+               status             TEXT NOT NULL CHECK (status IN ('detected', 'no_response', 'help', 'checking', 'closed', 'reported')),
+               response           TEXT CHECK (response IN ('within60', 'after60', 'none')),
+               family_notified_at INTEGER,
+               auto_report_at     INTEGER,
+               checked_by         TEXT,
+               checked_at         INTEGER,
+               closed_at          INTEGER,
+               closed_by          TEXT,
+               result             TEXT CHECK (result IN ('self', 'family', 'reported', 'auto_reported')),
+               reported_by        TEXT,
+               reported_at        INTEGER,
+               report_kind        TEXT CHECK (report_kind IS NULL OR report_kind = 'simulation'),
+               recognized_id      TEXT,
+               updated_at         INTEGER NOT NULL,
+               CHECK ((status IN ('closed', 'reported')) = (closed_at IS NOT NULL)),
+               CHECK ((status = 'reported') = (COALESCE(report_kind, '') = 'simulation'))
+           )""",
+        "CREATE INDEX incidents_group_time ON incidents (group_id, detected_at)",
+        # 한 집에 진행 중인 사고는 하나만 (같은 집에서 다시 감지되면 기존 사고에 기록만 더함)
+        "CREATE UNIQUE INDEX incidents_one_open_per_home ON incidents (home_id) WHERE status NOT IN ('closed', 'reported')",
+        """CREATE TABLE incident_help (
+               incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               at          INTEGER NOT NULL,
+               user_id     TEXT
+           )""",
+        # 진행 기록: 동작 종류와 사람 id 만 (문장은 화면에 보낼 때 만듦 → 탈퇴한 사람 이름이 남지 않음)
+        """CREATE TABLE incident_log (
+               id          INTEGER PRIMARY KEY AUTOINCREMENT,
+               incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               at          INTEGER NOT NULL,
+               action      TEXT NOT NULL,
+               user_id     TEXT,
+               n           INTEGER,
+               late        INTEGER NOT NULL DEFAULT 0
+           )""",
+        """CREATE TABLE incident_targets (
+               incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               PRIMARY KEY (incident_id, user_id)
+           )""",
+        """CREATE TABLE incident_dismissals (
+               incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               at          INTEGER NOT NULL,
+               PRIMARY KEY (incident_id, user_id)
+           )""",
+        # 알림 기록 (앱 알림센터). 실제 전달 여부는 아래 notification_deliveries 에 따로 기록
+        """CREATE TABLE notifications (
+               id          TEXT PRIMARY KEY,
+               group_id    TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               incident_id TEXT REFERENCES incidents(id) ON DELETE CASCADE,
+               kind        TEXT NOT NULL,
+               actor_id    TEXT,
+               n           INTEGER NOT NULL DEFAULT 0,
+               created_at  INTEGER NOT NULL,
+               read_at     INTEGER,
+               UNIQUE (incident_id, user_id, kind, n)
+           )""",
+        "CREATE INDEX notifications_user ON notifications (user_id, created_at)",
+        # 채널별 전달 시도 (지금은 문자 'sms' 만, 모의 발송). simulated = 실제로 보내지 않음
+        """CREATE TABLE notification_deliveries (
+               id              INTEGER PRIMARY KEY AUTOINCREMENT,
+               notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+               channel         TEXT NOT NULL CHECK (channel IN ('sms')),
+               status          TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'simulated', 'sent', 'failed')),
+               provider        TEXT,
+               body            TEXT NOT NULL,
+               attempts        INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at INTEGER,
+               last_error      TEXT,
+               provider_ref    TEXT,
+               created_at      INTEGER NOT NULL,
+               updated_at      INTEGER NOT NULL,
+               UNIQUE (notification_id, channel)
+           )""",
+        "CREATE INDEX notification_deliveries_due ON notification_deliveries (status, next_attempt_at)",
+        # 옛 감지 프로그램(/api/events 의 device_id)을 집에 연결: 관리자가 legacy_devices.py 로 등록한 것만
+        """CREATE TABLE legacy_device_homes (
+               device_id  TEXT PRIMARY KEY,
+               home_id    TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               location   TEXT NOT NULL,
+               created_at REAL NOT NULL
+           )""",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

@@ -258,7 +258,10 @@ i.fa-solid { line-height: 1; }
 .spinner--dark { border-color: rgba(27, 106, 114, .25); border-top-color: var(--primary); }
 
 /* ---------- 홈 ---------- */
-.home-head { padding: 24px 18px 8px; }
+.home-head { padding: 24px 18px 8px; position: relative; }
+/* 알림센터 버튼 (읽지 않은 알림이 있으면 점) */
+.home-head__bell { position: absolute; top: 16px; right: 10px; }
+.home-head__dot { position: absolute; top: 9px; right: 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--stop); box-shadow: 0 0 0 2px var(--bg, #fff); }
 .home-head__hello { font-size: 14px; color: var(--ink-2); font-weight: 600; }
 .home-head__title { font-size: 25px; font-weight: 800; letter-spacing: -0.035em; margin-top: 2px; }
 .home-body { padding: 8px 18px 0; }

@@ -22,14 +22,16 @@
   let fixedUser = null;   // URL ?as= 로 고정된 화면(개발 확인용 동시 보기)에서만 사용
   const subs = new Set();
   let started = false;
+  let serverOffset = 0;   // 실제 모드: 서버 시각 - 이 기기 시각 (남은 시간을 서버 시각 기준으로 계산)
 
   /* ---------- 시계 (배속 지원) ---------- */
   function clockNow(st) {
-    if (LIVE) return Date.now();   // 실제 모드는 실제 시각만
+    if (LIVE) return Date.now() + serverOffset;   // 실제 모드는 실제 시각만 (서버 시각에 맞춤)
     const c = st.clock;
     return c.virtBase + (Date.now() - c.realBase) * c.speed;
   }
   function now() { return clockNow(state); }
+  function syncClock(st) { if (LIVE && st && typeof st.serverNow === 'number') serverOffset = st.serverNow - Date.now(); }
 
   /* ---------- 유틸 ---------- */
   const isTerminal = inc => TERMINAL.includes(inc.status);
@@ -100,6 +102,7 @@
   /* ---------- 초기화 ---------- */
   async function init() {
     state = await API.loadSnapshot();
+    syncClock(state);
     const params = new URLSearchParams(location.search);
     const as = params.get('as');
     if (!LIVE && as && person(state, as)) fixedUser = as;   // ?as= 는 개발 확인용 (테스트 모드에서만)
@@ -471,6 +474,8 @@
     dismiss(id, pid) {
       commit(st => { const inc = st.incidents.find(i => i.id === id); if (inc) { inc.dismissed = inc.dismissed || {}; inc.dismissed[pid] = true; } });
     },
+    /* 알림센터를 열면 읽음 표시 (테스트 모드 예시 알림에는 읽음 상태가 없음) */
+    markNotifsRead() { },
     clearIncidents() { commit(st => { st.incidents = []; }); }
   };
 
@@ -482,6 +487,7 @@
     // 서버 응답으로 상태 교체. kind: 'session'(로그인한 사람이 바뀜) 또는 'commit'
     function applyServer(data, kind) {
       state = data.state;
+      syncClock(state);
       meId = data.me_id || null;
       notifySubs(kind || 'commit');
     }
@@ -489,15 +495,17 @@
 
     /* 다른 가족의 변경(참여·나가기·새 초대 코드 등)을 반영: 화면을 보고 있는 동안 주기적으로,
        다른 앱을 보다가 돌아왔을 때 바로 서버 상태를 다시 받음 (테스트 모드의 탭 간 저장소 공유를 대신함) */
-    const REFRESH_MS = 10000;
+    const REFRESH_MS = 5000;          // 평소
+    const ACTIVE_REFRESH_MS = 2000;   // 진행 중인 낙상 사고가 있을 때 (가족 확인·응답을 빨리 반영)
     const DATA_KEYS = ['groups', 'people', 'homes', 'devices', 'incidents', 'history', 'notifs'];
     const dataOf = st => JSON.stringify(DATA_KEYS.map(k => st && st[k]));
     let refreshing = false;
-    async function refreshFromServer() {
-      if (!state || refreshing || document.visibilityState === 'hidden') return;
+    async function refreshFromServer(force) {
+      if (!state || refreshing || (!force && document.visibilityState === 'hidden')) return;
       refreshing = true;
       try {
         const data = await API.fetchState();
+        syncClock(data.state);
         if ((data.me_id || null) !== meId) applyServer(data, 'session');      // 다른 곳에서 로그아웃·세션 만료
         else if (dataOf(data.state) !== dataOf(state)) applyServer(data, 'remote');
       } catch (e) {
@@ -506,8 +514,22 @@
         refreshing = false;
       }
     }
-    setInterval(refreshFromServer, REFRESH_MS);
+    const hasOpenIncident = () => !!(state && state.incidents && state.incidents.some(i => !isTerminal(i)));
+    (function loop() {
+      setTimeout(async () => { await refreshFromServer(); loop(); }, hasOpenIncident() ? ACTIVE_REFRESH_MS : REFRESH_MS);
+    })();
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromServer(); });
+    /* 낙상 사고 동작: 화면 계약대로 true/false 를 돌려줌.
+       false = 다른 가족이 먼저 처리했거나 이미 끝난 사고 (서버 409) → 최신 상태를 받아 다시 그림 */
+    async function incidentCall(id, action, body) {
+      try {
+        applyServer(await API.incidentAction(id, action, body));
+        return true;
+      } catch (e) {
+        if (e instanceof FD.ApiError && e.status === 409) { await refreshFromServer(true); return false; }
+        throw e;
+      }
+    }
     const SERVER_ACTIONS = {
       /* B단계: 계정 · 그룹 */
       async createAccount({ name, phone, password }) { applyServer(await API.signup({ name, phone, password }), 'session'); return meId; },
@@ -562,7 +584,15 @@
       /* 현관 출입 방식 (+ 비밀번호 방식이면 입력한 비밀번호). 비워 두면 서버에 등록된 비밀번호는 그대로 */
       async setEntrance(homeId, kind, method, code) { applyServer(await API.setEntrance(homeId, kind, method, code || null)); },
       /* 회원 탈퇴: 비밀번호를 다시 확인한 뒤 서버가 한 번에 삭제 */
-      async withdraw(personId, password) { applyServer(await API.withdraw(password), 'session'); }
+      async withdraw(personId, password) { applyServer(await API.withdraw(password), 'session'); },
+      /* D단계: 낙상 사고 (시간 경과·자동 신고는 서버만 처리. 119 신고는 모의 신고 기록) */
+      async selfOk(id) { return incidentCall(id, 'self-ok'); },
+      async selfHelp(id) { return incidentCall(id, 'help'); },
+      async takeOver(id) { return incidentCall(id, 'take-over'); },
+      async closeChecked(id) { return incidentCall(id, 'close'); },
+      async report(id, pid, targetIds) { return incidentCall(id, 'report', { targetIds: targetIds || [] }); },
+      async dismiss(id) { return incidentCall(id, 'dismiss'); },
+      async markNotifsRead() { applyServer(await API.readNotifs()); }
     };
     Object.keys(Act).forEach(name => {
       if (SERVER_ACTIONS[name]) return;

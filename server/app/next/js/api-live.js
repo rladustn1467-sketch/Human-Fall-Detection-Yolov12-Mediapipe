@@ -6,8 +6,8 @@
  * - 데이터는 서버에서만 가져오고, 브라우저 저장소(localStorage)에 저장하지 않습니다.
  * - 로그인은 서버가 주는 쿠키(fd_session, 스크립트에서 읽을 수 없음)로 유지됩니다.
  * - 서버에 연결된 동작: 가입·로그인·로그아웃·그룹 만들기·초대 코드·참여·나가기·처음 설정 완료 (B단계),
- *   내 정보·건강 정보·알림 설정·집 추가/연결/해제/주소·처음 설정 한 번에 저장·회원 탈퇴 (C단계).
- *   나머지 동작은 D단계부터 하나씩 추가합니다.
+ *   내 정보·건강 정보·알림 설정·집 추가/연결/해제/주소·처음 설정 한 번에 저장·회원 탈퇴 (C단계),
+ *   낙상 사고 응답·확인·종료·신고(모의)·닫기, 알림 읽음 (D단계). 기기는 F단계에서 추가합니다.
  * ------------------------------------------------------------------ */
 (function () {
   const FD = (window.FD = window.FD || {});
@@ -89,6 +89,12 @@
     /* ---- 현관 비밀번호 (H단계) ---- 등록·변경·삭제만. 값을 받아 오는 주소는 없음 (응답은 등록 여부만) */
     async setDoorCode(homeId, kind, code) { return remember(await call('PUT', `/api/v2/homes/${encodeURIComponent(homeId)}/door-codes/${encodeURIComponent(kind)}`, { code })); },
     async setEntrance(homeId, kind, method, code) { return remember(await call('PUT', `/api/v2/homes/${encodeURIComponent(homeId)}/entrances/${encodeURIComponent(kind)}`, code ? { method, code } : { method })); },
-    async deleteDoorCode(homeId, kind) { return remember(await call('DELETE', `/api/v2/homes/${encodeURIComponent(homeId)}/door-codes/${encodeURIComponent(kind)}`)); }
+    async deleteDoorCode(homeId, kind) { return remember(await call('DELETE', `/api/v2/homes/${encodeURIComponent(homeId)}/door-codes/${encodeURIComponent(kind)}`)); },
+
+    /* ---- 낙상 사고 (D단계) ---- action: self-ok · help · take-over · close · report · dismiss.
+       같은 그룹의 사고만. 다른 사람이 먼저 처리했으면 409 (store.js 가 최신 상태로 다시 그림).
+       119 신고는 서버가 모의 신고로 기록만 함 (실제 119 연락 없음) */
+    async incidentAction(id, action, body) { return remember(await call('POST', `/api/v2/incidents/${encodeURIComponent(id)}/${action}`, body)); },
+    async readNotifs() { return remember(await call('POST', '/api/v2/notifications/read')); }
   };
 })();

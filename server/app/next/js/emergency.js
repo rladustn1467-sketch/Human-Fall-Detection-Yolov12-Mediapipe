@@ -14,6 +14,9 @@
   const { esc, ic, on, toast } = UI;
   const { Sel, Act } = FD.Store;
   const S = 1000, M = 60000;
+  // 실제 모드의 119 신고는 서버가 모의 신고로 기록만 함 (실제 119 연락 없음). 화면에 분명히 표시
+  const SIM = FD.MODE === 'live';
+  const SIM_NOTE = '실제 119에는 연락되지 않아요.';
 
   const mem = {};        // 사고별 사용자 화면 상태 { min, help, lvl }
   let flow = null;       // { id, step: 'pick'|'confirm', selected: [], unknown, from }
@@ -68,7 +71,7 @@
     const helpN = inc.helpTimes.length;
     let body = '', foot = '', cls = '';
     const btnOk = `<button class="btn btn--white-ok btn--lg" style="background:#fff;color:#1F6B45" data-action="em.ok" data-id="${inc.id}">${ic('thumbs-up')} 괜찮아요</button>`;
-    const btn119 = `<button class="btn btn--outline" data-action="em.report-self" data-id="${inc.id}">${ic('truck-medical')} 직접 119에 신고하기</button>`;
+    const btn119 = `<button class="btn btn--outline" data-action="em.report-self" data-id="${inc.id}">${ic('truck-medical')} ${SIM ? '119 신고 (모의 신고)' : '직접 119에 신고하기'}</button>`;
     const btnHelp = `<button class="btn btn--white btn--lg" data-action="em.help" data-id="${inc.id}">${ic('hand')} 도움이 필요해요${helpN ? ` (${helpN}회 요청함)` : ''}</button>`;
 
     if (inc.status === 'detected') {
@@ -89,7 +92,7 @@
         <p class="ov__lead">${esc(inc.location)}에서 낙상이 감지됐어요. ${inc.status === 'help' ? '가족이 곧 확인할 거예요.' : '60초 동안 응답이 없어 가족에게 알렸어요.'} 괜찮으시면 아래 버튼을 눌러주세요.</p>
         <span class="ov-state">${ic('bell')} ${inc.status === 'help' ? `도움 요청 ${helpN}번째 · ` : ''}감지 후 <span data-el="${inc.detectedAt}">--</span></span>
         <div class="big-count"><p class="big-count__label">자동 119 신고까지</p><div class="big-count__num" data-cd="${inc.autoReportAt}">--:--</div><div class="big-count__bar"><b data-bar="${inc.familyNotifiedAt},${inc.autoReportAt}"></b></div></div>
-        <p class="ov__small" style="text-align:center">아무도 확인하지 않으면 자동으로 119에 신고돼요.</p>`;
+        <p class="ov__small" style="text-align:center">${SIM ? `아무도 확인하지 않으면 자동 119 신고가 모의 신고로 기록돼요. ${SIM_NOTE}` : '아무도 확인하지 않으면 자동으로 119에 신고돼요.'}</p>`;
       foot = inc.status === 'help' ? `${btnOk}${btnHelp}${btn119}` : `${btnOk}${btn119}`;
     }
     void h; void nowT;
@@ -104,7 +107,7 @@
     const helpN = inc.helpTimes.length;
     const photo = `<div class="ov-photo">${UI.maskPhoto(inc.id)}</div>`;
     const detected = `<p class="ov__small">낙상 감지 ${UI.clock(inc.detectedAt)} · <span data-el="${inc.detectedAt}" data-suf=" 경과">--</span></p>`;
-    const btn119 = `<button class="btn btn--119" data-action="em.report-family" data-id="${inc.id}">${ic('truck-medical')} 119에 신고해주세요</button>`;
+    const btn119 = `<button class="btn btn--119" data-action="em.report-family" data-id="${inc.id}">${ic('truck-medical')} ${SIM ? '119 신고 (모의 신고)' : '119에 신고해주세요'}</button>`;
     const btnCall = `<button class="btn btn--call" data-action="em.call" data-id="${inc.id}">${ic('phone')} 전화 걸기</button>`;
     const btnMap = `<button class="btn btn--call" data-action="em.map" data-id="${inc.id}">${ic('map-location-dot')} 주소/지도 보기</button>`;
     const contact = `<div class="btn-pair">${btnCall}${btnMap}</div>`;
@@ -135,7 +138,7 @@
       ${isHelp && helpN ? `<div class="ov-help-times" aria-label="요청 시각">${inc.helpTimes.map(t => `<span>${UI.secLabel(t - inc.detectedAt)}</span>`).join('')}</div>` : ''}
       <div class="big-count"><p class="big-count__label">자동 신고까지</p><div class="big-count__num" data-cd="${inc.autoReportAt}">--:--</div><div class="big-count__bar"><b data-bar="${inc.familyNotifiedAt},${inc.autoReportAt}"></b></div></div>
       ${detected}
-      <p class="ov-note">${ic('clock')}<span>180초 동안 아무도 누르지 않으면 자동으로 119 신고를 해요.</span></p>`;
+      <p class="ov-note">${ic('clock')}<span>${SIM ? `180초 동안 아무도 누르지 않으면 자동 119 신고가 모의 신고로 기록돼요. ${SIM_NOTE}` : '180초 동안 아무도 누르지 않으면 자동으로 119 신고를 해요.'}</span></p>`;
     const foot = `<button class="btn btn--white btn--lg" data-action="em.take" data-id="${inc.id}">${ic('hand-holding-heart')} 확인했어요, 제가 처리할게요</button>${btn119}${contact}`;
     return wrap('', `${top(isHelp ? '긴급 · 도움 요청' : '긴급 · 낙상 알림', { close: true })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
   }
@@ -171,7 +174,8 @@
       const v = e.registered ? `<span class="tag tag--ok">${ic('lock')} 등록됨</span>` : e.needsInput ? `<span class="muted">${e.method ? '미등록' : '미설정'}</span>` : esc(e.label);
       return `<div class="kv__row"><span class="kv__k">${e.name}</span><span class="kv__v">${v}</span></div>`; };
     return wrap('ov--dark', `${top('119 신고 확인', { back: true })}<div class="ov__body">
-      <h1 class="ov__title" style="font-size:24px">119에 다음과 같은 내용으로 신고돼요.<br>확인 후 전송을 눌러주세요.</h1>
+      <h1 class="ov__title" style="font-size:24px">${SIM ? '119 신고 내용을 확인해 주세요.<br>지금은 모의 신고예요.' : '119에 다음과 같은 내용으로 신고돼요.<br>확인 후 전송을 눌러주세요.'}</h1>
+      ${SIM ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('circle-info')}<span>전송을 누르면 신고 기록만 남아요. ${SIM_NOTE}</span></div>` : ''}
       <div class="confirm-doc">
         <h3>위치</h3>
         <div class="kv"><div class="kv__row"><span class="kv__k">주소</span><span class="kv__v${h.address ? '' : ' muted'}">${esc(UI.addr(h))}</span></div>
@@ -184,15 +188,13 @@
           <div class="kv__row"><span class="kv__k">복용 약</span><span class="kv__v${p.medications == null ? ' muted' : ''}">${esc(UI.listLabel(p.medications))}</span></div></div></div>`).join('')}
         <div class="confirm-doc__msg"><b>119에 보낼 문구</b>낙상이 감지되어 구급 출동을 요청합니다. 위치와 환자 정보는 아래와 같습니다.</div>
       </div>
-    </div><div class="ov__foot"><button class="btn btn--119-dark btn--lg" data-action="em.send" data-id="${inc.id}">${ic('paper-plane')} 전송</button></div>`);
+    </div><div class="ov__foot"><button class="btn btn--119-dark btn--lg" data-action="em.send" data-id="${inc.id}">${ic('paper-plane')} ${SIM ? '전송 (모의 신고)' : '전송'}</button></div>`);
   }
   on('em.send', async () => {
     if (!flow) return;
     const me = Sel.me(); const id = flow.id, sel = flow.selected.slice();
     flow = null;
-    const ok = Act.report(id, me.id, sel);
-    if (!ok) toast('이미 신고되었거나 종료된 사고예요');
-    sync(true);
+    run(() => Act.report(id, me.id, sel), null, '이미 신고되었거나 종료된 사고예요');
   });
 
   /* ---------- E-07 신고 완료 / 종료 ---------- */
@@ -200,7 +202,13 @@
     const h = Sel.home(inc.homeId); const name = `${Sel.homeName(h, me)} · ${inc.location}`;
     const by = Sel.person(inc.closedBy);
     let cls = 'ov--ended', icon = 'circle-check', title = '', lead = '', time = '', badge = '사고 종료';
-    if (inc.status === 'reported') {
+    const sim = inc.reportKind === 'simulation';
+    if (inc.status === 'reported' && sim) {
+      cls = 'ov--dark'; icon = 'truck-medical'; badge = '119 신고 (모의 신고)';
+      if (inc.result === 'auto_reported') { title = '자동 119 신고가<br>기록됐어요'; lead = `아무도 확인하지 않아 모의 신고로 기록했어요. ${SIM_NOTE}`; }
+      else { const r = Sel.person(inc.reportedBy); title = '119 신고가<br>기록됐어요'; lead = `${esc(r ? r.name : '가족')}님이 신고를 기록했어요. 모의 신고라 ${SIM_NOTE}`; }
+      time = `기록 시각 ${UI.clock(inc.reportedAt || inc.closedAt)}`;
+    } else if (inc.status === 'reported') {
       cls = 'ov--dark'; icon = 'truck-medical'; badge = '119 신고됨';
       if (inc.result === 'auto_reported') { title = '자동으로 119에<br>신고됐어요'; lead = '아무도 확인하지 않아 자동으로 신고했어요.'; }
       else { const r = Sel.person(inc.reportedBy); title = '119에 신고됐어요'; lead = `${esc(r ? r.name : '가족')}님이 119에 신고했어요.`; }
@@ -215,25 +223,33 @@
       <h1 class="ov__title"><small>${esc(name)}</small>${title}</h1>
       <p class="ov__lead">${lead}</p>
       <span class="ov-state">${ic('clock')} ${time}</span>
-      ${inc.status === 'reported' ? `<p class="ov-note">${ic('shield-halved')}<span>이미 신고가 접수되어 추가로 신고할 수 없어요.</span></p>` : ''}
+      ${inc.status === 'reported' ? `<p class="ov-note">${ic('shield-halved')}<span>${sim ? '이미 신고가 기록되어 추가로 신고할 수 없어요.' : '이미 신고가 접수되어 추가로 신고할 수 없어요.'}</span></p>` : ''}
       <div class="ov-photo">${UI.maskPhoto(inc.id)}</div>
       <p class="ov__small">낙상 감지 ${UI.dateTime(inc.detectedAt)}</p>
     </div><div class="ov__foot"><button class="btn btn--white btn--lg" style="color:#1d2f35" data-action="em.dismiss" data-id="${inc.id}">확인</button></div>`);
   }
-  on('em.dismiss', el => { Act.dismiss(el.dataset.id, Sel.meId()); sync(true); });
+  on('em.dismiss', el => run(() => Act.dismiss(el.dataset.id, Sel.meId())));
 
   /* ---------- 동작 ---------- */
-  on('em.ok', el => { Act.selfOk(el.dataset.id, Sel.meId()); sync(true); });
+  /* 테스트 모드는 바로 결과(true/false), 실제 모드는 서버 응답을 기다림 (Promise).
+     false = 이미 끝났거나 다른 가족이 먼저 처리함 → 최신 상태로 다시 그림 */
+  async function run(fn, done, failMsg) {
+    let ok;
+    try { ok = await fn(); } catch (e) { UI.showError(e); sync(true); return false; }
+    if (ok === false) { if (failMsg || SIM) toast(failMsg || '이미 다른 가족이 처리했거나 종료된 사고예요'); }
+    else if (done) done();
+    sync(true);
+    return ok;
+  }
+  on('em.ok', el => run(() => Act.selfOk(el.dataset.id, Sel.meId())));
   on('em.help', el => {
     const inc = Sel.incident(el.dataset.id); const n = inc ? inc.helpTimes.length + 1 : 1;
-    Act.selfHelp(el.dataset.id, Sel.meId());
-    toast(n > 1 ? `가족에게 ${n}번째로 요청했어요` : '가족에게 도움을 요청했어요');
-    sync(true);
+    run(() => Act.selfHelp(el.dataset.id, Sel.meId()), () => toast(n > 1 ? `가족에게 ${n}번째로 요청했어요` : '가족에게 도움을 요청했어요'));
   });
-  on('em.take', el => { Act.takeOver(el.dataset.id, Sel.meId()); sync(true); });
+  on('em.take', el => run(() => Act.takeOver(el.dataset.id, Sel.meId())));
   on('em.close', async el => {
     const ok = await UI.confirm({ title: '사고를 종료할까요?', body: '괜찮은 것을 확인했다면 종료해 주세요. 이력에 기록돼요.', ok: '종료', cancel: '취소', top: true });
-    if (ok) { Act.closeChecked(el.dataset.id, Sel.meId()); sync(true); }
+    if (ok) run(() => Act.closeChecked(el.dataset.id, Sel.meId()));
   });
   on('em.report-self', el => { flow = { id: el.dataset.id, step: 'confirm', selected: [Sel.meId()], unknown: false, from: 'self' }; sync(true); });
   on('em.report-family', el => {
