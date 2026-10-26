@@ -353,7 +353,7 @@
     }
     return `${UI.subHeader('낙상 이력')}
       <div class="page page--tight">
-        ${UI.maskPhoto(x.id)}
+        ${UI.incidentPhoto(x, { all: true })}
         <div class="card card--pad" style="margin-top:14px"><div class="kv">
           <div class="kv__row"><span class="kv__k">감지 시각</span><span class="kv__v">${UI.dateTime(x.detectedAt)}</span></div>
           <div class="kv__row"><span class="kv__k">집 · 위치</span><span class="kv__v">${esc(h ? Sel.homeName(h) : '집')} · ${esc(x.location)}</span></div>

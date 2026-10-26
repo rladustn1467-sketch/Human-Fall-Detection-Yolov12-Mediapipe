@@ -501,8 +501,10 @@ def add_event(event: FallEvent):
         events[event_id] = ev
         _save_events()
     # both 방식은 옛 흐름과 함께 새 사고도 만듦 (미등록 기기는 None)
+    incident_id = handed_to or _legacy_incident(event, event_id)
+    _link_photo(incident_id, ev)
     return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "count": len(events),
-            "incident_id": handed_to or _legacy_incident(event, event_id)}
+            "incident_id": incident_id}
 
 
 def _duplicate_event(event, event_id):
@@ -510,8 +512,22 @@ def _duplicate_event(event, event_id):
     넘긴 이벤트는 그 사고 id. both 기기는 첫 요청 때 사고 연결이 실패했어도 재시도에서 연결됨 (같은 event_id 로는 사고 하나).
     incident 기기인데 첫 요청이 옛 흐름으로 처리됐으면 재시도에서도 사고를 만들지 않음 (두 흐름이 함께 돌지 않게)"""
     ev = events[event_id]
+    incident_id = ev.get("incident_id") or _legacy_incident(event, event_id)
+    _link_photo(incident_id, ev)
     return {"ok": True, "event_id": event_id, "image_saved": ev["image"] is not None, "duplicate": True,
-            "incident_id": ev.get("incident_id") or _legacy_incident(event, event_id)}
+            "incident_id": incident_id}
+
+
+def _link_photo(incident_id, ev):
+    """Link the event's saved silhouette photo to its incident (same photo only once). A failure is only logged:
+    the incident and its alerts go on without the photo."""
+    if not incident_id or not ev["image"]:
+        return
+    try:
+        with db.session(DB_PATH) as conn:
+            incidents.add_photo(conn, incident_id, ev["event_id"])
+    except Exception as e:
+        print(f"[incident] 사진을 사고에 연결하지 못함 (사고·알림은 그대로): {type(e).__name__}: {e}")
 
 
 def _handover_incident(event, event_id):
@@ -975,6 +991,19 @@ def api_v2_incident_report(incident_id: str, body: ReportBody, request: Request)
 @app.post("/api/v2/incidents/{incident_id}/dismiss")
 def api_v2_incident_dismiss(incident_id: str, request: Request):
     return _incident_action(request, incidents.dismiss, incident_id)
+
+
+@app.get("/api/v2/incidents/{incident_id}/photos/{photo_id}.jpg")
+def api_v2_incident_photo(incident_id: str, photo_id: str, request: Request):
+    # 감지 기기가 가공해 보낸 실루엣 사진만 (원본은 서버에 없음). 같은 그룹의 그 사고에 연결된 사진만, 다른 그룹은 404
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        incidents.check_photo(conn, user_id, incident_id, photo_id)
+    path = IMAGE_DIR / f"{photo_id}.jpg"
+    if not EVENT_ID_RE.match(photo_id) or not path.is_file():
+        raise accounts.AccountError(404, "사진을 찾을 수 없어요.")
+    # no-cache: 브라우저가 보관본을 쓰기 전에 매번 서버에 물어봄 (로그아웃·탈퇴 뒤에는 보관본도 보이지 않게). 사진은 작음 (긴 변 640px)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})
 
 
 @app.post("/api/v2/notifications/read")

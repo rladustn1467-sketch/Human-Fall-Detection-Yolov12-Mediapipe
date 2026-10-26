@@ -105,7 +105,7 @@
     const hname = Sel.homeName(h, me);
     const name = `${hname} · ${inc.location}`;
     const helpN = inc.helpTimes.length;
-    const photo = `<div class="ov-photo">${UI.maskPhoto(inc.id)}</div>`;
+    const photo = `<div class="ov-photo">${UI.incidentPhoto(inc)}</div>`;
     const detected = `<p class="ov__small">낙상 감지 ${UI.clock(inc.detectedAt)} · <span data-el="${inc.detectedAt}" data-suf=" 경과">--</span></p>`;
     const btn119 = `<button class="btn btn--119" data-action="em.report-family" data-id="${inc.id}">${ic('truck-medical')} ${SIM ? '119 신고 (모의 신고)' : '119에 신고해주세요'}</button>`;
     const btnCall = `<button class="btn btn--call" data-action="em.call" data-id="${inc.id}">${ic('phone')} 전화 걸기</button>`;
@@ -154,7 +154,7 @@
       <h1 class="ov__title">${rec ? '낙상 대상자를<br>확인해주세요' : '낙상 대상자가<br>누구인가요?'}</h1>
       <p class="ov__lead">${rec ? `${esc(rec.name)}님이 아니라면 낙상 대상자를 선택해주세요` : `${esc(Sel.homeName(h, me))}에 감지 대상자가 ${vs.length}명 있어요.`}</p>
       <div class="pick-list" role="radiogroup" aria-label="낙상 대상자">${vs.map(p => `<button class="pick${sel === p.id ? ' is-on' : ''}" role="radio" aria-checked="${sel === p.id}" data-action="em.pick" data-id="${p.id}">
-        <span class="pick__ph">${UI.maskPhoto(inc.id + p.id, { small: true })}</span>
+        ${SIM ? `<span class="pick__ph pick__ph--av">${UI.avatar(p, 'lg')}</span>` : `<span class="pick__ph">${UI.maskPhoto(inc.id + p.id, { small: true })}</span>`}
         <span class="pick__main"><span class="pick__name">${esc(p.name)}${rec && rec.id === p.id ? ' <span class="tag tag--primary">인식됨</span>' : ''}</span><span class="pick__addr">${esc(UI.addr(h))}</span></span>
         <span class="pick__ck">${ic('check')}</span></button>`).join('')}</div>
       <button class="link-btn" style="margin-top:14px;align-self:center;font-size:16px" data-action="em.unknown">잘 모르겠어요</button>
@@ -224,7 +224,7 @@
       <p class="ov__lead">${lead}</p>
       <span class="ov-state">${ic('clock')} ${time}</span>
       ${inc.status === 'reported' ? `<p class="ov-note">${ic('shield-halved')}<span>${sim ? '이미 신고가 기록되어 추가로 신고할 수 없어요.' : '이미 신고가 접수되어 추가로 신고할 수 없어요.'}</span></p>` : ''}
-      <div class="ov-photo">${UI.maskPhoto(inc.id)}</div>
+      <div class="ov-photo">${UI.incidentPhoto(inc)}</div>
       <p class="ov__small">낙상 감지 ${UI.dateTime(inc.detectedAt)}</p>
     </div><div class="ov__foot"><button class="btn btn--white btn--lg" style="color:#1d2f35" data-action="em.dismiss" data-id="${inc.id}">확인</button></div>`);
   }

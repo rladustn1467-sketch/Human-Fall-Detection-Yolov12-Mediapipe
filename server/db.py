@@ -262,6 +262,16 @@ MIGRATIONS = [
            )""",
         "CREATE INDEX telegram_deliveries_due ON telegram_deliveries (status, next_attempt_at)",
     ]),
+    (8, "감지 기기가 보낸 실루엣 사진을 사고에 연결 (incidents.py, main.py)", [
+        # 사진 파일은 지금처럼 images/{photo_id}.jpg (photo_id = /api/events 의 event_id), 여기에는 연결만 저장.
+        # 한 사고에 여러 장 (진행 중 같은 집에서 다시 감지된 사진). 원본은 서버에 오지 않음 (가공은 감지 기기에서만)
+        """CREATE TABLE incident_photos (
+               photo_id    TEXT PRIMARY KEY,
+               incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               at          INTEGER NOT NULL
+           )""",
+        "CREATE INDEX incident_photos_incident ON incident_photos (incident_id, at)",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

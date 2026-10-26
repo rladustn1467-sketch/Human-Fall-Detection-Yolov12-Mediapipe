@@ -102,6 +102,22 @@ def create(conn, home_id, location, source, source_ref=None, dedupe_key=None, no
         return incident_id, True
 
 
+def add_photo(conn, incident_id, photo_id, now=None):
+    """Link a saved silhouette photo (images/{photo_id}.jpg) to an incident. A retried event links it only once."""
+    now = now_ms() if now is None else now
+    with db.transaction(conn):
+        conn.execute("INSERT OR IGNORE INTO incident_photos (photo_id, incident_id, at) VALUES (?, ?, ?)",
+                     (photo_id, incident_id, now))
+
+
+def check_photo(conn, user_id, incident_id, photo_id):
+    """Raise 404 unless the photo belongs to an incident of the user's own group (other groups: same as missing)."""
+    _load(conn, user_id, incident_id)
+    if not conn.execute("SELECT 1 FROM incident_photos WHERE photo_id = ? AND incident_id = ?",
+                        (str(photo_id or ""), incident_id)).fetchone():
+        raise AccountError(404, "사진을 찾을 수 없어요.")
+
+
 def _marks(values):
     return ",".join("?" * len(values))
 
@@ -316,6 +332,8 @@ def _incident_dict(conn, inc, names):
                                                           (inc["id"],))}
     log = [{"at": r["at"], "text": log_text(r["action"], names.get(r["user_id"]), r["n"], r["late"])}
            for r in conn.execute("SELECT * FROM incident_log WHERE incident_id = ? ORDER BY at, id", (inc["id"],))]
+    photos = [{"id": r["photo_id"], "at": r["at"]} for r in conn.execute(
+        "SELECT photo_id, at FROM incident_photos WHERE incident_id = ? ORDER BY at, photo_id", (inc["id"],))]
     return {
         "id": inc["id"], "groupId": inc["group_id"], "homeId": inc["home_id"], "location": inc["location"],
         "detectedAt": inc["detected_at"], "status": inc["status"], "response": inc["response"],
@@ -324,7 +342,7 @@ def _incident_dict(conn, inc, names):
         "closedAt": inc["closed_at"], "closedBy": inc["closed_by"], "result": inc["result"],
         "reportedBy": inc["reported_by"], "reportedAt": inc["reported_at"], "reportedTargetIds": targets,
         "reportKind": inc["report_kind"], "recognizedId": inc["recognized_id"],
-        "source": inc["source"], "dismissed": dismissed, "log": log,
+        "source": inc["source"], "dismissed": dismissed, "log": log, "photos": photos,
     }
 
 

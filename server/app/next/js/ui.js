@@ -150,6 +150,23 @@
     </figure>`;
   }
 
+  /* ---------- 사고 사진 ----------
+     실제 모드: 감지 기기가 가공해 보낸 실루엣 사진만 보여줌 (서버가 같은 그룹에만 줌). 없으면 '사진 없음'.
+     그려 넣은 예시 그림(maskPhoto)은 테스트 모드에서만 씀. opts.all = 연결된 사진을 모두 (이력 상세) */
+  function incidentPhoto(inc, opts) {
+    opts = opts || {};
+    if (FD.MODE !== 'live') return maskPhoto(inc.id);
+    const photos = inc.photos || [];
+    if (!photos.length) {
+      return `<figure class="mask-photo mask-photo--none"><span>${ic('image')} 이 낙상에는 사진이 없어요</span></figure>`;
+    }
+    const one = p => `<figure class="mask-photo mask-photo--real">
+      <img src="/api/v2/incidents/${encodeURIComponent(inc.id)}/photos/${encodeURIComponent(p.id)}.jpg" alt="배경과 사람을 가린 낙상 감지 사진" loading="lazy">
+      <figcaption class="mask-photo__tag">${ic('eye-slash')} 배경·인물 가림 처리${opts.all && photos.length > 1 ? ` · ${clock(p.at)}:${pad(new Date(p.at).getSeconds())}` : ''}</figcaption>
+    </figure>`;
+    return opts.all ? `<div class="photo-list">${photos.map(one).join('')}</div>` : one(photos[0]);
+  }
+
   /* ---------- QR ---------- */
   function qr(text, size) {
     try {
@@ -405,7 +422,7 @@
     addr, pwLabel, SUGGEST_COND, SUGGEST_MED,
     esc, pad, mmss, elapsed, ago, clock, hm24, dateLabel, dateTime, secLabel, age, birthLabel, listLabel, fmtPhone, validPhone, validEmail,
     checkBirth, birthInput, doorCodeProblem, entrance,
-    DEVICE_TYPE, DEVICE_ICON, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, qr,
+    DEVICE_TYPE, DEVICE_ICON, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, incidentPhoto, qr,
     tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody,
     showError, busy
   };

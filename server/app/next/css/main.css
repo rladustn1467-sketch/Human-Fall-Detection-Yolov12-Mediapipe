@@ -357,6 +357,12 @@ ul.timeline { padding-left: 22px; }
 .mask-photo__fig { position: absolute; left: 6%; right: 6%; bottom: 3%; width: 88%; height: auto; }
 .mask-photo__tag { position: absolute; left: 10px; top: 10px; display: inline-flex; gap: 6px; align-items: center; background: rgba(20, 30, 36, .62); color: #fff; font-size: 12px; font-weight: 700; padding: 4px 9px; border-radius: 999px; backdrop-filter: blur(4px); }
 .mask-photo--sm .mask-photo__tag { display: none; }
+/* 실제 모드: 감지 기기가 가공해 보낸 실루엣 사진 / 사진 없음 */
+.mask-photo--real { background: #2b3338; }
+.mask-photo--real img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.mask-photo--none { display: grid; place-items: center; background: rgba(120, 130, 136, .16); color: inherit; opacity: .8; font-size: 14px; font-weight: 700; }
+.mask-photo--none span { display: inline-flex; gap: 8px; align-items: center; }
+.photo-list { display: grid; gap: 10px; }
 
 /* ---------- 바텀시트 ---------- */
 .sheet-wrap { position: fixed; inset: 0; z-index: 200; display: flex; justify-content: center; align-items: flex-end; pointer-events: none; }
@@ -451,6 +457,7 @@ ul.timeline { padding-left: 22px; }
 .pick { display: flex; gap: 12px; align-items: center; background: #fff; color: var(--ink); border-radius: 18px; padding: 12px; text-align: left; border: 3px solid transparent; width: 100%; }
 .pick.is-on { border-color: #FFD36B; box-shadow: 0 0 0 3px rgba(255, 211, 107, .45); }
 .pick__ph { width: 96px; flex: 0 0 auto; }
+.pick__ph--av { width: auto; }
 .pick__main { flex: 1; min-width: 0; }
 .pick__name { font-weight: 800; font-size: 18px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pick__addr { color: var(--ink-2); font-size: 13.5px; margin-top: 2px; }
