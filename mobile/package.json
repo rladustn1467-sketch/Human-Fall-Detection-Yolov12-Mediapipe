@@ -5,6 +5,7 @@
   "description": "새 웹앱(server/app/next)을 서버 주소에서 불러오는 Capacitor 안드로이드 앱 (1단계: 감싸기만)",
   "scripts": {
     "sync:dev": "node scripts/sync-dev.mjs",
+    "sync:release": "node scripts/sync-release.mjs",
     "open": "cap open android"
   },
   "dependencies": {

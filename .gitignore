@@ -31,3 +31,9 @@ server/fall.db
 server/fall.db-wal
 server/fall.db-shm
 server/backups/
+
+# HTTPS (deploy/https): 실제 Caddy 설정·접속 기록·인증서·개인 키는 커밋하지 않음 (예시 파일만)
+deploy/https/Caddyfile
+deploy/https/logs/
+*.key
+*.pem

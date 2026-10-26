@@ -33,7 +33,7 @@ def free_port():
 
 
 class ServerCopy:
-    def __init__(self, extra_env=None):
+    def __init__(self, extra_env=None, extra_args=None):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         for name in CODE_FILES:
@@ -47,7 +47,7 @@ class ServerCopy:
         env.update(extra_env or {})   # 시험별 설정 (예: 가짜 도로명주소 API 주소)
         self.log = open(self.dir / "server.log", "w", encoding="utf-8")
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(self.port)],
+            [sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(self.port), *(extra_args or [])],
             cwd=self.dir, env=env, stdout=self.log, stderr=subprocess.STDOUT)
         deadline = time.time() + 30
         while time.time() < deadline:

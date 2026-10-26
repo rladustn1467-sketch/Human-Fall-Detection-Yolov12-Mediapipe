@@ -2,6 +2,7 @@ import base64
 import binascii
 import html
 import json
+import logging
 import os
 import re
 import secrets
@@ -189,15 +190,30 @@ def _lan_ip():
         return "127.0.0.1"
 
 
+# 관리자 로그인 안내. 토큰 값은 화면·로그에 남지 않게 출력하지 않음 (파일에서 직접 확인)
 print("=" * 60)
-print("낙상 감지 서버 접속 주소 (처음 한 번 이 주소로 접속하면 로그인됩니다)")
-print(f"  이 컴퓨터 : http://127.0.0.1:{SERVER_PORT}/login?token={ACCESS_TOKEN}")
-print(f"  같은 Wi-Fi: http://{_lan_ip()}:{SERVER_PORT}/login?token={ACCESS_TOKEN}")
-print("  (토큰은 server/access_token.txt 에 저장되어 있습니다. 외부에 공유하지 마세요)")
+print("낙상 감지 서버 관리자 로그인 (처음 한 번 이 주소로 접속하면 로그인됩니다)")
+print(f"  이 컴퓨터 : http://127.0.0.1:{SERVER_PORT}/login?token=<토큰>")
+print(f"  이 컴퓨터의 네트워크 주소: {_lan_ip()} (HTTPS 로 공개할 때는 deploy/https/README.md)")
+print(f"  <토큰> = {TOKEN_FILE} 파일의 내용. 외부에 공유하지 마세요")
 print("=" * 60)
 print(f"[report] 신고 기록 상세 페이지: {'이 PC에서만' if REPORT_PAGE_LOCAL_ONLY else '토큰이 있으면 어디서나'} (REPORT_PAGE_ACCESS)")
 print(f"[report] 텔레그램 '상세 보기' 버튼: {'켜짐' if ESCALATION.show_detail else '꺼짐'} (SHOW_DETAIL_IN_TELEGRAM)"
       f" / 웹 링크: {ESCALATION.public_base_url or '없음'} (PUBLIC_BASE_URL)")
+
+
+class _HideTokenInAccessLog(logging.Filter):
+    """uvicorn's access log prints each request path with its query; the old admin login sends the shared token as
+    ?token=..., so it is masked here (behind the HTTPS proxy, the proxy's own log is filtered the same way)."""
+    _token = re.compile(r"(?i)\b(token)=[^&\s\"]+")
+
+    def filter(self, record):
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
+            record.args = record.args[:2] + (self._token.sub(r"\1=***", record.args[2]),) + record.args[3:]
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_HideTokenInAccessLog())
 
 
 def _is_authorized(request: Request):
@@ -1178,11 +1194,15 @@ LOGIN_NEXT_PAGES = {"/confirm": "/confirm", "/app": "/app/", "/app/": "/app/"}
 
 
 @app.get("/login")
-def login(token: str = "", next: str = "/confirm"):
+def login(request: Request, token: str = "", next: str = "/confirm"):
     if not secrets.compare_digest(token.encode(), ACCESS_TOKEN.encode()):
         return HTMLResponse(UNAUTHORIZED_PAGE, status_code=401)
     response = RedirectResponse(LOGIN_NEXT_PAGES.get(next, "/confirm"), status_code=303)
-    response.set_cookie(COOKIE_NAME, ACCESS_TOKEN, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax")
+    # HTTPS 로 접속했으면 쿠키도 HTTPS 에서만 (앱 로그인 쿠키와 같은 규칙). 토큰이 든 이 주소는 저장·전달되지 않게
+    response.set_cookie(COOKIE_NAME, ACCESS_TOKEN, max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax",
+                        secure=_cookie_secure(request))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     return response
 
 

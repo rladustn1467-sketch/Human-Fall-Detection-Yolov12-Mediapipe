@@ -56,6 +56,15 @@ public final class DeviceLink {
     static final int PENDING_MAX = 5;
     static final int TIMEOUT_MS = 8000;
 
+    /** 통신 오류의 종류만 기록 (주소·토큰·내용은 남기지 않음). 안드로이드에서는 logcat 의 DeviceLink 태그로 보임 */
+    private static final java.util.logging.Logger LOG = java.util.logging.Logger.getLogger("DeviceLink");
+
+    private static void logFailure(String what, Exception e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) root = root.getCause();
+        LOG.warning(what + " 실패: " + e.getClass().getSimpleName() + (root != e ? " (원인: " + root.getClass().getSimpleName() + ")" : ""));
+    }
+
     private final Store store;
     private Sleeper sleeper = Thread::sleep;
     private final List<Pending> pending = new ArrayList<>();
@@ -187,6 +196,7 @@ public final class DeviceLink {
             body.put("appVersion", APP_VERSION);
             r = post(base, "/api/v2/device/pair", body, null);
         } catch (IOException | JSONException e) {
+            logFailure("연결 코드 전송", e);
             return "서버에 연결할 수 없어요. 네트워크를 확인해 주세요.";
         }
         String token = r.body.optString("deviceToken", "");
@@ -250,6 +260,7 @@ public final class DeviceLink {
             body.put("appVersion", APP_VERSION);
             r = post(base(), "/api/v2/device/heartbeat", body, token);
         } catch (IOException | JSONException e) {
+            logFailure("상태 신호", e);
             lastError = "서버에 연결할 수 없어요";
             return 10;   // 끊겼으면 조금 자주 다시 시도
         }
@@ -337,6 +348,7 @@ public final class DeviceLink {
             try {
                 r = post(base(), "/api/v2/device/events", body, token);
             } catch (IOException e) {
+                logFailure("낙상 전송", e);
                 last = e;   // 네트워크 오류: 다시 시도
                 continue;
             }
