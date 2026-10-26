@@ -285,9 +285,38 @@
   FD.Sheets.password = (homeId, key) => FD.Sheets.entrance(homeId, key === 'centralPw' ? 'central' : 'door');
 
   /* ---------------- 기기 추가 시트 ---------------- */
+  /* 실제 모드: 서버가 만든 연결 코드(10분, 한 번)를 보여 주고, 감지 기기가 코드를 보내 연결되면 이 시트에 바로 표시.
+     '연결됐어요'는 서버 상태에 그 기기가 나타났을 때만 (기다리는 척하는 화면 없음) */
+  function livePairing(homeId) {
+    FD.Onboarding.deviceSheet({
+      title: '감지 기기 추가', submit: '연결 코드 받기',
+      onSubmit: async (v, api, el) => {
+        let p;
+        try { p = await UI.busy(el, () => Act.startDevicePairing(homeId, v)); } catch (e) { UI.showError(e, { location: 'ds-loc' }); return; }
+        const startedAt = p.expiresAt - 10 * 60 * 1000;
+        const joined = () => Sel.devices(homeId).find(d => d.createdAt >= startedAt && d.type === p.type && d.location === p.location);
+        const codeHtml = () => {
+          const d = joined();
+          if (d) {
+            return `<div class="empty" style="padding-top:8px">${ic('circle-check')}<p style="margin-top:10px;font-weight:800;color:var(--ink)">${esc(UI.deviceName(d))} 연결됐어요</p>
+              <p class="row__sub" style="margin-top:6px">${d.status === 'ok' ? '상태 신호를 받고 있어요.' : esc(UI.DEVICE_PROBLEM[d.problem] || '')}</p></div>
+              <button class="btn btn--primary btn--lg btn--block" data-action="sheet.close">확인</button>`;
+          }
+          const left = p.expiresAt - FD.Store.now();
+          return `<p class="row__sub" style="text-align:center">${esc(UI.DEVICE_TYPE[p.type])} · ${esc(p.location)}</p>
+            <p class="label" style="margin:14px 0 8px;text-align:center">연결 코드</p>
+            <div class="code-box" aria-label="연결 코드 ${esc(p.code)}">${p.code.split('').map(c => `<span>${esc(c)}</span>`).join('')}</div>
+            <p class="expire" style="text-align:center;margin-top:10px">${ic('clock')} ${left > 0 ? `남은 시간 <b data-cd="${p.expiresAt}">--:--</b>` : '코드가 만료됐어요. 새 코드를 받아 주세요.'}</p>
+            <div class="notice" style="margin-top:14px">${ic('circle-info')}<span>감지 기기에서 이 연결 코드를 입력해 주세요. 코드는 10분 동안 한 번만 쓸 수 있고, 연결되면 이 집의 감지 기기 목록에 나타나요.</span></div>
+            <button class="btn btn--ghost btn--block" style="margin-top:14px" data-action="sheet.close">닫기</button>`;
+        };
+        openSheet({ title: '감지 기기 추가', html: codeHtml(), onMount: b => UI.tick(b), refresh: a => { a.replace(codeHtml()); UI.tick(a.body()); } });
+      }
+    });
+  }
+
   FD.Sheets.addDevice = function (homeId) {
-    // 실제 모드: 기기 연결은 F단계. '연결하는 중…' 화면을 보여 주지 않도록 시트를 열지 않음
-    if (LIVE) { toast('카메라 연결은 지금 사용할 수 없어요.'); return; }
+    if (LIVE) { livePairing(homeId); return; }
     FD.Onboarding.deviceSheet({
       title: '카메라 추가',
       onSubmit: async (v, api) => {

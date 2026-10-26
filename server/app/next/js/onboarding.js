@@ -18,7 +18,6 @@
   const LIVE = FD.MODE === 'live';
   // 주소 검색을 쓸 수 없으면(api-live.js 의 addressSearch 가 false) 또는 사용자가 '직접 입력하기'를 고르면 직접 입력
   const manualAddress = () => FD.API.addressSearch === false || !!(draft && draft.addrManual);
-  const NOT_READY_DEVICE = '카메라 연결은 지금 사용할 수 없어요.';
 
   const STEP_NAMES = ['개인정보', '주소', '비밀번호', '기기'];
   function top(idx, total, opts) {
@@ -654,10 +653,10 @@
         <p class="tag tag--primary">${STEP_NAMES[3]} · 4/4</p>
         <h1 class="ob__title" style="margin-top:10px">감지할 카메라를<br>연결해 주세요</h1>
         <div class="notice" style="margin-top:16px">${ic('eye-slash')}<span>영상은 낙상 판단에만 쓰이고 저장되지 않아요. 낙상이 감지되면 배경과 사람을 가린 이미지만 기록돼요.</span></div>
-        ${LIVE ? `<div class="notice" style="margin-top:10px">${ic('circle-info')}<span>${NOT_READY_DEVICE} '나중에 연결할게요'를 눌러 설정을 마쳐 주세요.</span></div>` : ''}
+        ${LIVE ? `<div class="notice" style="margin-top:10px">${ic('circle-info')}<span>감지 기기(PC 감지 프로그램·감지용 휴대폰)는 설정을 마친 뒤 집 화면의 '기기 추가'에서 연결 코드로 연결해요. '나중에 연결할게요'를 눌러 설정을 마쳐 주세요.</span></div>` : ''}
         <div id="dev-added" style="margin-top:18px">${devAddedHtml(d)}</div>
         <div class="stack" style="margin-top:14px">
-          <button class="choice" data-action="dev.add"><span class="choice__ic">${ic('video')}</span><span><span class="choice__t">홈캠·CCTV 추가</span><span class="choice__s" style="display:block">집에 설치된 카메라를 연결해요.</span></span></button>
+          ${LIVE ? '' : `<button class="choice" data-action="dev.add"><span class="choice__ic">${ic('video')}</span><span><span class="choice__t">홈캠·CCTV 추가</span><span class="choice__s" style="display:block">집에 설치된 카메라를 연결해요.</span></span></button>`}
           <button class="choice ${d.phoneCamera ? 'choice--on' : ''}" data-action="dev.phone"><span class="choice__ic">${ic('mobile-screen')}</span><span><span class="choice__t">내 폰 카메라 사용</span><span class="choice__s" style="display:block">${d.phoneCamera ? '내 폰 카메라로 감지하도록 설정했어요.' : '이 휴대전화의 카메라로 감지해요.'}</span></span></button>
         </div>`,
         `<button class="btn btn--primary btn--lg btn--block" data-action="flow.finish">${(d.devices.length || d.phoneCamera) ? '완료' : '나중에 연결할게요'}</button>`);
@@ -671,7 +670,7 @@
       const d = D(); d.phoneCamera = !d.phoneCamera; R.go(R.path());
     });
     on('dev.add', () => {
-      if (LIVE) { toast(NOT_READY_DEVICE); return; }   // 연결된 척하지 않도록 시트를 열지 않음
+      if (LIVE) return;   // 실제 모드는 집 화면에서 연결 코드로 (처음 설정 중에는 집이 아직 없음)
       deviceSheet({ title: '카메라 추가', onSubmit: async (v, api) => {
         api.replace(`<div class="empty"><span class="spinner spinner--dark" style="width:30px;height:30px"></span><p style="margin-top:14px;font-weight:700;color:var(--ink)">${esc(UI.DEVICE_TYPE[v.type])} · ${esc(v.location)} 연결하는 중…</p></div>`);
         await new Promise(r => setTimeout(r, 1100));
@@ -683,13 +682,13 @@
 
   /* 기기 추가 시트 (온보딩, 집 상세 등에서 공통 사용) */
   function deviceSheet(o) {
-    let type = (o.value && o.value.type) || 'homecam';
+    const types = UI.deviceTypes();   // 시험 모드 = 홈캠·CCTV 예시, 실제 모드 = PC 감지 프로그램·감지용 휴대폰
+    let type = (o.value && o.value.type) || types[0];
     const locs = ['안방', '거실', '현관', '주방', '작은방'];
     const html = () => `
       <div class="label">기기 종류</div>
       <div class="segmented" style="margin-bottom:16px">
-        <button type="button" class="${type === 'homecam' ? 'is-on' : ''}" data-action="ds.type" data-type="homecam">홈캠</button>
-        <button type="button" class="${type === 'cctv' ? 'is-on' : ''}" data-action="ds.type" data-type="cctv">CCTV</button>
+        ${types.map(t => `<button type="button" class="${type === t ? 'is-on' : ''}" data-action="ds.type" data-type="${t}">${esc(UI.DEVICE_TYPE[t])}</button>`).join('')}
       </div>
       ${field({ id: 'ds-loc', label: '위치 이름', placeholder: '예) 안방, 거실', maxlength: 12, value: (document.getElementById('ds-loc') && document.getElementById('ds-loc').value) || (o.value && o.value.location) || '', onenter: 'ds.submit' })}
       <div class="chips" style="margin:-6px 0 18px">${locs.map(l => `<button type="button" class="chip" data-action="ds.loc" data-loc="${l}">${l}</button>`).join('')}</div>
@@ -697,10 +696,10 @@
     const api = openSheet({ title: o.title, html: html() });
     on('ds.type', el => { type = el.dataset.type; const v = val('ds-loc'); api.replace(html()); const i = document.getElementById('ds-loc'); i.value = v; });
     on('ds.loc', el => { document.getElementById('ds-loc').value = el.dataset.loc; });
-    on('ds.submit', () => {
+    on('ds.submit', el => {
       const loc = val('ds-loc');
       if (!loc) { setError('ds-loc', '위치 이름을 입력해 주세요.'); return; }
-      o.onSubmit({ type, location: loc }, api);
+      o.onSubmit({ type, location: loc }, api, el);
     });
   }
 

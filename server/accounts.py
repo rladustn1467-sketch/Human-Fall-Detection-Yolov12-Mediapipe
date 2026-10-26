@@ -445,4 +445,7 @@ def state_for(conn, user_id, now=None):
     # 낙상 사고와 내 알림 (incidents.py, alerts.py). incidents 가 이 모듈을 쓰므로 함수 안에서 불러옴
     import incidents
     state["incidents"], state["notifs"] = incidents.state_part(conn, user_id, me["group_id"])
+    # 앱에서 연결한 감지 기기와 실제 상태 (devices.py, 상태는 마지막 신호 시각으로 계산)
+    import devices
+    state["devices"] = devices.state_part(conn, me["group_id"])
     return state

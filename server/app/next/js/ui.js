@@ -105,12 +105,20 @@
   const validEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 
   /* ---------- 라벨 ---------- */
-  const DEVICE_TYPE = { homecam: '홈캠', cctv: 'CCTV' };
-  const DEVICE_ICON = { homecam: 'video', cctv: 'camera' };
+  // 홈캠·CCTV 는 시험 모드의 예시 기기. 실제 모드는 실제로 연결할 수 있는 감지 기기만 (devices.py)
+  const DEVICE_TYPE = { homecam: '홈캠', cctv: 'CCTV', pc: 'PC 감지 프로그램', phone: '감지용 휴대폰' };
+  const DEVICE_ICON = { homecam: 'video', cctv: 'camera', pc: 'desktop', phone: 'mobile-screen' };
+  const deviceTypes = () => (FD.MODE === 'live' ? ['pc', 'phone'] : ['homecam', 'cctv']);
   const STATUS_LABEL = { ok: '정상', disconnected: '연결 안 됨', off: '꺼짐' };
   const RESULT_LABEL = { self: '본인 응답', family: '가족 확인', reported: '신고됨', auto_reported: '자동 신고됨' };
   const RESPONSE_LABEL = { within60: '60초 내 응답', after60: '60초 후 응답', none: '무응답으로 가족 알림' };
   const deviceName = d => `${DEVICE_TYPE[d.type] || '기기'} · ${d.location}`;
+  /* 실제 기기가 '연결 안 됨'인 이유 (서버가 마지막 신호로 계산한 problem) */
+  const DEVICE_PROBLEM = {
+    never: '아직 기기에서 상태 신호가 오지 않았어요',
+    offline: '기기에서 상태 신호가 오지 않아요',
+    camera: '기기가 카메라가 작동하지 않는다고 알려 왔어요'
+  };
   const ic = (name, cls) => `<i class="fa-solid fa-${name}${cls ? ' ' + cls : ''}" aria-hidden="true"></i>`;
 
   /* ---------- 아바타 ---------- */
@@ -422,7 +430,7 @@
     addr, pwLabel, SUGGEST_COND, SUGGEST_MED,
     esc, pad, mmss, elapsed, ago, clock, hm24, dateLabel, dateTime, secLabel, age, birthLabel, listLabel, fmtPhone, validPhone, validEmail,
     checkBirth, birthInput, doorCodeProblem, entrance,
-    DEVICE_TYPE, DEVICE_ICON, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, incidentPhoto, qr,
+    DEVICE_TYPE, DEVICE_ICON, DEVICE_PROBLEM, deviceTypes, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, incidentPhoto, qr,
     tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody,
     showError, busy
   };

@@ -25,6 +25,7 @@ import accounts
 import address_search
 import alerts
 import db
+import devices
 import door_codes
 import escalation
 import incidents
@@ -1004,6 +1005,105 @@ def api_v2_incident_photo(incident_id: str, photo_id: str, request: Request):
         raise accounts.AccountError(404, "사진을 찾을 수 없어요.")
     # no-cache: 브라우저가 보관본을 쓰기 전에 매번 서버에 물어봄 (로그아웃·탈퇴 뒤에는 보관본도 보이지 않게). 사진은 작음 (긴 변 640px)
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})
+
+
+# ---- 감지 기기 (devices.py): 앱 = 연결 코드·설정·삭제 (그 집에 연결된 가족만), 기기 = 기기 토큰으로 상태 신호·낙상 ----
+# 기존 공용 토큰 API(/api/events)와 관리자 등록(legacy_devices.py)은 그대로 (지금 PC 프로그램·Android 시험 앱용)
+class PairingBody(BaseModel):
+    type: Any = None
+    location: Any = None
+
+
+class DeviceUpdateBody(BaseModel):
+    location: Any = None
+    enabled: Any = None
+
+
+class DevicePairBody(BaseModel):
+    code: Any = None
+    appVersion: Any = None
+
+
+class DeviceHeartbeatBody(BaseModel):
+    cameraOk: Any = None
+    appVersion: Any = None
+
+
+class DeviceFallBody(BaseModel):
+    # PC 프로그램의 /api/events 와 같은 칸 (device_id 는 토큰이 정함). 사진은 기기에서 가공한 실루엣만
+    event_id: str = Field(..., pattern=r"^[0-9a-f]{32}$")
+    fall_type: str = "unknown"
+    is_test: bool = False
+    image_jpeg_base64: Optional[str] = Field(None, max_length=MAX_IMAGE_BYTES * 4 // 3 + 4)
+
+
+@app.post("/api/v2/homes/{home_id}/devices/pairing")
+def api_v2_device_pairing(home_id: str, body: PairingBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        pairing = devices.start_pairing(conn, user_id, home_id, body.type, body.location)
+        return JSONResponse({"authenticated": True, "me_id": user_id, "pairing": pairing,
+                             "state": accounts.state_for(conn, user_id)}, headers=NO_STORE)
+
+
+@app.patch("/api/v2/devices/{device_id}")
+def api_v2_device_update(device_id: str, body: DeviceUpdateBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        devices.update(conn, user_id, device_id, body.location, body.enabled)
+        return _state_response(conn, user_id)
+
+
+@app.delete("/api/v2/devices/{device_id}")
+def api_v2_device_delete(device_id: str, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        devices.remove(conn, user_id, device_id)
+        return _state_response(conn, user_id)
+
+
+@app.post("/api/v2/device/pair")
+def api_v2_device_pair(body: DevicePairBody, request: Request):
+    # 기기가 연결 코드를 한 번 보냄 → 기기 토큰 (이 응답에서만 한 번 보임, 서버에는 해시만)
+    with db.session(DB_PATH) as conn:
+        return JSONResponse(devices.pair(conn, body.code, _client_ip(request), body.appVersion), headers=NO_STORE)
+
+
+@app.post("/api/v2/device/heartbeat")
+def api_v2_device_heartbeat(body: DeviceHeartbeatBody, request: Request):
+    with db.session(DB_PATH) as conn:
+        device = devices.authenticate(conn, request.headers.get("authorization"))
+        return JSONResponse(devices.heartbeat(conn, device, body.cameraOk, body.appVersion), headers=NO_STORE)
+
+
+@app.post("/api/v2/device/events")
+def api_v2_device_fall(body: DeviceFallBody, request: Request):
+    """A fall from a connected device: the home's incident is created directly, with the silhouette photo linked.
+    Test falls only record the time (no incident, no alert). With detection turned off in the app, nothing is made."""
+    with db.session(DB_PATH) as conn:
+        device = devices.authenticate(conn, request.headers.get("authorization"))
+        if body.is_test:
+            devices.record_test(conn, device)
+            return JSONResponse({"ok": True, "test": True}, headers=NO_STORE)
+        devices.seen(conn, device)
+        if not device["enabled"]:
+            return JSONResponse({"ok": True, "ignored": "off"}, headers=NO_STORE)
+        incident_id = devices.incident_for_fall(conn, device, body.event_id)
+        image_saved = False
+        image = _decode_jpeg(body.image_jpeg_base64) if body.image_jpeg_base64 else None
+        if image:
+            # 사진 저장·연결이 실패해도 사고와 알림은 그대로 (기록만 남김)
+            try:
+                photo = devices.photo_id(device, body.event_id)
+                (IMAGE_DIR / f"{photo}.jpg").write_bytes(image)
+                incidents.add_photo(conn, incident_id, photo)
+                image_saved = True
+            except Exception as e:
+                print(f"[device] 사진을 저장·연결하지 못함 (사고·알림은 그대로): {type(e).__name__}: {e}")
+        return JSONResponse({"ok": True, "incident_id": incident_id, "image_saved": image_saved}, headers=NO_STORE)
 
 
 @app.post("/api/v2/notifications/read")

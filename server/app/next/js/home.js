@@ -39,12 +39,17 @@
   }
   on('incident.open', el => FD.Emergency.open(el.dataset.id));
 
+  // 실제 모드의 기기는 서버가 기기 신호로 상태를 계산 (d.live). '다시 연결' 같은 시연 동작은 시험 모드에서만
+  const LIVE = FD.MODE === 'live';
+
   function devRow(d, canEdit) {
     const bad = d.status === 'disconnected', off = d.status === 'off';
     const cls = bad ? ' det-dev--bad' : off ? ' det-dev--off' : '';
     const t = FD.Store.now();
     let fix = '';
-    if (bad) {
+    if (bad && LIVE) {
+      fix = `<div class="det-dev__fix"><span>${esc(UI.DEVICE_PROBLEM[d.problem] || '연결되지 않았어요')}${d.problem === 'never' ? '' : ` · <span data-ago="${d.since}">${UI.ago(t - d.since)}</span>부터`}</span></div>`;
+    } else if (bad) {
       fix = `<div class="det-dev__fix"><span>${UI.ago(t - d.since).replace('방금', '방금')}부터 · 전원/와이파이 확인</span>${canEdit ? `<button class="btn btn--soft btn--sm" data-action="dev.reconnect" data-id="${d.id}">다시 연결</button>` : ''}</div>`;
     } else if (off) {
       fix = `<div class="det-dev__fix"><span>${UI.ago(t - d.since)}부터 감지를 쉬고 있어요</span>${canEdit ? `<button class="btn btn--soft btn--sm" data-action="dev.quick-on" data-id="${d.id}">감지 켜기</button>` : ''}</div>`;
@@ -237,11 +242,12 @@
     const t = FD.Store.now();
     const tagCls = d.status === 'ok' ? 'tag--ok' : d.status === 'off' ? '' : 'tag--stop';
     if (editing && canEdit) {
-      return `<div class="label">기기 종류</div>
+      // 실제 기기의 종류는 연결할 때 정해짐 (위치 이름만 바꿈)
+      return `${LIVE ? '' : `<div class="label">기기 종류</div>
         <div class="segmented" style="margin-bottom:16px">
           <button type="button" class="${editing.type === 'homecam' ? 'is-on' : ''}" data-action="devs.type" data-type="homecam">홈캠</button>
           <button type="button" class="${editing.type === 'cctv' ? 'is-on' : ''}" data-action="devs.type" data-type="cctv">CCTV</button>
-        </div>
+        </div>`}
         ${UI.field({ id: 'devs-loc', label: '위치 이름', value: editing.location, maxlength: 12, onenter: 'devs.save' })}
         <div class="confirm__actions"><button class="btn btn--ghost btn--block" data-action="devs.cancel">취소</button><button class="btn btn--primary btn--block" data-action="devs.save">저장</button></div>`;
     }
@@ -249,15 +255,33 @@
         <span class="det-ic det-ic--${d.status === 'ok' ? 'ok' : d.status === 'off' ? 'warn' : 'stop'}" style="width:54px;height:54px;border-radius:16px;font-size:22px">${ic(UI.DEVICE_ICON[d.type])}</span>
         <div><p style="font-weight:800;font-size:19px">${esc(UI.deviceName(d))}</p><p class="row__sub">${esc(Sel.homeName(h, me))}</p></div>
         <span class="tag ${tagCls}" style="margin-left:auto">${UI.STATUS_LABEL[d.status]}</span></div>
+      ${LIVE ? liveDeviceInfo(d, t) : `
       ${d.status !== 'ok' ? `<p class="row__sub" style="margin-bottom:12px">${UI.ago(t - d.since)}부터 ${d.status === 'off' ? '감지를 쉬고 있어요' : '연결되지 않았어요'}</p>` : ''}
-      ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>이렇게 확인해 보세요</b><br>1. 기기 전원이 켜져 있는지 확인해 주세요.<br>2. 와이파이 연결 상태를 확인해 주세요.<br>3. 그래도 안 되면 공유기와 기기를 껐다 켜 주세요.</div></div>` : ''}
+      ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>이렇게 확인해 보세요</b><br>1. 기기 전원이 켜져 있는지 확인해 주세요.<br>2. 와이파이 연결 상태를 확인해 주세요.<br>3. 그래도 안 되면 공유기와 기기를 껐다 켜 주세요.</div></div>` : ''}`}
       ${canEdit ? `<div class="stack">
-          ${d.status === 'disconnected' ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.reconnect" data-id="${d.id}">다시 연결</button>` : ''}
-          ${d.status === 'ok' ? `<button class="btn btn--ghost btn--block" data-action="devs.off" data-id="${d.id}">${ic('power-off')} 감지 끄기</button>` : ''}
+          ${d.status === 'disconnected' && !LIVE ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.reconnect" data-id="${d.id}">다시 연결</button>` : ''}
+          ${d.status === 'ok' || (LIVE && d.status === 'disconnected') ? `<button class="btn btn--ghost btn--block" data-action="devs.off" data-id="${d.id}">${ic('power-off')} 감지 끄기</button>` : ''}
           ${d.status === 'off' ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.on" data-id="${d.id}">감지 켜기</button>` : ''}
-          <div class="btn-pair"><button class="btn btn--soft" data-action="devs.edit">${ic('pen')} 이름·위치 수정</button><button class="btn btn--danger-ghost" data-action="devs.remove" data-id="${d.id}">${ic('trash')} 기기 삭제</button></div>
+          <div class="btn-pair"><button class="btn btn--soft" data-action="devs.edit">${ic('pen')} ${LIVE ? '위치 이름 수정' : '이름·위치 수정'}</button><button class="btn btn--danger-ghost" data-action="devs.remove" data-id="${d.id}">${ic('trash')} 기기 삭제</button></div>
         </div>`
         : `<div class="notice">${ic('lock')}<span>이 집에 연결된 가족만 설정을 바꿀 수 있어요. 상태는 그룹 가족 모두 볼 수 있어요.</span></div>`}`;
+  }
+
+  /* 실제 기기: 서버가 받은 신호 그대로 (마지막 신호, 시험 신호, 연결 안 됨 이유와 확인할 것) */
+  function liveDeviceInfo(d, t) {
+    const tips = {
+      never: ['감지 기기에서 연결 코드를 입력한 뒤 감지 프로그램이 켜져 있는지 확인해 주세요.', '기기가 와이파이에 연결돼 있는지 확인해 주세요.'],
+      offline: ['기기 전원과 감지 프로그램이 켜져 있는지 확인해 주세요.', '와이파이 연결 상태를 확인해 주세요.'],
+      camera: ['카메라가 기기에 제대로 연결돼 있는지 확인해 주세요.', '다른 프로그램이 카메라를 쓰고 있지 않은지 확인해 주세요.']
+    }[d.problem];
+    const row = (k, v) => `<div class="kv__row"><span class="kv__k">${k}</span><span class="kv__v">${v}</span></div>`;
+    return `${d.status === 'off' ? `<p class="row__sub" style="margin-bottom:12px"><span data-ago="${d.since}">${UI.ago(t - d.since)}</span>부터 감지를 쉬고 있어요. 감지를 켜기 전에는 이 기기의 낙상으로 알림이 가지 않아요.</p>` : ''}
+      ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>${esc(UI.DEVICE_PROBLEM[d.problem] || '연결되지 않았어요')}</b>${(tips || []).map((x, i) => `<br>${i + 1}. ${esc(x)}`).join('')}</div></div>` : ''}
+      <div class="kv" style="margin-bottom:14px">
+        ${row('마지막 신호', d.lastSeenAt ? `<span data-ago="${d.lastSeenAt}">${UI.ago(t - d.lastSeenAt)}</span>` : '아직 없음')}
+        ${row('시험 신호', d.lastTestAt ? `${esc(UI.dateTime(d.lastTestAt))} 받음` : '받은 적 없음')}
+        ${row('연결한 날', esc(UI.dateTime(d.createdAt)))}
+      </div>`;
   }
 
   let devSheet = null, devEditing = null, devId = null;
@@ -282,24 +306,31 @@
   }
   on('dev.reconnect', el => reconnect(el.dataset.id, false));
   on('devs.reconnect', el => reconnect(el.dataset.id, true));
-  on('dev.quick-on', el => { Act.updateDevice(el.dataset.id, { status: 'ok' }); toast('감지를 켰어요', 'ok'); });
-  on('devs.on', el => { Act.updateDevice(el.dataset.id, { status: 'ok' }); toast('감지를 켰어요', 'ok'); });
+  /* 실제 모드는 서버에 저장된 뒤에만 완료 안내 (실패하면 서버의 이유를 보여 줌). 시험 모드는 바로 끝남 */
+  async function deviceCall(el, fn, done) {
+    try { await UI.busy(el, fn); } catch (e) { UI.showError(e); return false; }
+    if (done) toast(done[0], done[1]);
+    return true;
+  }
+  on('dev.quick-on', el => deviceCall(el, () => Act.updateDevice(el.dataset.id, { status: 'ok' }), ['감지를 켰어요', 'ok']));
+  on('devs.on', el => deviceCall(el, () => Act.updateDevice(el.dataset.id, { status: 'ok' }), ['감지를 켰어요', 'ok']));
   on('devs.off', async el => {
     const ok = await UI.confirm({ title: '감지를 끌까요?', body: '감지를 끄면 이 공간에서 낙상이 발생해도 알림이 가지 않아요. 끌까요?', ok: '끄기', cancel: '취소', danger: true });
-    if (ok) { Act.updateDevice(el.dataset.id, { status: 'off' }); toast('감지를 껐어요'); }
+    if (ok) await deviceCall(el, () => Act.updateDevice(el.dataset.id, { status: 'off' }), ['감지를 껐어요']);
   });
   on('devs.edit', () => { const d = Sel.device(devId); devEditing = { type: d.type, location: d.location }; redrawDev(); });
   on('devs.cancel', () => { devEditing = null; redrawDev(); });
   on('devs.type', el => { devEditing.location = UI.val('devs-loc'); devEditing.type = el.dataset.type; redrawDev(); });
-  on('devs.save', () => {
+  on('devs.save', async el => {
     const loc = UI.val('devs-loc');
     if (!loc) { UI.setError('devs-loc', '위치 이름을 입력해 주세요.'); return; }
-    Act.updateDevice(devId, { type: devEditing.type, location: loc });
+    try { await UI.busy(el, () => Act.updateDevice(devId, LIVE ? { location: loc } : { type: devEditing.type, location: loc })); }
+    catch (e) { UI.showError(e, { location: 'devs-loc' }); return; }
     devEditing = null; redrawDev(); toast('저장했어요', 'ok');
   });
   on('devs.remove', async el => {
-    const ok = await UI.confirm({ title: '기기를 삭제할까요?', body: '삭제하면 이 기기로는 더 이상 낙상을 감지하지 않아요.', ok: '삭제', cancel: '취소', danger: true });
-    if (ok) { Act.removeDevice(el.dataset.id); closeSheet(); toast('기기를 삭제했어요'); }
+    const ok = await UI.confirm({ title: '기기를 삭제할까요?', body: LIVE ? '삭제하면 이 기기의 연결이 끊어져 더 이상 낙상을 감지하지 않아요. 다시 쓰려면 새 연결 코드로 연결해야 해요.' : '삭제하면 이 기기로는 더 이상 낙상을 감지하지 않아요.', ok: '삭제', cancel: '취소', danger: true });
+    if (ok && await deviceCall(el, () => Act.removeDevice(el.dataset.id))) { closeSheet(); toast('기기를 삭제했어요'); }
   });
 
   /* ------------------------------------------------------------

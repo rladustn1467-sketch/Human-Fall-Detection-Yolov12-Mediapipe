@@ -95,6 +95,11 @@
        같은 그룹의 사고만. 다른 사람이 먼저 처리했으면 409 (store.js 가 최신 상태로 다시 그림).
        119 신고는 서버가 모의 신고로 기록만 함 (실제 119 연락 없음) */
     async incidentAction(id, action, body) { return remember(await call('POST', `/api/v2/incidents/${encodeURIComponent(id)}/${action}`, body)); },
-    async readNotifs() { return remember(await call('POST', '/api/v2/notifications/read')); }
+    async readNotifs() { return remember(await call('POST', '/api/v2/notifications/read')); },
+
+    /* ---- 감지 기기 ---- 연결 코드 응답은 { pairing: {code, expiresAt, type, location}, state, ... } */
+    async startDevicePairing(homeId, type, location) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/devices/pairing`, { type, location })); },
+    async updateDevice(id, body) { return remember(await call('PATCH', `/api/v2/devices/${encodeURIComponent(id)}`, body)); },
+    async removeDevice(id) { return remember(await call('DELETE', `/api/v2/devices/${encodeURIComponent(id)}`)); }
   };
 })();

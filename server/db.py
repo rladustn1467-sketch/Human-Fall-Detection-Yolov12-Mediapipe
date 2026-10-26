@@ -272,6 +272,39 @@ MIGRATIONS = [
            )""",
         "CREATE INDEX incident_photos_incident ON incident_photos (incident_id, at)",
     ]),
+    (9, "감지 기기 등록·인증: 앱에서 만든 연결 코드로 기기마다 토큰 발급, 상태 신호 (devices.py)", [
+        # 기기 토큰은 해시만 저장 (세션과 같은 방식). 시각은 ms. 상태(정상/연결 끊김/꺼짐)는 저장하지 않고 화면에 보낼 때 계산
+        """CREATE TABLE devices (
+               id                TEXT PRIMARY KEY,
+               group_id          TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               home_id           TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               type              TEXT NOT NULL CHECK (type IN ('pc', 'phone')),
+               location          TEXT NOT NULL,
+               enabled           INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+               enabled_at        INTEGER NOT NULL,
+               token_hash        TEXT NOT NULL UNIQUE,
+               created_by        TEXT,
+               created_at        INTEGER NOT NULL,
+               last_seen_at      INTEGER,
+               camera_ok         INTEGER CHECK (camera_ok IS NULL OR camera_ok IN (0, 1)),
+               camera_changed_at INTEGER,
+               last_test_at      INTEGER,
+               app_version       TEXT
+           )""",
+        "CREATE INDEX devices_group ON devices (group_id)",
+        # 연결 코드: 10분, 한 번만. 기기가 코드를 보내면 그 집에 기기를 만들고 토큰을 줌
+        """CREATE TABLE device_pairings (
+               code       TEXT PRIMARY KEY,
+               home_id    TEXT NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+               type       TEXT NOT NULL CHECK (type IN ('pc', 'phone')),
+               location   TEXT NOT NULL,
+               created_by TEXT,
+               created_at INTEGER NOT NULL,
+               expires_at INTEGER NOT NULL,
+               used_at    INTEGER,
+               device_id  TEXT
+           )""",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림
