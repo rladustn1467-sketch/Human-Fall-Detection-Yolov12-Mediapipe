@@ -10,7 +10,10 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
  * Lets the web app (server/app/next, shown in this app) open the device screen. The web app shows its
- * '이 휴대폰을 감지 기기로 쓰기' entry only when this plugin exists, i.e. only inside this Android app.
+ * '이 휴대폰으로 감지하기' (settings) and '안 쓰는 휴대폰을 감지 기기로 쓰기' (first screen) entries only when this
+ * plugin exists, i.e. only inside this Android app.
+ * open({mode, code}): mode "self" = this phone, connected with a code the logged-in web app just got from the server
+ * (paired at once, the code is never shown); "dedicated" = a spare phone, the person types the code.
  */
 @CapacitorPlugin(name = "Detector")
 public class DetectorPlugin extends Plugin {
@@ -29,6 +32,12 @@ public class DetectorPlugin extends Plugin {
         Intent i = new Intent(getContext(), DetectorActivity.class);
         String origin = serverOrigin();
         if (origin != null) i.putExtra(DetectorActivity.EXTRA_SERVER, origin);
+        String mode = call.getString("mode");
+        if (DetectorActivity.MODE_SELF.equals(mode) || DetectorActivity.MODE_DEDICATED.equals(mode)) {
+            i.putExtra(DetectorActivity.EXTRA_MODE, mode);
+        }
+        String code = call.getString("code");
+        if (code != null && !code.isEmpty()) i.putExtra(DetectorActivity.EXTRA_CODE, code);
         getActivity().startActivity(i);
         call.resolve();
     }
@@ -40,6 +49,7 @@ public class DetectorPlugin extends Plugin {
         o.put("paired", link.isPaired());
         o.put("revoked", link.isRevoked());
         o.put("location", link.location());
+        o.put("mode", DetectorActivity.savedMode(getContext()));
         o.put("enabled", link.serverEnabled);
         o.put("detecting", DetectorRuntime.cameraOk());
         call.resolve(o);

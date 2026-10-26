@@ -34,14 +34,22 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * '이 휴대폰을 감지 기기로 쓰기' screen (opened from the app's settings). Connect with the pairing code from the
- * family app, see the real state (connection, detection on/off, camera, last signal), turn detection on/off
- * (same switch as in the family app), and disconnect this phone.
- * Every state shown here comes from the server's answers or the camera itself.
+ * Detection screen of this phone. Two ways in (DetectorPlugin):
+ *  - self ('이 휴대폰으로 감지하기', the app's settings): the logged-in web app got a pairing code from the server and
+ *    passes it here; this screen pairs at once, no code is shown or typed.
+ *  - dedicated ('안 쓰는 휴대폰을 감지 기기로 쓰기', the first screen, no login): the person types the code shown on
+ *    their own phone (home → '기기 추가' → '감지용 휴대폰').
+ * Both end up as the same kind of device on the server (type "phone": same status signal, on/off, falls, delete).
+ * Then: the real state (connection, detection on/off, camera, last signal), detection on/off (same switch as in the
+ * app's device list), and disconnecting this phone. Every state shown comes from the server's answers or the camera.
  */
 public class DetectorActivity extends AppCompatActivity {
     public static final String EXTRA_SERVER = "server";
+    public static final String EXTRA_MODE = "mode";
+    public static final String EXTRA_CODE = "code";
+    public static final String MODE_SELF = "self", MODE_DEDICATED = "dedicated";
     static final int REQ_CAMERA = 7;
+    static final String HOW_TO_GET_CODE = "평소 쓰는 휴대폰에서 이 앱에 로그인한 뒤 홈 화면의 집에서 '기기 추가' → '감지용 휴대폰'을 고르면 6자리 연결 코드가 나와요. 그 코드를 아래에 입력해 주세요.";
     // 웹앱(server/app/next/css/main.css)과 같은 색
     static final int BG = 0xFFF4F1EA, INK = 0xFF1B2A30, PRIMARY = 0xFF1B6A72, OK = 0xFF2B8553, STOP = 0xFFC42F2A, MUTED = 0xFF5B6B70;
 
@@ -54,6 +62,8 @@ public class DetectorActivity extends AppCompatActivity {
     private Button pairButton, toggleButton, forgetButton, permissionButton;
     private LinearLayout pairBox, pairedBox;
     private boolean busy;
+    private String mode;          // self | dedicated (연결된 뒤에는 연결할 때의 방식)
+    private String autoCode;      // self: 앱이 서버에서 받아 넘겨 준 연결 코드 (한 번만 씀, 화면에 보이지 않음)
     private Intent debugExtras;   // debug 빌드: 에뮬레이터 시험용 (시험용 사진 입력, 짧은 신호 간격)
 
     private final Runnable tick = new Runnable() {
@@ -70,6 +80,9 @@ public class DetectorActivity extends AppCompatActivity {
         link = DetectorRuntime.link(this);
         server = getIntent().getStringExtra(EXTRA_SERVER);
         if (server == null) server = link.base();
+        mode = link.isPaired() ? null : getIntent().getStringExtra(EXTRA_MODE);   // 연결된 뒤에는 연결할 때의 방식
+        if (mode == null) mode = savedMode(this);
+        autoCode = link.isPaired() ? null : getIntent().getStringExtra(EXTRA_CODE);
         if (BuildConfig.DEBUG && (getIntent().hasExtra(DetectionService.EXTRA_MOCK_FRAMES_DIR)
                 || getIntent().hasExtra(DetectionService.EXTRA_HEARTBEAT_SECONDS))) {
             debugExtras = new Intent();
@@ -78,6 +91,16 @@ public class DetectorActivity extends AppCompatActivity {
         }
         setContentView(buildView());
         if (getSupportActionBar() != null) getSupportActionBar().hide();
+        if (autoCode != null && savedInstanceState == null) pair(autoCode);
+    }
+
+    /** How this phone was connected last (self | dedicated). Dedicated when unknown. */
+    static String savedMode(android.content.Context c) {
+        return c.getSharedPreferences("fd_detect_ui", MODE_PRIVATE).getString("mode", MODE_DEDICATED);
+    }
+
+    private boolean self() {
+        return MODE_SELF.equals(mode);
     }
 
     @Override
@@ -145,10 +168,11 @@ public class DetectorActivity extends AppCompatActivity {
         });
 
         TextView title = text(24, INK, true);
-        title.setText("이 휴대폰을 감지 기기로 쓰기");
+        title.setText(self() ? "이 휴대폰으로 감지하기" : "안 쓰는 휴대폰을 감지 기기로 쓰기");
         root.addView(title);
         TextView lead = text(15, MUTED, false);
-        lead.setText("이 휴대폰을 낙상을 볼 수 있는 곳에 세워 두고 충전기를 꽂아 두세요. 카메라 영상은 휴대폰 안에서만 낙상 판단에 쓰이고, 낙상이 감지되면 배경과 사람을 가린 사진만 가족에게 전달돼요.");
+        lead.setText((self() ? "평소 쓰는 이 휴대폰의 카메라로 낙상을 감지해요. 감지하는 동안에는 " : "이 휴대폰을 감지 전용으로 써요. ")
+                + "휴대폰을 낙상을 볼 수 있는 곳에 세워 두고 충전기를 꽂아 두세요. 카메라 영상은 휴대폰 안에서만 낙상 판단에 쓰이고, 낙상이 감지되면 배경과 사람을 가린 사진만 가족에게 전달돼요.");
         lead.setPadding(0, dp(8), 0, dp(16));
         root.addView(lead);
 
@@ -223,16 +247,21 @@ public class DetectorActivity extends AppCompatActivity {
         pairButton.setEnabled(!busy);
         toggleButton.setEnabled(!busy);
         if (!paired) {
-            if (link.isRevoked()) {
+            // self: 코드는 앱이 넘겨 줌 (입력 칸 없음). 실패하면 설정에서 다시 시작
+            pairBox.setVisibility(self() ? View.GONE : View.VISIBLE);
+            String again = self() ? "앱의 설정에서 '이 휴대폰으로 감지하기'를 다시 눌러 주세요." : HOW_TO_GET_CODE;
+            if (busy && self()) {
+                stateTitle.setText("연결하는 중…");
+                stateTitle.setTextColor(INK);
+                stateBody.setText("이 휴대폰을 내 계정의 집에 연결하고 있어요.");
+            } else if (link.isRevoked()) {
                 stateTitle.setText("연결이 해제됐어요");
                 stateTitle.setTextColor(STOP);
-                stateBody.setText("가족 앱에서 이 기기가 삭제됐어요. 감지와 전송을 멈췄어요. 다시 쓰려면 가족 앱의 집 화면에서 '기기 추가' → '감지용 휴대폰'으로 새 연결 코드를 받아 입력해 주세요.");
+                stateBody.setText("앱의 기기 목록에서 이 기기가 삭제됐어요. 감지와 전송을 멈췄어요. 다시 쓰려면 " + again);
             } else {
                 stateTitle.setText("아직 연결되지 않았어요");
                 stateTitle.setTextColor(INK);
-                stateBody.setText(server == null
-                        ? "앱의 설정 화면에서 이 화면을 열어 주세요."
-                        : "가족 앱의 집 화면에서 '기기 추가' → '감지용 휴대폰'을 고르고, 받은 6자리 연결 코드를 입력해 주세요.");
+                stateBody.setText(server == null ? "앱의 첫 화면이나 설정에서 이 화면을 열어 주세요." : again);
             }
             pairButton.setEnabled(!busy && server != null);
             return;
@@ -265,7 +294,7 @@ public class DetectorActivity extends AppCompatActivity {
         }
         if (st.lastFallAt > 0) body += "\n마지막 낙상 감지: " + ago(st.lastFallAt);
         body += link.lastError != null ? "\n" + link.lastError + " (다시 시도 중)"
-                : link.lastOkAt > 0 ? "\n가족 앱과 연결됨 · 마지막 신호 " + ago(link.lastOkAt) : "";
+                : link.lastOkAt > 0 ? "\n서버와 연결됨 · 마지막 신호 " + ago(link.lastOkAt) : "";
         stateTitle.setText(title);
         stateTitle.setTextColor(color);
         stateBody.setText(body);
@@ -275,8 +304,11 @@ public class DetectorActivity extends AppCompatActivity {
 
     // ---- 동작 ----
     private void pair() {
+        pair(codeInput.getText().toString());
+    }
+
+    private void pair(String code) {
         if (server == null) return;
-        String code = codeInput.getText().toString();
         busy = true;
         errorText.setText("");
         render();
@@ -286,6 +318,7 @@ public class DetectorActivity extends AppCompatActivity {
                 busy = false;
                 if (err != null) errorText.setText(err);
                 else {
+                    getSharedPreferences("fd_detect_ui", MODE_PRIVATE).edit().putString("mode", mode).apply();
                     codeInput.setText("");
                     if (hasCamera()) startService();
                     else askCamera();
@@ -318,7 +351,7 @@ public class DetectorActivity extends AppCompatActivity {
     private void confirmForget() {
         new AlertDialog.Builder(this)
                 .setTitle("이 휴대폰에서 연결을 해제할까요?")
-                .setMessage("이 휴대폰은 더 이상 낙상을 감지하지 않아요. 가족 앱의 기기 목록에서도 이 기기를 삭제해 주세요.")
+                .setMessage("이 휴대폰은 더 이상 낙상을 감지하지 않아요. 앱의 기기 목록에서도 이 기기를 삭제해 주세요.")
                 .setNegativeButton("취소", null)
                 .setPositiveButton("해제", (d, w) -> {
                     DetectionService.stop(this);

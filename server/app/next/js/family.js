@@ -287,9 +287,23 @@
   /* ---------------- 기기 추가 시트 ---------------- */
   /* 실제 모드: 서버가 만든 연결 코드(10분, 한 번)를 보여 주고, 감지 기기가 코드를 보내 연결되면 이 시트에 바로 표시.
      '연결됐어요'는 서버 상태에 그 기기가 나타났을 때만 (기다리는 척하는 화면 없음) */
+  /* 연결 코드를 어디에 입력하는지 (기기 종류별) */
+  const PAIR_WHERE = {
+    pc: "PC 감지 프로그램에서 '연결 코드 입력' 버튼을 누르고 이 코드를 입력해 주세요.",
+    phone: "감지 전용으로 쓸 휴대폰에 이 앱을 설치해 열고, 첫 화면의 '안 쓰는 휴대폰을 감지 기기로 쓰기'에서 이 코드를 입력해 주세요. 그 휴대폰은 로그인하지 않아도 돼요."
+  };
+  const TYPE_HINT = {
+    pc: '웹캠이 연결된 PC에서 감지 프로그램으로 감지해요.',
+    phone: '안 쓰는 휴대폰을 집 안에 세워 두고 감지 전용으로 써요.'
+  };
   function livePairing(homeId) {
+    // Android 앱 안에서는 지금 쓰는 이 휴대폰을 연결 코드 없이 바로 연결할 수도 있음 (settings.js FD.SelfDetect)
+    const lead = UI.nativeDetector() ? `<div class="card" style="margin-bottom:18px">
+        <button class="row" data-action="ds.self"><span class="det-dev__ic">${ic('mobile-screen')}</span><span class="row__main"><span class="row__title">이 휴대폰으로 감지하기</span><span class="row__sub" style="display:block">지금 쓰는 이 휴대폰은 연결 코드 없이 바로 연결해요</span></span>${ic('chevron-right', 'chev')}</button>
+      </div><p class="label">다른 기기를 연결 코드로 추가</p>` : '';
+    on('ds.self', () => { closeSheet(); FD.SelfDetect.start(homeId); });
     FD.Onboarding.deviceSheet({
-      title: '감지 기기 추가', submit: '연결 코드 받기',
+      title: '감지 기기 추가', submit: '연결 코드 받기', lead, typeHint: t => TYPE_HINT[t] || '',
       onSubmit: async (v, api, el) => {
         let p;
         try { p = await UI.busy(el, () => Act.startDevicePairing(homeId, v)); } catch (e) { UI.showError(e, { location: 'ds-loc' }); return; }
@@ -307,7 +321,7 @@
             <p class="label" style="margin:14px 0 8px;text-align:center">연결 코드</p>
             <div class="code-box" aria-label="연결 코드 ${esc(p.code)}">${p.code.split('').map(c => `<span>${esc(c)}</span>`).join('')}</div>
             <p class="expire" style="text-align:center;margin-top:10px">${ic('clock')} ${left > 0 ? `남은 시간 <b data-cd="${p.expiresAt}">--:--</b>` : '코드가 만료됐어요. 새 코드를 받아 주세요.'}</p>
-            <div class="notice" style="margin-top:14px">${ic('circle-info')}<span>감지 기기에서 이 연결 코드를 입력해 주세요. 코드는 10분 동안 한 번만 쓸 수 있고, 연결되면 이 집의 감지 기기 목록에 나타나요.</span></div>
+            <div class="notice" style="margin-top:14px">${ic('circle-info')}<span>${esc(PAIR_WHERE[p.type] || '감지 기기에서 이 연결 코드를 입력해 주세요.')} 코드는 10분 동안 한 번만 쓸 수 있고, 연결되면 이 집의 감지 기기 목록에 나타나요.</span></div>
             <button class="btn btn--ghost btn--block" style="margin-top:14px" data-action="sheet.close">닫기</button>`;
         };
         openSheet({ title: '감지 기기 추가', html: codeHtml(), onMount: b => UI.tick(b), refresh: a => { a.replace(codeHtml()); UI.tick(a.body()); } });

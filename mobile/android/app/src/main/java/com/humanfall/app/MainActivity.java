@@ -13,7 +13,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // 이 휴대폰을 감지 기기로 쓰기 (detect/): 웹앱의 설정 화면이 이 플러그인으로 감지 기기 화면을 엶
+        // 이 휴대폰의 감지 화면 (detect/): 웹앱의 설정·첫 화면이 이 플러그인으로 감지 기기 화면을 엶
         registerPlugin(DetectorPlugin.class);
         super.onCreate(savedInstanceState);
         // 감지 기기로 연결된 폰: 앱을 켜면 감지를 이어서 함 (켜기/끄기는 서버 값대로, 카메라 권한이 있을 때만)

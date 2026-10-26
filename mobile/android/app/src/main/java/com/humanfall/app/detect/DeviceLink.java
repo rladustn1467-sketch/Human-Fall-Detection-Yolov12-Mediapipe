@@ -181,7 +181,7 @@ public final class DeviceLink {
             pending.clear();
         }
         serverEnabled = true;
-        lastError = "가족 앱에서 이 기기 연결이 해제됐어요";
+        lastError = "앱의 기기 목록에서 이 기기가 삭제돼 연결이 해제됐어요";
     }
 
     // ---- 연결 · 해제 ----
@@ -280,7 +280,7 @@ public final class DeviceLink {
     /** Turn detection on/off from this phone (same flag as the app's). Returns null on success, else a message. */
     public String setEnabled(boolean enabled) {
         String token = token();
-        if (token == null) return "먼저 가족 앱의 연결 코드로 연결해 주세요.";
+        if (token == null) return "먼저 이 휴대폰을 연결해 주세요.";
         Response r;
         try {
             JSONObject body = new JSONObject();
@@ -292,7 +292,7 @@ public final class DeviceLink {
         }
         if (r.status == 401) {
             markRevoked();
-            return "가족 앱에서 이 기기 연결이 해제됐어요. 새 연결 코드로 다시 연결해 주세요.";
+            return "앱의 기기 목록에서 이 기기가 삭제돼 연결이 해제됐어요. 다시 연결해 주세요.";
         }
         if (r.status != 200) return r.message("바꾸지 못했어요 (HTTP " + r.status + ").");
         applyAnswer(r.body);

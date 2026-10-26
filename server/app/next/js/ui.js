@@ -113,6 +113,12 @@
   const RESULT_LABEL = { self: '본인 응답', family: '가족 확인', reported: '신고됨', auto_reported: '자동 신고됨' };
   const RESPONSE_LABEL = { within60: '60초 내 응답', after60: '60초 후 응답', none: '무응답으로 가족 알림' };
   const deviceName = d => `${DEVICE_TYPE[d.type] || '기기'} · ${d.location}`;
+  /* 이 휴대폰의 감지 기능 (Android 앱 mobile/ 의 Detector 플러그인): 실제 모드의 Android 앱 안에서만 있음 (브라우저에는 없음) */
+  const nativeDetector = () => {
+    const cap = window.Capacitor;
+    return !!(FD.MODE === 'live' && cap && cap.isNativePlatform && cap.isNativePlatform() && cap.nativePromise
+      && (cap.PluginHeaders || []).some(p => p.name === 'Detector'));
+  };
   /* 실제 기기가 '연결 안 됨'인 이유 (서버가 마지막 신호로 계산한 problem) */
   const DEVICE_PROBLEM = {
     never: '아직 기기에서 상태 신호가 오지 않았어요',
@@ -430,7 +436,7 @@
     addr, pwLabel, SUGGEST_COND, SUGGEST_MED,
     esc, pad, mmss, elapsed, ago, clock, hm24, dateLabel, dateTime, secLabel, age, birthLabel, listLabel, fmtPhone, validPhone, validEmail,
     checkBirth, birthInput, doorCodeProblem, entrance,
-    DEVICE_TYPE, DEVICE_ICON, DEVICE_PROBLEM, deviceTypes, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, ic, avatar, maskPhoto, incidentPhoto, qr,
+    DEVICE_TYPE, DEVICE_ICON, DEVICE_PROBLEM, deviceTypes, STATUS_LABEL, RESULT_LABEL, RESPONSE_LABEL, deviceName, nativeDetector, ic, avatar, maskPhoto, incidentPhoto, qr,
     tagEditor, refreshSheet, on, onInput, tick, toast, openSheet, closeSheet, confirm: confirmBox, field, setError, val, toggle, subHeader, copy, lockBody,
     showError, busy
   };
