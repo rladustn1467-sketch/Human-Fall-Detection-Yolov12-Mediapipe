@@ -30,8 +30,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.fall_detector import FallDetector
 from utils.silhouette import SilhouetteRenderer, shrink_frame
 from utils.low_light import LowLightEnhancer, JointCompareLogger, draw_debug_overlay
+from dashboard.device_link import DeviceLink, DeviceRevoked
 
-from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtWidgets import QShortcut, QInputDialog
 from PyQt5.QtGui import QKeySequence
 
 # 낙상 이벤트 전송 설정 (다른 컴퓨터에서는 DEVICE_ID만 바꾸면 됨)
@@ -236,7 +237,13 @@ class FallDetectionDashboard(QMainWindow):
         self.low_light = LowLightEnhancer()
         self.joint_compare = JointCompareLogger()
         self.low_light_debug = False
-        
+
+        # 앱과 연결 (device_link.py): 연결되면 기기 토큰으로 낙상·상태 신호를 보내고, 앱에서 끄면 카메라 감지를 멈춤.
+        # 연결 전에는 지금까지처럼 /api/events (공용 토큰)
+        self.device_link = DeviceLink(self.event_server_url)
+        self._remote_paused = False       # 앱에서 감지를 꺼서 이 프로그램이 카메라를 멈춘 상태
+        self._last_frame_ok_at = 0.0      # 카메라(또는 영상)에서 마지막으로 프레임을 읽은 시각
+
         # Create the central widget and layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -253,7 +260,14 @@ class FallDetectionDashboard(QMainWindow):
         # F10: 원본/보정 영상 비교 디버그 표시 켜기/끄기
         self.low_light_shortcut = QShortcut(QKeySequence("F10"), self)
         self.low_light_shortcut.activated.connect(self.toggle_low_light_debug)
-        
+
+        # 상태 신호는 백그라운드에서, 앱의 켜기/끄기 반영과 연결 상태 표시는 1초마다 화면 스레드에서
+        self.device_link.start(self._camera_ok)
+        self.device_timer = QTimer(self)
+        self.device_timer.timeout.connect(self._sync_device_link)
+        self.device_timer.start(1000)
+        self._sync_device_link()
+
     def setup_ui(self):
         """Set up the main user interface."""
         # Create a tab widget
@@ -367,7 +381,21 @@ class FallDetectionDashboard(QMainWindow):
         
         buttons_layout.addStretch(1)
         controls_layout.addLayout(buttons_layout)
-        
+
+        # 앱 연결: 앱의 '기기 추가'에서 받은 연결 코드를 한 번 입력 (기기 토큰은 프로젝트 밖에 저장)
+        link_layout = QHBoxLayout()
+        link_layout.addWidget(QLabel("앱 연결:"))
+        self.link_status_label = QLabel("")
+        self.link_status_label.setWordWrap(True)
+        link_layout.addWidget(self.link_status_label, 1)
+        self.link_pair_btn = QPushButton("연결 코드 입력")
+        self.link_pair_btn.clicked.connect(self.enter_pairing_code)
+        link_layout.addWidget(self.link_pair_btn)
+        self.link_forget_btn = QPushButton("이 PC에서 연결 해제")
+        self.link_forget_btn.clicked.connect(self.forget_device_link)
+        link_layout.addWidget(self.link_forget_btn)
+        controls_layout.addLayout(link_layout)
+
         # Add controls to left panel
         left_layout.addWidget(controls_group)
         
@@ -832,6 +860,12 @@ class FallDetectionDashboard(QMainWindow):
 
     def start_detection(self):
         """Initialize and start the fall detection process."""
+        if self.device_link.paired and not self.device_link.enabled:
+            # 앱에서 이 기기의 감지를 꺼 둠: 카메라를 열지 않음 (앱에서 켜면 자동으로 다시 시작)
+            self._remote_paused = True
+            self.status_bar.showMessage("앱에서 이 기기의 감지를 꺼 두었어요. 앱에서 켜면 다시 시작해요.")
+            QMessageBox.information(self, "감지 꺼짐", "앱에서 이 기기의 감지를 꺼 두었어요.\n앱에서 감지를 켜면 자동으로 다시 시작해요.")
+            return
         try:
             # Initialize the fall detector if not already created
             self._ensure_fall_detector()
@@ -901,7 +935,8 @@ class FallDetectionDashboard(QMainWindow):
                 else:
                     # Camera frame read error - try again next time
                     return
-            
+            self._last_frame_ok_at = time.time()
+
             # Calculate FPS
             self.frame_count += 1
             current_time = time.time()
@@ -1329,6 +1364,64 @@ class FallDetectionDashboard(QMainWindow):
         self._process_new_falls("slip_and_fall", [-self.test_fall_count], time.time(), is_test=True,
                                 frame=frame, boxes=boxes, test_output_name=name)
 
+    # ---- 앱 연결 (device_link.py) ----
+    def _camera_ok(self):
+        """For the status signal: the camera (or video) delivered a frame in the last few seconds."""
+        return bool(self.is_running and self.cap is not None and time.time() - self._last_frame_ok_at < 5)
+
+    def _sync_device_link(self):
+        """Every second on the UI thread: follow the app's detection on/off, and show the connection state."""
+        link = self.device_link
+        if link.paired and not link.enabled and self.is_running and not self._remote_paused:
+            # 앱에서 감지를 끔 → 카메라를 닫고 감지를 멈춤 (영상 분석·낙상 전송 없음)
+            self.toggle_detection()
+            self._remote_paused = True
+            self.status_bar.showMessage("앱에서 이 기기의 감지를 껐어요. 카메라를 멈췄어요.")
+            print("[device] 앱에서 감지를 꺼서 카메라 감지를 멈췄어요")
+            link.nudge()
+        elif self._remote_paused and (not link.paired or link.enabled):
+            # 앱에서 다시 켬 (또는 연결이 해제됨) → 멈추기 전처럼 다시 시작
+            self._remote_paused = False
+            if not self.is_running:
+                print("[device] 앱에서 감지를 켜서 카메라 감지를 다시 시작해요")
+                self.start_detection()
+                link.nudge()
+        if not hasattr(self, "link_status_label"):
+            return
+        if link.revoked:
+            text = "앱에서 연결이 해제됐어요. 앱에서 새 연결 코드를 받아 다시 연결해 주세요."
+        elif not link.paired:
+            text = "연결 안 됨 (예전 방식으로 전송해요)"
+        else:
+            info = link.info
+            where = info.get("location") or ""
+            if link.last_error:
+                text = f"연결됨 · {where} · {link.last_error} (다시 시도 중)"
+            elif not link.enabled:
+                text = f"연결됨 · {where} · 앱에서 감지를 꺼 두었어요"
+            elif link.last_ok_at:
+                text = f"연결됨 · {where} · 감지 켜짐"
+            else:
+                text = f"연결됨 · {where} · 서버 응답 기다리는 중"
+        self.link_status_label.setText(text)
+        self.link_forget_btn.setEnabled(link.paired)
+
+    def enter_pairing_code(self):
+        code, ok = QInputDialog.getText(self, "앱과 연결", "앱의 '기기 추가'에서 받은 6자리 연결 코드를 입력해 주세요:")
+        if not ok:
+            return
+        success, message = self.device_link.pair(code)
+        (QMessageBox.information if success else QMessageBox.warning)(self, "앱과 연결", message)
+        self._sync_device_link()
+
+    def forget_device_link(self):
+        answer = QMessageBox.question(self, "연결 해제",
+                                      "이 PC에 저장된 기기 연결을 지울까요?\n앱의 기기 목록에서도 이 기기를 삭제해 주세요.\n"
+                                      "해제하면 예전 방식(/api/events)으로 보내요.")
+        if answer == QMessageBox.Yes:
+            self.device_link.forget()
+            self._sync_device_link()
+
     def _post_fall_event(self, fall_type, is_test, image_b64=None):
         """Send one fall event to the server, retrying on network/server errors.
 
@@ -1336,6 +1429,31 @@ class FallDetectionDashboard(QMainWindow):
         server confirms it (and confirms the image was saved, when one was sent).
         """
         event_id = uuid.uuid4().hex  # same id on every retry, so the server never records it twice
+        if self.device_link.revoked:
+            # 앱에서 기기를 삭제함: 예전 경로로 몰래 보내지 않음 (다시 연결하거나 'PC에서 연결 해제'를 누른 뒤에만 예전 방식)
+            print(f"[device] 앱에서 기기 연결이 해제된 상태라 보내지 않았어요 (event {event_id[:8]})")
+            self._log_send_failure(event_id, fall_type, "device revoked: not sent")
+            return
+        if self.device_link.paired:
+            # 앱과 연결됨: 기기 토큰으로 새 API (그 집의 사고를 바로 만들고 사진 연결). 옛 경로로는 보내지 않음
+            try:
+                result = self.device_link.send_fall(event_id, fall_type, is_test, image_b64)
+            except DeviceRevoked:
+                print(f"[device] 앱에서 기기 연결이 해제돼 보내지 못했어요 (event {event_id[:8]}). 연결 코드로 다시 연결해 주세요.")
+                self._log_send_failure(event_id, fall_type, "device revoked (401)")
+                return
+            except Exception as e:
+                print(f"[device] 전송 실패 (event {event_id[:8]}): {e}")
+                self._log_send_failure(event_id, fall_type, f"device: {e}")
+                return
+            if result.get("test"):
+                print(f"[device] 시험 신호 전송 완료 (event {event_id[:8]}, 사고·알림 없음)")
+            elif result.get("ignored") == "off":
+                print(f"[device] 앱에서 감지를 꺼 둔 상태라 서버가 기록하지 않았어요 (event {event_id[:8]})")
+            else:
+                print(f"[device] 전송 완료 (event {event_id[:8]}, 사고 {result.get('incident_id')}"
+                      f"{', 사진 연결' if result.get('image_saved') else ''})")
+            return
         event = {
             "event_id": event_id,
             "device_id": DEVICE_ID,
