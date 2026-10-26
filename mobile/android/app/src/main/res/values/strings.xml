@@ -4,4 +4,12 @@
     <string name="title_activity_main">낙상 지킴이</string>
     <string name="package_name">com.humanfall.app</string>
     <string name="custom_url_scheme">com.humanfall.app</string>
+
+    <!-- 이 휴대폰을 감지 기기로 쓰기 (detect/) -->
+    <string name="detect_title">낙상 감지 기기</string>
+    <string name="detect_channel">낙상 감지</string>
+    <string name="detect_notice_starting">감지 준비 중이에요</string>
+    <string name="detect_notice_on">이 휴대폰 카메라로 낙상을 감지하고 있어요</string>
+    <string name="detect_notice_off">감지를 꺼 두었어요 (카메라를 쓰지 않아요)</string>
+    <string name="detect_notice_camera_error">카메라를 사용할 수 없어요</string>
 </resources>

@@ -22,7 +22,37 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    buildFeatures {
+        buildConfig = true   // BuildConfig.DEBUG: 에뮬레이터 시험용 사진 입력은 debug 빌드에서만
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    // MediaPipe 는 모델 파일을 압축되지 않은 상태로 읽어야 함
+    androidResources {
+        noCompress += ['task', 'tflite']
+    }
+    // 자세 인식 모델은 Git 에 넣지 않고 빌드할 때 받아서 넣음 (아래 downloadPoseModel)
+    sourceSets {
+        main.assets.srcDirs += "$buildDir/generated/poseModel"
+    }
 }
+
+// MediaPipe Pose Landmarker 공식 모델 (android/ 시험 앱과 같은 모델, 약 9MB). 없을 때만 받음
+def poseModelFile = file("$buildDir/generated/poseModel/pose_landmarker_full.task")
+tasks.register('downloadPoseModel') {
+    outputs.file(poseModelFile)
+    doLast {
+        if (poseModelFile.exists() && poseModelFile.length() > 1_000_000) return
+        poseModelFile.parentFile.mkdirs()
+        def url = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task'
+        logger.lifecycle("자세 인식 모델 받는 중: $url")
+        new URL(url).withInputStream { i -> poseModelFile.withOutputStream { it << i } }
+        if (poseModelFile.length() < 1_000_000) throw new GradleException("자세 인식 모델을 받지 못했어요")
+    }
+}
+preBuild.dependsOn 'downloadPoseModel'
 
 repositories {
     flatDir{
@@ -36,7 +66,15 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // 감지 기기 (detect/): 카메라 연속 프레임, 자세 인식·사람 영역 분리, 카메라를 쓰는 포그라운드 서비스
+    implementation "androidx.camera:camera-core:1.4.2"
+    implementation "androidx.camera:camera-camera2:1.4.2"
+    implementation "androidx.camera:camera-lifecycle:1.4.2"
+    implementation "androidx.lifecycle:lifecycle-service:2.6.2"
+    implementation "com.google.mediapipe:tasks-vision:1.1.0"
     testImplementation "junit:junit:$junitVersion"
+    // PC 에서 도는 단위 시험용 (안드로이드의 org.json 은 PC 시험에서 동작하지 않음)
+    testImplementation "org.json:json:20260814"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

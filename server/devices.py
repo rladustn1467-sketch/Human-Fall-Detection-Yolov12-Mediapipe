@@ -168,6 +168,21 @@ def heartbeat(conn, device, camera_ok, app_version=None, now=None):
     return {"enabled": bool(device["enabled"]), "location": device["location"], "heartbeatSeconds": HEARTBEAT_SECONDS}
 
 
+def set_enabled_by_device(conn, device, enabled, now=None):
+    """The device itself turns detection on/off (its own screen). Same flag as the app's on/off, so the app and
+    the device always show the same state. Returns the same answer as a status signal."""
+    now = now_ms() if now is None else now
+    if not isinstance(enabled, bool):
+        raise AccountError(400, "감지 켜기/끄기 값을 확인해 주세요.", "enabled")
+    with db.transaction(conn):
+        if int(enabled) != device["enabled"]:
+            conn.execute("UPDATE devices SET enabled = ?, enabled_at = ?, last_seen_at = ? WHERE id = ?",
+                         (int(enabled), now, now, device["id"]))
+        else:
+            conn.execute("UPDATE devices SET last_seen_at = ? WHERE id = ?", (now, device["id"]))
+    return {"enabled": enabled, "location": device["location"], "heartbeatSeconds": HEARTBEAT_SECONDS}
+
+
 def seen(conn, device, now=None):
     """Any authenticated request is a sign of life."""
     with db.transaction(conn):

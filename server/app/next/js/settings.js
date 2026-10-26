@@ -21,12 +21,24 @@
           <button class="row" data-action="settings.profile"><span class="det-dev__ic">${ic('user')}</span><span class="row__main"><span class="row__title">내 프로필</span></span>${ic('chevron-right', 'chev')}</button>
           <button class="row" data-action="settings.notif"><span class="det-dev__ic">${ic('bell')}</span><span class="row__main"><span class="row__title">알림 설정</span></span>${ic('chevron-right', 'chev')}</button>
         </div>
+        ${nativeDetector() ? `<div class="card" style="margin-top:16px">
+          <button class="row" data-action="settings.detector"><span class="det-dev__ic">${ic('mobile-screen')}</span><span class="row__main"><span class="row__title">이 휴대폰을 감지 기기로 쓰기</span><span class="row__sub" style="display:block">가족 앱에서 받은 연결 코드로 이 휴대폰 카메라를 연결해요</span></span>${ic('chevron-right', 'chev')}</button>
+        </div>` : ''}
         <div class="card" style="margin-top:16px">
           <button class="row" data-action="settings.logout"><span class="det-dev__ic">${ic('right-from-bracket')}</span><span class="row__main"><span class="row__title">로그아웃</span></span>${ic('chevron-right', 'chev')}</button>
           <button class="row row--danger" data-action="settings.withdraw"><span class="det-dev__ic" style="background:var(--stop-soft);color:var(--stop)">${ic('user-slash')}</span><span class="row__main"><span class="row__title">회원 탈퇴</span></span>${ic('chevron-right', 'chev')}</button>
         </div>
       </div>`;
   }, { tab: 'settings', live: true });
+  /* 이 휴대폰을 감지 기기로 쓰기: Android 앱(mobile/) 안에서만. 앱에 감지 기능(Detector)이 있을 때만 보임 (브라우저에서는 없음) */
+  function nativeDetector() {
+    const cap = window.Capacitor;
+    return !!(LIVE && cap && cap.isNativePlatform && cap.isNativePlatform() && cap.nativePromise
+      && (cap.PluginHeaders || []).some(p => p.name === 'Detector'));
+  }
+  on('settings.detector', async () => {
+    try { await window.Capacitor.nativePromise('Detector', 'open', {}); } catch (e) { UI.toast('감지 기기 화면을 열지 못했어요'); }
+  });
   on('settings.profile', () => R.go('/settings/profile'));
   on('settings.notif', () => R.go('/settings/notifications'));
 

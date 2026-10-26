@@ -205,6 +205,19 @@ class DeviceTest(unittest.TestCase):
         self.assertEqual(after, before)                                               # 사고·알림·사진 없음
         self.assertIsNotNone(self.view(d["deviceId"])["lastTestAt"])
 
+    def test_device_turns_itself_off_and_on(self):
+        # 기기 화면의 켜기/끄기: 앱과 같은 값 (앱에서 보면 꺼짐/정상, 다음 상태 신호도 같은 값)
+        d = self.paired()
+        self.device("heartbeat", {"cameraOk": True}, d["deviceToken"])
+        status, res = self.device("enabled", {"enabled": False}, d["deviceToken"])
+        self.assertEqual((status, res["enabled"]), (200, False))
+        self.assertEqual(self.view(d["deviceId"])["status"], "off")
+        self.assertEqual(self.device("heartbeat", {"cameraOk": True}, d["deviceToken"])[1]["enabled"], False)
+        self.assertEqual(self.device("enabled", {"enabled": "no"}, d["deviceToken"])[0], 400)
+        self.assertEqual(self.device("enabled", {"enabled": True})[0], 401)                     # 토큰 없음
+        self.assertEqual(self.device("enabled", {"enabled": True}, d["deviceToken"])[1]["enabled"], True)
+        self.assertEqual(self.view(d["deviceId"])["status"], "ok")
+
     # ---- 켜기/끄기 · 위치 · 삭제 (앱) ----
     def test_turn_off_and_on(self):
         d = self.paired()

@@ -24,6 +24,19 @@
 
         </activity>
 
+        <!-- 이 휴대폰을 감지 기기로 쓰기 (detect/): 앱의 설정 화면에서만 열림 -->
+        <activity
+            android:name=".detect.DetectorActivity"
+            android:label="@string/detect_title"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:exported="false" />
+
+        <!-- 카메라 연속 프레임 → 낙상 판단 → 서버 전송. 카메라를 쓰는 포그라운드 서비스 (알림이 계속 보임) -->
+        <service
+            android:name=".detect.DetectionService"
+            android:foregroundServiceType="camera"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -38,7 +51,11 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- 웹앱의 QR 초대 코드 인식 (WebView 카메라). 카메라가 없는 기기에도 설치되도록 required=false -->
+    <!-- 웹앱의 QR 초대 코드 인식 (WebView 카메라)과 감지 기기의 카메라. 카메라가 없는 기기에도 설치되도록 required=false -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- 감지 기기: 화면이 꺼져 있어도 카메라를 쓰는 포그라운드 서비스와 그 알림 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

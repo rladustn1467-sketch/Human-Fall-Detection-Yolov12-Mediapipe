@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- debug 빌드에만 적용: PC의 시험 서버에 HTTP로 접속 허용 (release 빌드는 HTTPS만) -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:networkSecurityConfig="@xml/network_security_config" />
+<!-- debug 빌드에만 적용: PC의 시험 서버에 HTTP로 접속 허용 (release 빌드는 HTTPS만).
+     감지 기기 화면은 에뮬레이터 자동 시험(adb am start)에서 바로 열 수 있게 debug 빌드에서만 공개 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:networkSecurityConfig="@xml/network_security_config">
+        <activity
+            android:name=".detect.DetectorActivity"
+            android:exported="true"
+            tools:replace="android:exported" />
+    </application>
 </manifest>
