@@ -20,8 +20,9 @@ import org.json.JSONObject;
  *
  * The family member gets a 6-character pairing code in the app ('기기 추가' → 감지용 휴대폰); it is entered once on
  * this phone and the server gives it its own device token, kept only in the app's private storage (never in Git,
- * never shown). With the token: a status signal every minute (camera working or not; the answer says whether
- * detection is turned on in the app), falls with the silhouette photo, and turning detection on/off from here.
+ * never shown). With the token: a status signal every minute (camera working or not), falls with the silhouette
+ * photo, and turning detection on/off. Detection is turned on/off only on this phone: the family app can not change
+ * it (the server refuses), and this phone never follows the server's flag; it tells the server its own value.
  * If the family deletes the device in the app, the server answers 401: the token is dropped and a 'revoked' mark
  * is kept so nothing is sent until the phone is connected again.
  *
@@ -69,7 +70,8 @@ public final class DeviceLink {
     private Sleeper sleeper = Thread::sleep;
     private final List<Pending> pending = new ArrayList<>();
 
-    public volatile boolean serverEnabled = true;   // 앱(또는 이 폰)에서 감지를 켜 두었는지
+    public volatile boolean enabled = true;         // 이 기기에서 정한 감지 켜기/끄기 (기준. 서버 값은 따르지 않음)
+    private volatile boolean syncToSend;            // 서버의 켜짐/꺼짐이 이 기기와 달라 다시 알려야 함
     public volatile long lastOkAt = 0;              // 서버와 마지막으로 통신에 성공한 시각 (ms)
     public volatile String lastError = null;        // 사람에게 보여 줄 마지막 통신 문제
 
@@ -87,8 +89,8 @@ public final class DeviceLink {
 
     public DeviceLink(Store store) {
         this.store = store;
-        String enabled = store.get("enabled");
-        serverEnabled = enabled == null || !enabled.equals("0");
+        String on = store.get("enabled");
+        enabled = on == null || !on.equals("0");
     }
 
     void setSleeper(Sleeper sleeper) {
@@ -103,6 +105,16 @@ public final class DeviceLink {
     public synchronized boolean isRevoked() {
         return "1".equals(store.get("revoked"));
     }
+
+    /**
+     * Logout hold: the person who used this phone for detection ('이 휴대폰으로 감지하기') logged out. Detection stays
+     * off on this phone, whatever the server flag says, until it is turned on again on this phone (setEnabled(true)).
+     * The server is told 'off' (now, or with the next status signal when it could not be reached).
+     */
+    public synchronized boolean isHeld() {
+        return "1".equals(store.get("hold"));
+    }
+
 
     public synchronized String location() {
         return store.get("location");
@@ -180,7 +192,8 @@ public final class DeviceLink {
             store.putAll(v);
             pending.clear();
         }
-        serverEnabled = true;
+        enabled = true;
+        syncToSend = false;
         lastError = "앱의 기기 목록에서 이 기기가 삭제돼 연결이 해제됐어요";
     }
 
@@ -213,7 +226,8 @@ public final class DeviceLink {
             store.putAll(v);
             pending.clear();
         }
-        serverEnabled = true;
+        enabled = true;
+        syncToSend = false;
         lastError = null;
         lastOkAt = System.currentTimeMillis();
         return null;
@@ -225,7 +239,8 @@ public final class DeviceLink {
             store.clear();
             pending.clear();
         }
-        serverEnabled = true;
+        enabled = true;
+        syncToSend = false;
         lastError = null;
     }
 
@@ -240,12 +255,27 @@ public final class DeviceLink {
     }
 
     private void applyAnswer(JSONObject body) {
-        serverEnabled = body.optBoolean("enabled", true);
-        remember("enabled", serverEnabled ? "1" : "0");
+        // 서버의 켜짐/꺼짐은 따르지 않음 (감지는 이 기기에서만 켜고 끔). 다르면 이 기기의 값을 서버에 다시 알림
+        if (body.has("enabled") && body.optBoolean("enabled", true) != enabled) syncToSend = true;
         String loc = body.optString("location", "");
         if (!loc.isEmpty() && !loc.equals(location())) remember("location", loc);
         lastOkAt = System.currentTimeMillis();
         lastError = null;
+    }
+
+    /**
+     * Logout / withdrawal on this phone: detection off here at once (held until turned on here again), and the
+     * server is told. Returns true when the server also got 'off' (else it is sent with a later status signal).
+     */
+    public boolean holdForLogout() {
+        remember("hold", "1");
+        if (token() == null) {
+            enabled = false;
+            remember("enabled", "0");
+            return false;
+        }
+        setEnabled(false);
+        return !syncToSend && isPaired();
     }
 
     // ---- 상태 신호 · 켜기/끄기 ----
@@ -273,30 +303,67 @@ public final class DeviceLink {
             return 10;
         }
         applyAnswer(r.body);
+        if (syncToSend) sendEnabled(enabled);   // 서버를 이 기기의 값에 맞춤
         flushPending();
         return r.body.optInt("heartbeatSeconds", DEFAULT_HEARTBEAT_SECONDS);
     }
 
-    /** Turn detection on/off from this phone (same flag as the app's). Returns null on success, else a message. */
-    public String setEnabled(boolean enabled) {
+    /**
+     * Turn detection on/off on this phone (the only place it can be changed). Applied here at once; the server is told
+     * now or with a later status signal. Returns null when the server got it too, else a message for the person.
+     */
+    public String setEnabled(boolean on) {
+        if (token() == null) return "먼저 이 휴대폰을 연결해 주세요.";
+        enabled = on;
+        remember("enabled", on ? "1" : "0");
+        if (on) remember("hold", "0");   // 이 휴대폰에서 직접 다시 켬 → 로그아웃 정지 풀림
+        return sendEnabled(on);
+    }
+
+    /** Tell the server this phone's on/off. Returns null on success, else a message. */
+    private String sendEnabled(boolean on) {
         String token = token();
         if (token == null) return "먼저 이 휴대폰을 연결해 주세요.";
         Response r;
         try {
             JSONObject body = new JSONObject();
-            body.put("enabled", enabled);
+            body.put("enabled", on);
             r = post(base(), "/api/v2/device/enabled", body, token);
         } catch (IOException | JSONException e) {
+            logFailure("감지 켜기/끄기 전송", e);
             lastError = "서버에 연결할 수 없어요";
-            return "서버에 연결할 수 없어요. 네트워크를 확인한 뒤 다시 시도해 주세요.";
+            syncToSend = true;
+            return (on ? "감지를 켰어요" : "감지를 껐어요") + ". 서버에는 연결되면 알려요.";
         }
         if (r.status == 401) {
             markRevoked();
             return "앱의 기기 목록에서 이 기기가 삭제돼 연결이 해제됐어요. 다시 연결해 주세요.";
         }
-        if (r.status != 200) return r.message("바꾸지 못했어요 (HTTP " + r.status + ").");
-        applyAnswer(r.body);
+        if (r.status != 200) {
+            syncToSend = true;   // 이 기기에는 이미 적용됨, 서버에는 다음 상태 신호 때 다시
+            lastError = r.message("서버 응답 오류 (HTTP " + r.status + ")");
+            return (on ? "감지를 켰어요" : "감지를 껐어요") + ". 서버에는 연결되면 알려요.";
+        }
+        syncToSend = false;
+        lastOkAt = System.currentTimeMillis();
+        lastError = null;
         return null;
+    }
+
+    /** Withdrawal: remove this phone's device from the server (device token) and forget it here. Never throws. */
+    public boolean unpairAndForget() {
+        String token = token();
+        boolean removed = false;
+        if (token != null) {
+            try {
+                Response r = post(base(), "/api/v2/device/unpair", new JSONObject(), token);
+                removed = r.status == 200 || r.status == 401;   // 401 = 이미 삭제됨
+            } catch (IOException e) {
+                logFailure("기기 삭제", e);
+            }
+        }
+        forget();
+        return removed;
     }
 
     private static final char[] B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();

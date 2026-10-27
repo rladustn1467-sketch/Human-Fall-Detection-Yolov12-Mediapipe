@@ -4,7 +4,7 @@
  *
  *   이 휴대폰       Android 앱 안에서만 (UI.nativeDetector). 로그인한 계정으로 연결 코드를 받아 이 휴대폰의 감지 화면에
  *                   바로 넘김 (코드는 화면에 보이지 않음, 서버가 그 집에 연결된 가족인지 다시 확인)
- *   안 쓰는 휴대폰  연결 코드를 보여 주고, 그 휴대폰의 첫 화면 '안 쓰는 휴대폰을 감지 기기로 쓰기'에서 입력
+ *   안 쓰는 휴대폰  연결 코드를 보여 주고, 그 휴대폰의 첫 화면(로그인 화면) 아래 '감지용 휴대전화 연결하기'에서 입력
  *   개발용 (서버 FD_DEV_DEVICES=1 일 때만, state.features.devDevices):
  *     PC 감지 프로그램  개발·시험 도구. 연결 코드를 PC 프로그램의 '연결 코드 입력'에 입력
  *     홈캠·CCTV        시연용 화면 흐름만. 서버에 연결하지 않음 (가짜 연결 코드·연결 성공 표시 없음)
@@ -92,7 +92,7 @@
   /* 연결 코드 (10분, 한 번). 기기가 코드를 보내 연결되면 서버 상태에 나타나고, 그때만 '연결됐어요' */
   const PAIR_WHERE = {
     pc: "PC 감지 프로그램에서 '연결 코드 입력' 버튼을 누르고 이 코드를 입력해 주세요.",
-    phone: "감지 전용으로 쓸 휴대폰에 이 앱을 설치해 열고, 첫 화면의 '안 쓰는 휴대폰을 감지 기기로 쓰기'에서 이 코드를 입력해 주세요. 그 휴대폰은 로그인하지 않아도 돼요."
+    phone: "감지 전용으로 쓸 휴대폰에 이 앱을 설치해 열고, 첫 화면 아래의 '감지용 휴대전화 연결하기'에서 이 코드를 입력해 주세요. 그 휴대폰은 로그인하지 않아도 돼요."
   };
   function codeSheet(homeId, p) {
     const startedAt = p.expiresAt - 10 * 60 * 1000;
@@ -128,6 +128,19 @@
     },
     async open(opts) {
       try { await window.Capacitor.nativePromise('Detector', 'open', opts || {}); return true; } catch (e) { UI.toast('감지 화면을 열지 못했어요'); return false; }
+    },
+    /* 로그아웃 전에: 이 휴대폰이 '이 휴대폰으로 감지하기'로 연결돼 있으면 감지를 멈춤 (카메라·감지 서비스 종료,
+       서버에도 '꺼짐', 이 휴대폰에서 다시 켤 때까지 유지). 연결 코드로 연결한 감지 전용 휴대폰은 그대로.
+       결과 {self, stopped, serverUpdated} (Android 앱이 아니면 self: false) */
+    async stopForLogout() {
+      if (!UI.nativeDetector()) return { self: false };
+      try { return await window.Capacitor.nativePromise('Detector', 'stopForLogout', {}); } catch (e) { return { self: true, stopped: false }; }
+    },
+    /* 탈퇴한 뒤: '이 휴대폰'이면 서버의 이 기기 기록을 지우고(기기 토큰) 이 휴대폰의 연결도 해제 → 다른 계정이 다시 연결 가능.
+       연결 코드로 연결한 감지 전용 휴대폰은 그대로. 결과 {self, removed} */
+    async unpairAfterWithdraw() {
+      if (!UI.nativeDetector()) return { self: false };
+      try { return await window.Capacitor.nativePromise('Detector', 'unpairAfterWithdraw', {}); } catch (e) { return { self: true, removed: false }; }
     },
     /* 감지 전용 기기 화면 (로그인 전 첫 화면에서): 연결 코드 입력 */
     openDedicated() { return Self.open({ mode: 'dedicated' }); },

@@ -124,13 +124,32 @@
 
   /* ---------------- 로그아웃 ---------------- */
   on('settings.logout', async el => {
-    const ok = await UI.confirm({ title: '로그아웃할까요?', body: '이 기기에서 로그아웃해요. 다시 쓰려면 휴대전화 번호와 비밀번호로 로그인해 주세요.', ok: '로그아웃', cancel: '취소' });
+    // 이 휴대폰이 '이 휴대폰으로 감지하기'로 감지 중이면 로그아웃하면서 감지도 멈춤 (devices.js, Android 앱)
+    const S = FD.DeviceConnect && FD.DeviceConnect.self;
+    const st = S && UI.nativeDetector() ? ((await S.status()) || {}).s : null;
+    const selfOn = !!(st && st.paired && st.mode === 'self');
+    const ok = await UI.confirm({ title: '로그아웃할까요?',
+      body: '이 기기에서 로그아웃해요. 다시 쓰려면 휴대전화 번호와 비밀번호로 로그인해 주세요.'
+        + (selfOn ? ' 이 휴대폰으로 하던 낙상 감지도 멈춰요. 다시 로그인한 뒤 감지 화면에서 직접 켜야 다시 감지해요.' : ''),
+      ok: '로그아웃', cancel: '취소' });
     if (!ok) return;
+    let stop = { self: false };
     try {
-      await UI.busy(el, () => Act.signOut());
-    } catch (e) { UI.showError(e); return; }
+      await UI.busy(el, async () => {
+        if (S) stop = await S.stopForLogout();
+        // 감지를 멈추지 못했으면 로그아웃하지 않음 (멈춘 것처럼 보이지 않도록)
+        if (stop.self && !stop.stopped) throw new FD.ApiError(0, '이 휴대폰의 감지를 멈추지 못해 로그아웃하지 않았어요. 다시 시도해 주세요.');
+        await Act.signOut();
+      });
+    } catch (e) {
+      if (stop.self && stop.stopped) UI.toast('이 휴대폰의 감지는 멈췄지만 로그아웃하지 못했어요. 다시 시도해 주세요.');
+      else UI.showError(e);
+      return;
+    }
     FD.Onboarding.resetDraft();
     R.go('/ob/login', { replace: true });
+    if (stop.self) UI.toast(stop.serverUpdated ? '로그아웃했어요. 이 휴대폰의 감지를 멈췄어요.'
+      : '로그아웃했어요. 이 휴대폰의 감지를 멈췄어요 (서버에는 연결되면 알려요).', 'ok');
   });
 
   /* ---------------- S-09 회원 탈퇴 ---------------- */
@@ -154,12 +173,27 @@
     on('wd.submit', async el => {
       const e = document.getElementById('wd-pw'); const pw = e ? e.value : '';   // 비밀번호는 공백 포함 그대로
       if (!pw) { setError('wd-pw', '비밀번호를 입력해 주세요.'); return; }
+      // 이 휴대폰이 '이 휴대폰으로 감지하기'로 감지 중이면 탈퇴 전에 감지부터 멈춤 (로그아웃과 같은 방법, devices.js)
+      const S = FD.DeviceConnect && FD.DeviceConnect.self;
+      let stop = { self: false };
       try {
-        await UI.busy(el, () => Act.withdraw(Sel.meId(), pw));
-      } catch (err) { UI.showError(err, { password: 'wd-pw' }); return; }
+        await UI.busy(el, async () => {
+          if (S) stop = await S.stopForLogout();
+          if (stop.self && !stop.stopped) throw new FD.ApiError(0, '이 휴대폰의 감지를 멈추지 못해 탈퇴하지 않았어요. 다시 시도해 주세요.');
+          await Act.withdraw(Sel.meId(), pw);
+        });
+      } catch (err) {
+        UI.showError(err, { password: 'wd-pw' });
+        if (stop.self && stop.stopped) toast('탈퇴하지 못했어요. 이 휴대폰의 감지는 멈춘 상태예요. 감지 화면에서 다시 켤 수 있어요.');
+        return;
+      }
+      let unpaired = { self: false };
+      if (stop.self && S) unpaired = await S.unpairAfterWithdraw();   // 이 휴대폰의 기기 기록·연결 정리
       closeSheet();
       FD.Onboarding.resetDraft();
-      toast('탈퇴했어요. 그동안 이용해 주셔서 고마워요.');
+      toast(stop.self ? (unpaired.removed ? '탈퇴했어요. 이 휴대폰의 감지를 멈추고 기기 연결도 해제했어요.'
+        : '탈퇴했어요. 이 휴대폰의 감지를 멈췄어요. 가족 앱의 기기 목록에 남은 이 기기는 가족이 삭제할 수 있어요.')
+        : '탈퇴했어요. 그동안 이용해 주셔서 고마워요.');
       R.go('/ob/signup', { replace: true });
     });
   }

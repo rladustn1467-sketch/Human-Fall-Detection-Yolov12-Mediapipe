@@ -241,7 +241,6 @@ class FallDetectionDashboard(QMainWindow):
         # 앱과 연결 (device_link.py): 연결되면 기기 토큰으로 낙상·상태 신호를 보내고, 앱에서 끄면 카메라 감지를 멈춤.
         # 연결 전에는 지금까지처럼 /api/events (공용 토큰)
         self.device_link = DeviceLink(self.event_server_url)
-        self._remote_paused = False       # 앱에서 감지를 꺼서 이 프로그램이 카메라를 멈춘 상태
         self._last_frame_ok_at = 0.0      # 카메라(또는 영상)에서 마지막으로 프레임을 읽은 시각
 
         # Create the central widget and layout
@@ -860,12 +859,6 @@ class FallDetectionDashboard(QMainWindow):
 
     def start_detection(self):
         """Initialize and start the fall detection process."""
-        if self.device_link.paired and not self.device_link.enabled:
-            # 앱에서 이 기기의 감지를 꺼 둠: 카메라를 열지 않음 (앱에서 켜면 자동으로 다시 시작)
-            self._remote_paused = True
-            self.status_bar.showMessage("앱에서 이 기기의 감지를 꺼 두었어요. 앱에서 켜면 다시 시작해요.")
-            QMessageBox.information(self, "감지 꺼짐", "앱에서 이 기기의 감지를 꺼 두었어요.\n앱에서 감지를 켜면 자동으로 다시 시작해요.")
-            return
         try:
             # Initialize the fall detector if not already created
             self._ensure_fall_detector()
@@ -1370,22 +1363,11 @@ class FallDetectionDashboard(QMainWindow):
         return bool(self.is_running and self.cap is not None and time.time() - self._last_frame_ok_at < 5)
 
     def _sync_device_link(self):
-        """Every second on the UI thread: follow the app's detection on/off, and show the connection state."""
+        """Every second on the UI thread: tell the server whether detection runs on this PC (Start/Stop is the only
+        on/off: the app can not turn this PC's camera on or off), and show the connection state."""
         link = self.device_link
-        if link.paired and not link.enabled and self.is_running and not self._remote_paused:
-            # 앱에서 감지를 끔 → 카메라를 닫고 감지를 멈춤 (영상 분석·낙상 전송 없음)
-            self.toggle_detection()
-            self._remote_paused = True
-            self.status_bar.showMessage("앱에서 이 기기의 감지를 껐어요. 카메라를 멈췄어요.")
-            print("[device] 앱에서 감지를 꺼서 카메라 감지를 멈췄어요")
-            link.nudge()
-        elif self._remote_paused and (not link.paired or link.enabled):
-            # 앱에서 다시 켬 (또는 연결이 해제됨) → 멈추기 전처럼 다시 시작
-            self._remote_paused = False
-            if not self.is_running:
-                print("[device] 앱에서 감지를 켜서 카메라 감지를 다시 시작해요")
-                self.start_detection()
-                link.nudge()
+        if link.paired:
+            link.set_local(self.is_running)
         if not hasattr(self, "link_status_label"):
             return
         if link.revoked:
@@ -1397,8 +1379,8 @@ class FallDetectionDashboard(QMainWindow):
             where = info.get("location") or ""
             if link.last_error:
                 text = f"연결됨 · {where} · {link.last_error} (다시 시도 중)"
-            elif not link.enabled:
-                text = f"연결됨 · {where} · 앱에서 감지를 꺼 두었어요"
+            elif not self.is_running:
+                text = f"연결됨 · {where} · 이 PC 에서 감지를 멈춤"
             elif link.last_ok_at:
                 text = f"연결됨 · {where} · 감지 켜짐"
             else:

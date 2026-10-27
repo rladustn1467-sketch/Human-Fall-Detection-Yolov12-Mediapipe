@@ -600,10 +600,9 @@
         applyServer(data);
         return data.pairing;
       },
-      async updateDevice(id, patch) {
+      async updateDevice(id, patch) {   // 위치 이름만 (감지 켜기·끄기는 그 감지 기기에서만, 서버도 거절)
         patch = patch || {};
         const body = {};
-        if (patch.status === 'ok' || patch.status === 'off') body.enabled = patch.status === 'ok';
         if (patch.location !== undefined) body.location = patch.location;
         applyServer(await API.updateDevice(id, body));
       },

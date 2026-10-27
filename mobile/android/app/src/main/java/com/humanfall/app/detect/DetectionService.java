@@ -142,7 +142,7 @@ public class DetectionService extends LifecycleService {
             stopSelf();
             return;
         }
-        if (link.serverEnabled) startCamera();
+        if (link.enabled) startCamera();   // 이 기기에서 정한 값대로 (서버 값으로 켜지지 않음)
         else stopCamera();
         updateNotification();
     }
@@ -206,7 +206,7 @@ public class DetectionService extends LifecycleService {
             mockExec.shutdownNow();
             mockExec = null;
         }
-        DetectorRuntime.STATE.camera = link.isPaired() && !link.serverEnabled ? "off" : "none";
+        DetectorRuntime.STATE.camera = link.isPaired() && !link.enabled ? "off" : "none";
         if (was) Log.i(TAG, "카메라 감지 멈춤 (카메라 해제)");
     }
 
@@ -324,7 +324,7 @@ public class DetectionService extends LifecycleService {
 
     private void updateNotification() {
         String c = DetectorRuntime.STATE.camera;
-        String text = !link.serverEnabled ? getString(R.string.detect_notice_off)
+        String text = !link.enabled ? getString(R.string.detect_notice_off)
                 : "error".equals(c) ? getString(R.string.detect_notice_camera_error)
                 : getString(R.string.detect_notice_on);
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));

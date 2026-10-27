@@ -221,20 +221,42 @@ class DeviceTest(unittest.TestCase):
         self.assertEqual(self.device("enabled", {"enabled": True}, d["deviceToken"])[1]["enabled"], True)
         self.assertEqual(self.view(d["deviceId"])["status"], "ok")
 
-    # ---- 켜기/끄기 · 위치 · 삭제 (앱) ----
-    def test_turn_off_and_on(self):
+    # ---- 켜기/끄기는 기기에서만 · 위치 · 삭제 (앱) ----
+    def test_app_can_not_turn_detection_on_or_off(self):
+        """Detection on/off is changed only on the device itself; the app (any family member) is refused."""
         d = self.paired()
         self.device("heartbeat", {"cameraOk": True}, d["deviceToken"])
-        self.assertEqual(self.b.call("PATCH", f"/api/v2/devices/{d['deviceId']}", {"enabled": False})[0], 403)
-        self.assertEqual(self.a.call("PATCH", f"/api/v2/devices/{d['deviceId']}", {"enabled": "no"})[0], 400)
-        self.assertEqual(self.a.call("PATCH", f"/api/v2/devices/{d['deviceId']}", {"enabled": False})[0], 200)
-        self.assertEqual(self.view(d["deviceId"])["status"], "off")
-        self.assertEqual(self.device("heartbeat", {"cameraOk": True}, d["deviceToken"])[1]["enabled"], False)   # 기기에 알림
+        path = f"/api/v2/devices/{d['deviceId']}"
+        for body in ({"enabled": False}, {"enabled": True}, {"enabled": "no"}):
+            status, _, data = self.a.call("PATCH", path, body)                        # 집에 연결된 가족도
+            self.assertEqual((status, data["field"]), (403, "enabled"), body)
+        self.assertEqual(self.b.call("PATCH", path, {"enabled": False})[0], 403)      # 집에 연결 안 된 가족
+        self.assertEqual(self.c.call("PATCH", path, {"enabled": False})[0], 404)      # 다른 그룹
+        status, _, _ = self.a.call("PATCH", path, {"location": "작은방", "enabled": False})
+        self.assertEqual(status, 403)                                                 # 섞어 보내면 전체 거절
+        v = self.view(d["deviceId"])
+        self.assertEqual((v["status"], v["location"]), ("ok", "거실"))                 # 아무것도 바뀌지 않음
+        self.assertEqual(self.device("heartbeat", {"cameraOk": True}, d["deviceToken"])[1]["enabled"], True)
+        # 기기에서 직접 끄면 그 기기의 낙상은 사고를 만들지 않음 (기존 동작)
+        self.device("enabled", {"enabled": False}, d["deviceToken"])
         before = len(self.b.state()["state"]["incidents"])
         self.assertEqual(self.fall(d["deviceToken"])[1], {"ok": True, "ignored": "off"})
         self.assertEqual(len(self.b.state()["state"]["incidents"]), before)
-        self.a.call("PATCH", f"/api/v2/devices/{d['deviceId']}", {"enabled": True})
+        self.assertEqual(self.a.call("PATCH", path, {"enabled": True})[0], 403)       # 앱에서 다시 켤 수 없음
+        self.assertEqual(self.view(d["deviceId"])["status"], "off")
+        self.device("enabled", {"enabled": True}, d["deviceToken"])
         self.assertEqual(self.view(d["deviceId"])["status"], "ok")
+
+    def test_device_removes_only_itself(self):
+        """'이 휴대폰' owner withdrew on that phone: the device deletes its own record with its own token."""
+        mine, other = self.paired(), self.paired()
+        self.assertEqual(self.device("unpair", {})[0], 401)                           # 토큰 없으면 안 됨
+        self.assertEqual(self.device("unpair", {}, mine["deviceToken"])[0], 200)
+        self.assertIsNone(self.view(mine["deviceId"]))
+        self.assertEqual(self.device("heartbeat", {"cameraOk": True}, mine["deviceToken"])[0], 401)
+        self.assertEqual(self.device("unpair", {}, mine["deviceToken"])[0], 401)      # 이미 삭제됨
+        self.assertIsNotNone(self.view(other["deviceId"]))                            # 다른 기기는 그대로
+        self.assertEqual(self.device("heartbeat", {"cameraOk": True}, other["deviceToken"])[1]["enabled"], True)
 
     def test_rename(self):
         d = self.paired()

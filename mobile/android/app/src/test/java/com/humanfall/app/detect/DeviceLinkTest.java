@@ -41,6 +41,8 @@ public class DeviceLinkTest {
     volatile int failEvents = 0;          // 다음 낙상 요청 몇 번을 500 으로
     volatile int eventStatus = 200;       // 그 뒤의 응답 코드
     volatile boolean revoked = false;
+    volatile boolean down = false;        // 서버가 응답하지 못함 (503)
+    volatile boolean unpaired = false;
     final List<String> eventIds = Collections.synchronizedList(new ArrayList<>());
     final List<JSONObject> eventBodies = Collections.synchronizedList(new ArrayList<>());
 
@@ -50,6 +52,7 @@ public class DeviceLinkTest {
 
     private Object[] handle(String method, String path, Map<String, String> headers, String text) throws Exception {
         JSONObject b = text.trim().startsWith("{") ? new JSONObject(text) : new JSONObject();
+        if (down) return new Object[]{503, "{}"};
         String answer = "{\"enabled\":%s,\"location\":\"%s\",\"heartbeatSeconds\":60}";
         switch (path) {
             case "/api/v2/device/pair":
@@ -64,6 +67,11 @@ public class DeviceLinkTest {
                 if (!authorized(headers)) return new Object[]{401, "{}"};
                 enabled = b.optBoolean("enabled");
                 return new Object[]{200, String.format(answer, enabled, location)};
+            case "/api/v2/device/unpair":
+                if (!authorized(headers)) return new Object[]{401, "{}"};
+                unpaired = true;
+                revoked = true;
+                return new Object[]{200, "{\"ok\":true}"};
             case "/api/v2/device/events":
                 if (!authorized(headers)) return new Object[]{401, "{\"message\":\"기기 인증에 실패했어요.\"}"};
                 eventIds.add(b.optString("event_id"));
@@ -110,20 +118,42 @@ public class DeviceLinkTest {
     }
 
     @Test
-    public void heartbeatFollowsServerOnOffAndLocation() {
+    public void onOffIsDecidedOnThisPhoneNotByTheServer() {
         MemStore store = new MemStore();
         DeviceLink link = paired(store, new ArrayList<>());
         assertEquals(60, link.heartbeat(true));
-        assertTrue(link.serverEnabled);
-        enabled = false;
+        assertTrue(link.enabled);
+        enabled = false;                                                    // 서버 값이 '꺼짐'이 돼도 (예: 예전 원격 끄기)
         location = "안방";
         link.heartbeat(true);
-        assertFalse(link.serverEnabled);
-        assertEquals("안방", link.location());
-        assertFalse(new DeviceLink(store).serverEnabled);                   // 다시 켜도 꺼짐 기억
-        assertNull(link.setEnabled(true));                                  // 이 폰에서 켬 → 서버도 켜짐
+        assertTrue(link.enabled);                                           // 이 휴대폰은 켜진 채로
+        assertTrue(enabled);                                                // 서버를 이 휴대폰 값('켜짐')으로 되돌림
+        assertEquals("안방", link.location());                              // 위치 이름은 앱에서 바꿀 수 있음
+        assertNull(link.setEnabled(false));                                 // 이 휴대폰에서 끔 → 서버도 꺼짐
+        assertFalse(enabled);
+        assertFalse(new DeviceLink(store).enabled);                         // 다시 켜도 꺼짐 기억
+        enabled = true;                                                     // 서버 값이 '켜짐'이 돼도
+        link.heartbeat(true);
+        assertFalse(link.enabled);                                          // 서버 값으로 켜지지 않음
+        assertFalse(enabled);
+        assertNull(link.setEnabled(true));
+        assertTrue(link.enabled);
         assertTrue(enabled);
-        assertTrue(link.serverEnabled);
+    }
+
+    @Test
+    public void onOffWithoutNetworkAppliesHereAndIsSentLater() {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        down = true;
+        String note = link.setEnabled(false);
+        assertEquals("감지를 껐어요. 서버에는 연결되면 알려요.", note);       // 이 휴대폰에서는 바로 꺼짐
+        assertFalse(link.enabled);
+        assertTrue(enabled);
+        down = false;
+        link.heartbeat(false);
+        assertFalse(enabled);                                               // 다음 상태 신호 때 서버에도
+        assertFalse(link.enabled);
     }
 
     @Test
@@ -205,5 +235,82 @@ public class DeviceLinkTest {
             assertEquals(java.util.Base64.getEncoder().encodeToString(b), DeviceLink.base64(b));
         }
         assertArrayEquals(new byte[0], java.util.Base64.getDecoder().decode(DeviceLink.base64(new byte[0])));
+    }
+
+    // ---- 로그아웃 정지 ('이 휴대폰'으로 감지하던 사람이 로그아웃) ----
+    @Test
+    public void logoutHoldTurnsDetectionOffHereAndOnTheServer() {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        link.heartbeat(true);
+        assertTrue(link.enabled);
+        assertTrue(link.holdForLogout());                                   // 서버에도 '꺼짐'
+        assertFalse(enabled);
+        assertFalse(link.enabled);
+        assertTrue(link.isHeld());
+        assertEquals("1", store.get("hold"));                               // 앱이 다시 켜져도 남음
+        assertTrue(new DeviceLink(store).isHeld());
+        assertFalse(new DeviceLink(store).enabled);
+    }
+
+    @Test
+    public void heldPhoneStaysOffWhenTheServerSaysOn() {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        link.holdForLogout();
+        enabled = true;                                                     // 다른 가족이 앱에서 켬
+        link.heartbeat(false);
+        assertFalse(link.enabled);                                    // 이 휴대폰은 꺼진 채로
+        assertFalse(enabled);                                               // 서버에도 다시 '꺼짐'
+        assertTrue(link.isHeld());
+    }
+
+    @Test
+    public void turningOnOnThisPhoneEndsTheHold() {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        link.holdForLogout();
+        assertNull(link.setEnabled(true));                                  // 이 휴대폰에서 직접 '감지 켜기'
+        assertFalse(link.isHeld());
+        assertTrue(link.enabled);
+        assertTrue(enabled);
+        link.heartbeat(true);
+        assertTrue(link.enabled);
+    }
+
+    @Test
+    public void logoutHoldWithoutNetworkIsSentLater() {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        down = true;
+        assertFalse(link.holdForLogout());                                  // 서버에는 못 알림
+        assertFalse(link.enabled);                                    // 그래도 이 휴대폰은 꺼짐
+        assertTrue(enabled);
+        down = false;
+        link.heartbeat(false);                                              // 다음 상태 신호 때
+        assertFalse(enabled);                                               // 서버에도 '꺼짐'
+        assertFalse(link.enabled);
+    }
+
+    @Test
+    public void unpairAndForgetRemovesThisPhoneOnlyWithItsOwnToken() {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        assertTrue(link.unpairAndForget());
+        assertTrue(unpaired);                                               // 서버: 이 기기 토큰으로 자기 기록만 삭제
+        assertFalse(link.isPaired());
+        assertTrue(store.m.isEmpty());                                      // 이 휴대폰의 연결 정보도 지움
+        revoked = false;
+        DeviceLink offline = paired(new MemStore(), new ArrayList<>());
+        down = true;
+        assertFalse(offline.unpairAndForget());                             // 서버에 못 알려도
+        assertFalse(offline.isPaired());                                    // 이 휴대폰에서는 지움
+    }
+
+    @Test
+    public void notPairedPhoneHasNothingToHold() {
+        DeviceLink link = new DeviceLink(new MemStore());
+        assertFalse(link.holdForLogout());
+        assertFalse(link.isPaired());
     }
 }

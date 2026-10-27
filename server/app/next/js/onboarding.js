@@ -42,7 +42,7 @@
   const rawVal = id => { const e = document.getElementById(id); return e ? e.value : ''; };
   R.register('/ob/signup', () => {
     const html = page(`
-      ${top(0, 3, { noBack: true })}
+      ${top(0, 3)}
       <div class="brand"><span class="brand__mark">${ic('shield-heart')}</span>지킴이</div>
       <div class="hero-art"><i class="fa-solid fa-house-medical" aria-hidden="true"></i><p>일상 속 낙상 사고에<br>대비하세요.</p></div>
       <h1 class="ob__title">계정을 만들어 주세요</h1>
@@ -54,32 +54,45 @@
         ${field({ id: 'su-pw2', label: '비밀번호 확인', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX })}
         <label class="check"><input type="checkbox" id="su-agree"><span>서비스 이용약관과 개인정보 수집·이용에 동의해요.</span></label>
         <p class="field__error" id="su-agree-err" role="alert" hidden></p>
-      </form>${dedicatedEntry()}`,
-      `<button class="btn btn--primary btn--lg btn--block" data-action="signup.submit">계속하기</button>
-       <button class="btn btn--ghost btn--lg btn--block" data-action="go.login">이미 계정이 있어요 · 로그인</button>`);
+      </form>`,
+      `<button class="btn btn--primary btn--lg btn--block" data-action="signup.submit">계속하기</button>`);
     return html;
+  }, { parent: '/ob/login' });   // 위 '뒤로' = 첫 화면(로그인)으로
+  /* 감지용 휴대전화 연결하기 (로그인 화면 아래): 안 쓰는 휴대전화를 감지 전용 기기로. 로그인·가입 없이 연결 코드만 입력
+     (Android 앱의 감지 화면, devices.js → DetectorActivity: 코드 확인·기기 등록·감지 시작·연결 결과).
+     코드는 평소 쓰는 휴대전화에서 로그인한 뒤 홈 화면의 '기기 추가' → '안 쓰는 휴대폰'에서 받음 (그 집에 연결된 가족만, 서버가 확인).
+     브라우저에는 이 휴대전화의 카메라로 감지하는 기능이 없어서, 앱에서 하라고만 알려 줌 */
+  const dedicatedEntry = () => {
+    const app = LIVE && UI.nativeDetector();
+    return `<div class="or-line" role="separator"><span>감지 전용 휴대전화라면</span></div>
+      <div class="card">
+        <button class="row" data-action="ob.dedicated"><span class="det-dev__ic">${ic('mobile-screen')}</span><span class="row__main"><span class="row__title">감지용 휴대전화 연결하기</span><span class="row__sub" style="display:block">${app
+          ? '평소 쓰는 휴대전화에서 받은 연결 코드를 이 휴대전화에 입력해요. 로그인하지 않아도 돼요.'
+          : '감지 전용으로 쓸 휴대전화에 낙상 지킴이 앱을 설치하고, 그 앱에서 연결 코드를 입력해요.'}</span></span>${ic('chevron-right', 'chev')}</button>
+      </div>`;
+  };
+  on('ob.dedicated', () => {
+    if (LIVE && UI.nativeDetector() && FD.DeviceConnect) { FD.DeviceConnect.self.openDedicated(); return; }
+    toast('감지용 휴대전화 연결은 감지 전용 휴대전화에 설치한 낙상 지킴이 앱에서 할 수 있어요.');
   });
-  /* 안 쓰는 휴대폰을 감지 전용 기기로: 로그인하지 않고 연결 코드로 연결 (Android 앱 안에서만, devices.js).
-     코드는 평소 쓰는 휴대폰에서 이 앱에 로그인한 뒤 홈 화면의 '기기 추가' → '감지용 휴대폰'에서 받음 */
-  const dedicatedEntry = () => (LIVE && UI.nativeDetector() ? `<div class="card" style="margin-top:22px">
-      <button class="row" data-action="ob.dedicated"><span class="det-dev__ic">${ic('mobile-screen')}</span><span class="row__main"><span class="row__title">안 쓰는 휴대폰을 감지 기기로 쓰기</span><span class="row__sub" style="display:block">로그인하지 않고, 다른 휴대폰에서 받은 연결 코드로 연결해요</span></span>${ic('chevron-right', 'chev')}</button>
-    </div>` : '');
-  on('ob.dedicated', () => FD.DeviceConnect && FD.DeviceConnect.self.openDedicated());
-  on('go.login', () => R.go('/ob/login'));
   on('go.signup', () => R.go('/ob/signup'));
 
-  /* ---------------- 로그인 (휴대전화 번호 + 비밀번호) ---------------- */
+  /* ---------------- 로그인 = 앱 첫 화면 (휴대전화 번호 + 비밀번호) ----------------
+     로그인 → 회원가입 → 비밀번호 찾기 → (구분선) → 감지용 휴대전화 연결하기 (가입·로그인과 다른 길) */
   R.register('/ob/login', () => page(`
-      <div class="brand" style="margin-top:22px"><span class="brand__mark">${ic('shield-heart')}</span>지킴이</div>
-      <h1 class="ob__title">다시 오셨네요</h1>
-      <p class="ob__sub">가입할 때 쓴 휴대전화 번호와 비밀번호를 입력해 주세요.</p>
+      <div class="login-head">
+        <span class="brand__mark brand__mark--lg">${ic('shield-heart')}</span>
+        <h1 class="ob__title">낙상 지킴이</h1>
+        <p class="ob__sub">넘어짐을 감지하면 가족에게 바로 알려요.</p>
+      </div>
       <form class="ob__form" id="login-form" novalidate>
-        ${field({ id: 'lg-phone', label: '휴대전화 번호', type: 'tel', inputmode: 'numeric', placeholder: '010-0000-0000', autocomplete: 'tel', oninput: 'phone-fmt' })}
+        ${field({ id: 'lg-phone', label: '휴대전화 번호 (아이디)', type: 'tel', inputmode: 'numeric', placeholder: '010-0000-0000', autocomplete: 'tel', oninput: 'phone-fmt' })}
         ${field({ id: 'lg-pw', label: '비밀번호', type: 'password', autocomplete: 'current-password', maxlength: PW_MAX, onenter: 'login.submit' })}
       </form>
-      <p style="text-align:center;margin-top:10px"><button type="button" class="btn btn--ghost" data-action="login.forgot">비밀번호를 잊으셨나요?</button></p>${dedicatedEntry()}`,
-    `<button class="btn btn--primary btn--lg btn--block" data-action="login.submit">로그인</button>
-     <button class="btn btn--ghost btn--lg btn--block" data-action="go.signup">처음이에요 · 계정 만들기</button>`));
+      <button class="btn btn--primary btn--lg btn--block" data-action="login.submit">로그인</button>
+      <p class="login-links">처음이신가요? <button type="button" class="link-btn" data-action="go.signup">회원가입</button></p>
+      <p class="login-links"><button type="button" class="link-btn link-btn--muted" data-action="login.forgot">비밀번호 찾기</button></p>
+      ${dedicatedEntry()}`));
   // 비밀번호 재설정은 문자 인증 단계에서 제공 (지금은 안내만)
   on('login.forgot', () => toast('비밀번호 재설정은 지금 사용할 수 없어요.'));
   on('login.submit', async el => {

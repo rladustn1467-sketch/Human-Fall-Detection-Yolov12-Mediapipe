@@ -209,6 +209,14 @@ i.fa-solid { line-height: 1; }
 .ob__foot { padding: 14px 0 calc(18px + env(safe-area-inset-bottom)); display: grid; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--primary-d); }
 .brand__mark { width: 38px; height: 38px; border-radius: 12px; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 18px; }
+.brand__mark--lg { width: 58px; height: 58px; border-radius: 18px; font-size: 26px; }
+/* 로그인 = 앱 첫 화면 */
+.login-head { text-align: center; padding-top: 36px; display: grid; justify-items: center; }
+.login-head .ob__title { margin-top: 14px; }
+.login-head .ob__sub { margin-top: 6px; }
+.login-links { text-align: center; margin-top: 12px; color: var(--ink-2); font-size: 14px; }
+.or-line { display: flex; align-items: center; gap: 12px; margin: 26px 0 14px; color: var(--ink-3); font-size: 13px; font-weight: 600; }
+.or-line::before, .or-line::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .hero-art { margin: 8px 0 4px; height: 120px; border-radius: var(--r-lg); background: linear-gradient(135deg, #1B6A72, #2F8F96 60%, #7CC0B6); position: relative; overflow: hidden; color: #fff; display: flex; align-items: center; padding: 0 22px; gap: 14px; }
 .hero-art::after { content: ''; position: absolute; right: -30px; top: -40px; width: 160px; height: 160px; border-radius: 50%; background: rgba(255, 255, 255, .12); }
 .hero-art i { font-size: 38px; }

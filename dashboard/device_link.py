@@ -4,8 +4,9 @@ Not paired (default): the dashboard keeps the old way (/api/events with the shar
 Paired: the family member gets a 6-character pairing code in the app ('기기 추가'), the code is entered here once,
 and the server gives this PC its own device token. From then on:
   - falls (and their silhouette photo) go to /api/v2/device/events with 'Authorization: Bearer <device token>'
-  - a status signal goes to /api/v2/device/heartbeat every minute (camera working or not); its answer says whether
-    the family turned detection on or off in the app, and the location name
+  - a status signal goes to /api/v2/device/heartbeat every minute (camera working or not); its answer gives the
+    location name. Detection on/off is decided only on this PC (Start/Stop): the app can not change it, and this
+    program never starts or stops the camera because of the server; it tells the server its own state instead
   - if the family deletes the device in the app, the server answers 401: the token is forgotten here and the
     dashboard shows that it must be connected again
 
@@ -53,7 +54,8 @@ class DeviceLink:
         self.heartbeat_override = heartbeat_override or (float(env) if env else None)
         self._lock = threading.Lock()
         self._entry = self._load()
-        self.enabled = True              # 앱에서 끄면 False (상태 신호 응답으로 받음)
+        self.local_on = None             # 이 PC 에서 감지가 켜져 있는지 (Start/Stop, 대시보드가 알려 줌)
+        self.server_on = None            # 서버에 기록된 켜짐/꺼짐 (표시·맞춤용, 카메라는 따르지 않음)
         # 앱에서 기기를 삭제해 토큰이 거절됨 (프로그램을 다시 켜도 유지: 예전 경로로 몰래 보내지 않게)
         self.revoked = bool((self._read_all().get(self.base) or {}).get("revoked"))
         self.last_ok_at = None           # 서버와 마지막으로 통신에 성공한 시각
@@ -116,7 +118,7 @@ class DeviceLink:
         with self._lock:
             self._entry = None
             self.revoked = True
-            self.enabled = True
+            self.server_on = None
         self._save({"revoked": True, "revokedAt": int(time.time())})   # 토큰은 지우고 '해제됨' 표시만
 
     # ---- 연결 · 해제 ----
@@ -135,14 +137,14 @@ class DeviceLink:
                  "location": data.get("location"), "pairedAt": int(time.time())}
         self._save(entry)
         with self._lock:
-            self._entry, self.revoked, self.enabled = entry, False, True
+            self._entry, self.revoked, self.server_on = entry, False, None
         self._wake.set()                 # 바로 첫 상태 신호
         return True, f"앱과 연결했어요 ({entry['location']})."
 
     def forget(self):
         """Forget the token on this PC only (the device stays in the app until it is deleted there)."""
         with self._lock:
-            self._entry, self.revoked, self.enabled = None, False, True
+            self._entry, self.revoked, self.server_on = None, False, None
         self._save(None)
 
     # ---- 상태 신호 ----
@@ -165,12 +167,36 @@ class DeviceLink:
             self.last_error = data.get("message") or f"HTTP {status}"
             return self.heartbeat_override or 10
         with self._lock:
-            self.enabled = bool(data.get("enabled", True))
+            self.server_on = bool(data.get("enabled", True))
             if self._entry and data.get("location") and data["location"] != self._entry.get("location"):
                 self._entry = dict(self._entry, location=data["location"])
                 self._save(self._entry)
         self.last_ok_at, self.last_error = time.time(), None
+        if self.local_on is not None and self.server_on != self.local_on:
+            self._send_enabled(self.local_on)            # 서버를 이 PC 의 상태에 맞춤
         return self.heartbeat_override or data.get("heartbeatSeconds") or DEFAULT_HEARTBEAT_SECONDS
+
+    def set_local(self, on):
+        """The dashboard tells whether detection runs on this PC (Start/Stop). Sent with the next status signal."""
+        on = bool(on)
+        if on != self.local_on:
+            self.local_on = on
+            self.nudge()
+
+    def _send_enabled(self, on):
+        entry = self._entry
+        if not entry:
+            return
+        try:
+            status, data = self._call("/api/v2/device/enabled", {"enabled": bool(on)}, entry["deviceToken"])
+        except Exception as e:
+            self.last_error = f"서버에 연결할 수 없어요 ({type(e).__name__})"
+            return
+        if status == 401:
+            self._revoked()
+            return
+        if status == 200:
+            self.server_on = bool(data.get("enabled", on))
 
     def start(self, camera_ok_fn):
         """Status signals in a background thread while the program runs."""

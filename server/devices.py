@@ -8,7 +8,7 @@ How a device is connected:
      silhouette photo. A fall creates the home's incident directly (the old /api/events flow is not used).
 
 The status shown in the app is computed from the stored times, never stored:
-  off           a family member turned detection off (the device is told in the status-signal answer)
+  off           detection was turned off on the device itself (never remotely: the app can not change it)
   disconnected  no signal yet, no signal for OFFLINE_AFTER_MS, or the device reports the camera is not working
   ok            otherwise
 Test falls from a device make no incident and no alert: only the time is shown on the device screen.
@@ -104,16 +104,14 @@ def start_pairing(conn, user_id, home_id, type_, location, now=None):
 
 
 def update(conn, user_id, device_id, location=None, enabled=None, now=None):
-    now = now_ms() if now is None else now
+    """From the app: only the location name. Detection on/off is never changed remotely (the device's own screen
+    turns it on/off, set_enabled_by_device); a request that tries to is refused as a whole."""
     with db.transaction(conn):
         row = _my_device(conn, user_id, device_id, "설정")
+        if enabled is not None:
+            raise AccountError(403, "감지 켜기·끄기는 그 감지 기기에서 직접 할 수 있어요.", "enabled")
         if location is not None:
             conn.execute("UPDATE devices SET location = ? WHERE id = ?", (incidents.clean_location(location), row["id"]))
-        if enabled is not None:
-            if not isinstance(enabled, bool):
-                raise AccountError(400, "감지 켜기/끄기 값을 확인해 주세요.", "enabled")
-            if int(enabled) != row["enabled"]:
-                conn.execute("UPDATE devices SET enabled = ?, enabled_at = ? WHERE id = ?", (int(enabled), now, row["id"]))
 
 
 def remove(conn, user_id, device_id):
@@ -184,8 +182,8 @@ def heartbeat(conn, device, camera_ok, app_version=None, now=None):
 
 
 def set_enabled_by_device(conn, device, enabled, now=None):
-    """The device itself turns detection on/off (its own screen). Same flag as the app's on/off, so the app and
-    the device always show the same state. Returns the same answer as a status signal."""
+    """The device itself turns detection on/off (its own screen, or logout/withdrawal on that phone). This is the
+    only way the flag changes; the app shows it (status 'off'). Returns the same answer as a status signal."""
     now = now_ms() if now is None else now
     if not isinstance(enabled, bool):
         raise AccountError(400, "감지 켜기/끄기 값을 확인해 주세요.", "enabled")
@@ -196,6 +194,12 @@ def set_enabled_by_device(conn, device, enabled, now=None):
         else:
             conn.execute("UPDATE devices SET last_seen_at = ? WHERE id = ?", (now, device["id"]))
     return {"enabled": enabled, "location": device["location"], "heartbeatSeconds": HEARTBEAT_SECONDS}
+
+
+def unpair_by_device(conn, device):
+    """The device removes itself (its owner withdrew from the service on that phone): its token stops working."""
+    with db.transaction(conn):
+        conn.execute("DELETE FROM devices WHERE id = ?", (device["id"],))
 
 
 def seen(conn, device, now=None):

@@ -52,7 +52,8 @@
     } else if (bad) {
       fix = `<div class="det-dev__fix"><span>${UI.ago(t - d.since).replace('방금', '방금')}부터 · 전원/와이파이 확인</span>${canEdit ? `<button class="btn btn--soft btn--sm" data-action="dev.reconnect" data-id="${d.id}">다시 연결</button>` : ''}</div>`;
     } else if (off) {
-      fix = `<div class="det-dev__fix"><span>${UI.ago(t - d.since)}부터 감지를 쉬고 있어요</span>${canEdit ? `<button class="btn btn--soft btn--sm" data-action="dev.quick-on" data-id="${d.id}">감지 켜기</button>` : ''}</div>`;
+      // 실제 모드: 감지 켜기·끄기는 그 감지 기기에서만 (앱에서는 상태만 봄, 서버도 거절)
+      fix = `<div class="det-dev__fix"><span>${UI.ago(t - d.since)}부터 감지를 쉬고 있어요${LIVE ? ' · 기기에서 켤 수 있어요' : ''}</span>${canEdit && !LIVE ? `<button class="btn btn--soft btn--sm" data-action="dev.quick-on" data-id="${d.id}">감지 켜기</button>` : ''}</div>`;
     }
     return `<div class="det-dev${cls}">
       <button class="det-dev__row" data-action="dev.open" data-id="${d.id}" aria-label="${esc(UI.deviceName(d))} ${UI.STATUS_LABEL[d.status]}">
@@ -122,7 +123,8 @@
     const s = S.last;
     if (s && s.paired) {
       const on_ = s.enabled && s.detecting;
-      const sub = !s.enabled ? '감지를 꺼 두었어요' : s.detecting ? '카메라로 낙상을 감지하고 있어요' : '카메라가 아직 준비되지 않았어요';
+      const sub = s.held ? "로그아웃해서 감지를 멈췄어요. '상태 보기'에서 다시 켤 수 있어요"
+        : !s.enabled ? '감지를 꺼 두었어요' : s.detecting ? '카메라로 낙상을 감지하고 있어요' : '카메라가 아직 준비되지 않았어요';
       return `<div class="phone-card${on_ ? ' is-on' : ''}"><span class="phone-card__ic">${ic('mobile-screen')}</span><span class="phone-card__main"><span class="phone-card__t" style="display:block">${on_ ? '<i class="live-dot"></i>' : ''}이 휴대폰${s.location ? ' · ' + esc(s.location) : ''}</span><span class="phone-card__s" style="display:block">${sub}</span></span>
         <button class="btn btn--sm${on_ ? '' : ' btn--primary'}"${on_ ? ' style="background:rgba(255,255,255,.2);color:#fff"' : ''} data-action="home.self">상태 보기</button></div>`;
     }
@@ -279,8 +281,9 @@
       ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>이렇게 확인해 보세요</b><br>1. 기기 전원이 켜져 있는지 확인해 주세요.<br>2. 와이파이 연결 상태를 확인해 주세요.<br>3. 그래도 안 되면 공유기와 기기를 껐다 켜 주세요.</div></div>` : ''}`}
       ${canEdit ? `<div class="stack">
           ${d.status === 'disconnected' && !LIVE ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.reconnect" data-id="${d.id}">다시 연결</button>` : ''}
-          ${d.status === 'ok' || (LIVE && d.status === 'disconnected') ? `<button class="btn btn--ghost btn--block" data-action="devs.off" data-id="${d.id}">${ic('power-off')} 감지 끄기</button>` : ''}
-          ${d.status === 'off' ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.on" data-id="${d.id}">감지 켜기</button>` : ''}
+          ${LIVE ? `<div class="notice">${ic('circle-info')}<span>감지 켜기·끄기는 그 감지 기기에서 직접 할 수 있어요. 여기서는 상태만 볼 수 있어요.</span></div>` : `
+          ${d.status === 'ok' ? `<button class="btn btn--ghost btn--block" data-action="devs.off" data-id="${d.id}">${ic('power-off')} 감지 끄기</button>` : ''}
+          ${d.status === 'off' ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.on" data-id="${d.id}">감지 켜기</button>` : ''}`}
           <div class="btn-pair"><button class="btn btn--soft" data-action="devs.edit">${ic('pen')} ${LIVE ? '위치 이름 수정' : '이름·위치 수정'}</button><button class="btn btn--danger-ghost" data-action="devs.remove" data-id="${d.id}">${ic('trash')} 기기 삭제</button></div>
         </div>`
         : `<div class="notice">${ic('lock')}<span>이 집에 연결된 가족만 설정을 바꿀 수 있어요. 상태는 그룹 가족 모두 볼 수 있어요.</span></div>`}`;
@@ -294,7 +297,7 @@
       camera: ['카메라가 기기에 제대로 연결돼 있는지 확인해 주세요.', '다른 프로그램이 카메라를 쓰고 있지 않은지 확인해 주세요.']
     }[d.problem];
     const row = (k, v) => `<div class="kv__row"><span class="kv__k">${k}</span><span class="kv__v">${v}</span></div>`;
-    return `${d.status === 'off' ? `<p class="row__sub" style="margin-bottom:12px"><span data-ago="${d.since}">${UI.ago(t - d.since)}</span>부터 감지를 쉬고 있어요. 감지를 켜기 전에는 이 기기의 낙상으로 알림이 가지 않아요.</p>` : ''}
+    return `${d.status === 'off' ? `<p class="row__sub" style="margin-bottom:12px"><span data-ago="${d.since}">${UI.ago(t - d.since)}</span>부터 감지를 쉬고 있어요. 그 기기에서 감지를 켜기 전에는 이 기기의 낙상으로 알림이 가지 않아요.</p>` : ''}
       ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>${esc(UI.DEVICE_PROBLEM[d.problem] || '연결되지 않았어요')}</b>${(tips || []).map((x, i) => `<br>${i + 1}. ${esc(x)}`).join('')}</div></div>` : ''}
       <div class="kv" style="margin-bottom:14px">
         ${row('마지막 신호', d.lastSeenAt ? `<span data-ago="${d.lastSeenAt}">${UI.ago(t - d.lastSeenAt)}</span>` : '아직 없음')}

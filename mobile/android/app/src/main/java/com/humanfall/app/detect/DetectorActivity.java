@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.LocaleList;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputFilter;
@@ -17,6 +18,7 @@ import android.text.InputType;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -30,6 +32,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.humanfall.app.BuildConfig;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -37,7 +40,7 @@ import java.util.concurrent.Executors;
  * Detection screen of this phone. Two ways in (DetectorPlugin):
  *  - self ('이 휴대폰으로 감지하기', the app's settings): the logged-in web app got a pairing code from the server and
  *    passes it here; this screen pairs at once, no code is shown or typed.
- *  - dedicated ('안 쓰는 휴대폰을 감지 기기로 쓰기', the first screen, no login): the person types the code shown on
+ *  - dedicated ('감지용 휴대전화 연결하기', below the login (first) screen, no login): the person types the code shown on
  *    their own phone (home → '기기 추가' → '감지용 휴대폰').
  * Both end up as the same kind of device on the server (type "phone": same status signal, on/off, falls, delete).
  * Then: the real state (connection, detection on/off, camera, last signal), detection on/off (same switch as in the
@@ -168,7 +171,7 @@ public class DetectorActivity extends AppCompatActivity {
         });
 
         TextView title = text(24, INK, true);
-        title.setText(self() ? "이 휴대폰으로 감지하기" : "안 쓰는 휴대폰을 감지 기기로 쓰기");
+        title.setText(self() ? "이 휴대폰으로 감지하기" : "감지용 휴대전화 연결하기");
         root.addView(title);
         TextView lead = text(15, MUTED, false);
         lead.setText((self() ? "평소 쓰는 이 휴대폰의 카메라로 낙상을 감지해요. 감지하는 동안에는 " : "이 휴대폰을 감지 전용으로 써요. ")
@@ -201,8 +204,19 @@ public class DetectorActivity extends AppCompatActivity {
         label.setText("연결 코드 (6자리)");
         pairBox.addView(label);
         codeInput = new EditText(this);
-        codeInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        codeInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(8), new InputFilter.AllCaps()});
+        // 연결 코드 = 영문 대문자·숫자. 한글 자판을 쓰던 휴대폰에서도 영문 키보드가 뜨도록:
+        // '보이는 비밀번호' 입력 종류(키보드가 영문 자판을 띄움) + 영문 우선 힌트 + ASCII 만 입력 옵션.
+        // 입력·붙여넣기한 글자는 영문·숫자만 대문자로 남김 (PairingCode.clean, "a2b 3c4" → "A2B3C4")
+        codeInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        codeInput.setImeHintLocales(new LocaleList(Locale.US));
+        codeInput.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_FORCE_ASCII | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        codeInput.setFilters(new InputFilter[]{codeFilter(), new InputFilter.LengthFilter(8)});
+        codeInput.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId != EditorInfo.IME_ACTION_DONE) return false;
+            if (pairButton.isEnabled()) pair();   // 키보드의 '완료' = 연결하기
+            return true;
+        });
         codeInput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
         codeInput.setLetterSpacing(0.3f);
         codeInput.setGravity(Gravity.CENTER);
@@ -228,6 +242,15 @@ public class DetectorActivity extends AppCompatActivity {
         pairedBox.addView(forgetButton);
         root.addView(pairedBox);
         return scroll;
+    }
+
+    /** Keeps only A-Z/0-9 (upper-cased) of what is typed or pasted. */
+    private static InputFilter codeFilter() {
+        return (source, start, end, dest, dstart, dend) -> {
+            CharSequence part = source.subSequence(start, end);
+            String kept = PairingCode.clean(part);
+            return kept.contentEquals(part) ? null : kept;
+        };
     }
 
     private boolean hasCamera() {
@@ -268,13 +291,17 @@ public class DetectorActivity extends AppCompatActivity {
         }
         DetectorRuntime.State st = DetectorRuntime.STATE;
         String place = link.location() == null ? "" : " · " + link.location();
-        boolean on = link.serverEnabled;
+        boolean on = link.enabled;
         String title, body;
         int color;
         if (!hasCamera()) {
             title = "카메라 권한이 필요해요";
             color = STOP;
             body = "카메라를 쓸 수 없어 낙상을 감지할 수 없어요. 아래 버튼으로 카메라 권한을 허용해 주세요.";
+        } else if (!on && link.isHeld()) {
+            title = "감지를 멈췄어요" + place;
+            color = MUTED;
+            body = "로그아웃해서 이 휴대폰의 감지를 멈췄어요. 다시 감지하려면 아래 '감지 켜기'를 눌러 주세요.";
         } else if (!on) {
             title = "감지를 꺼 두었어요" + place;
             color = MUTED;
@@ -329,7 +356,7 @@ public class DetectorActivity extends AppCompatActivity {
     }
 
     private void toggle() {
-        boolean turnOn = !link.serverEnabled;
+        boolean turnOn = !link.enabled;
         if (turnOn && !hasCamera()) {
             askCamera();
             return;

@@ -97,7 +97,7 @@ class DeviceLinkTest(unittest.TestCase):
         self.assertIn("FallDetection", device_link.default_state_path())             # 기본 위치: 사용자 폴더 (프로젝트 밖)
         self.assertNotIn(str(Path(__file__).resolve().parents[2]), device_link.default_state_path())
 
-    def test_status_signal_and_app_on_off(self):
+    def test_status_signal_and_on_off_only_on_this_pc(self):
         link = self.paired_link()
         device_id = link.info["deviceId"]
         self.assertEqual(self.device_view(device_id)["problem"], "never")
@@ -105,12 +105,16 @@ class DeviceLinkTest(unittest.TestCase):
         self.assertEqual(self.device_view(device_id)["status"], "ok")
         link.heartbeat(False)
         self.assertEqual(self.device_view(device_id)["problem"], "camera")
-        self.a.call("PATCH", f"/api/v2/devices/{device_id}", {"enabled": False})     # 앱에서 끔
+        status, _, _ = self.a.call("PATCH", f"/api/v2/devices/{device_id}", {"enabled": False})
+        self.assertEqual(status, 403)                                                # 앱에서 끌 수 없음
+        link.set_local(False)                                                        # 이 PC 에서 Stop
+        link.heartbeat(False)
+        self.assertEqual((link.server_on, self.device_view(device_id)["status"]), (False, "off"))
+        link.set_local(True)                                                         # 이 PC 에서 Start
+        self.a.call("PATCH", f"/api/v2/devices/{device_id}", {"location": "안방"})  # 위치 이름은 앱에서 바꿀 수 있음
         link.heartbeat(True)
-        self.assertEqual(link.enabled, False)
-        self.a.call("PATCH", f"/api/v2/devices/{device_id}", {"enabled": True, "location": "안방"})
-        link.heartbeat(True)
-        self.assertEqual((link.enabled, link.info["location"]), (True, "안방"))
+        self.assertEqual((link.server_on, link.info["location"]), (True, "안방"))
+        self.assertEqual(self.device_view(device_id)["status"], "ok")
         self.assertEqual(self.link().info["location"], "안방")                        # 바뀐 위치도 저장
 
     def test_fall_photo_retry_and_test_signal(self):

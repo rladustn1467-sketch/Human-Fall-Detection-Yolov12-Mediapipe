@@ -1103,10 +1103,19 @@ class DeviceEnabledBody(BaseModel):
 
 @app.post("/api/v2/device/enabled")
 def api_v2_device_enabled(body: DeviceEnabledBody, request: Request):
-    # 기기 화면에서 감지 켜기/끄기 (앱의 켜기/끄기와 같은 값: 어느 쪽에서 바꿔도 양쪽 표시가 같음)
+    # 감지 켜기/끄기는 기기에서만 (앱은 상태만 봄, PATCH /api/v2/devices/{id} 의 enabled 는 거절)
     with db.session(DB_PATH) as conn:
         device = devices.authenticate(conn, request.headers.get("authorization"))
         return JSONResponse(devices.set_enabled_by_device(conn, device, body.enabled), headers=NO_STORE)
+
+
+@app.post("/api/v2/device/unpair")
+def api_v2_device_unpair(request: Request):
+    # 기기가 자기 기록만 삭제 ('이 휴대폰'으로 감지하던 사람이 그 휴대폰에서 탈퇴). 기기 토큰으로만, 다른 기기는 못 지움
+    with db.session(DB_PATH) as conn:
+        device = devices.authenticate(conn, request.headers.get("authorization"))
+        devices.unpair_by_device(conn, device)
+        return JSONResponse({"ok": True}, headers=NO_STORE)
 
 
 @app.post("/api/v2/device/events")
