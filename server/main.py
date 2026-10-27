@@ -434,6 +434,8 @@ DEV_TOOLS = os.environ.get("FD_DEV_TOOLS", "").strip() == "1"
 print(f"[incident] 문자 알림: {SMS_SENDER.name} (모의 발송 - 실제 문자를 보내지 않음) / "
       f"개발용 낙상 발생: {'켜짐 (FD_DEV_TOOLS=1 - 운영 서버에서는 켜지 마세요)' if DEV_TOOLS else '꺼짐'} / "
       f"사고 알림 텔레그램: {'사용 (등록한 그룹의 대화방에만)' if TELEGRAM_CHANNEL else '없음'}")
+# 개발용 기기(PC 감지 프로그램 연결 코드, 홈캠·CCTV 시연 화면)는 FD_DEV_DEVICES=1 로 켠 시험 서버에서만 (devices.py)
+print(f"[devices] 개발용 기기: {'켜짐 (FD_DEV_DEVICES=1 - 운영 서버에서는 켜지 마세요)' if devices.dev_devices() else '꺼짐'}")
 
 
 # ---- API ----

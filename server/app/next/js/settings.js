@@ -33,8 +33,8 @@
       mount: root => {
         if (!UI.nativeDetector()) return;
         // 이 휴대폰이 이미 감지 기기로 연결돼 있으면 그 상태를 보여 줌 (휴대폰이 알려 준 값 그대로)
-        SelfDetect.status().then(s => {
-          const sub = root.querySelector('#self-det-sub');
+        FD.DeviceConnect.self.status().then(r => {
+          const sub = root.querySelector('#self-det-sub'), s = r && r.s;
           if (sub && s && s.paired) sub.textContent = `감지 기기로 연결됨${s.location ? ' · ' + s.location : ''} · 눌러서 감지 상태를 확인해요`;
         });
       }
@@ -42,58 +42,8 @@
   }, { tab: 'settings', live: true });
   const SELF_SUB = '연결 코드 없이 내 계정의 집에 이 휴대폰을 바로 연결해요';
 
-  /* 이 휴대폰으로 감지하기 (Android 앱 mobile/ 안에서만, UI.nativeDetector).
-     로그인한 계정으로 서버에서 연결 코드를 받아(그 집에 연결된 가족만, 서버가 다시 확인) 이 휴대폰의 감지 화면에 바로 넘김.
-     코드는 화면에 보이지 않고 이 휴대폰 안에서만 쓰임. 안 쓰는 휴대폰을 감지 전용으로 쓸 때는 집 화면의 '기기 추가'에서 받은 코드를
-     그 휴대폰의 첫 화면 '안 쓰는 휴대폰을 감지 기기로 쓰기'에 입력 (로그인하지 않아도 됨) */
-  const SelfDetect = {
-    async status() {
-      try { return await window.Capacitor.nativePromise('Detector', 'status', {}); } catch (e) { return null; }
-    },
-    async open(opts) {
-      try { await window.Capacitor.nativePromise('Detector', 'open', opts || {}); return true; } catch (e) { UI.toast('감지 화면을 열지 못했어요'); return false; }
-    },
-    /* 감지 전용 기기 화면 (로그인 전 첫 화면에서): 연결 코드 입력 */
-    openDedicated() { return SelfDetect.open({ mode: 'dedicated' }); },
-    async start(homeId) {
-      const s = await SelfDetect.status();
-      if (s && s.paired) { await SelfDetect.open({}); return; }   // 이미 연결됨: 감지 상태 화면만
-      const me = Sel.me();
-      const homes = me.homeIds.map(id => Sel.home(id)).filter(Boolean);
-      if (!homes.length) {
-        UI.toast(me.isTarget ? '먼저 감지할 집에 연결해 주세요. 가족 탭에서 집을 열면 연결할 수 있어요.'
-          : "이 휴대폰으로 감지하려면 먼저 홈 화면에서 '낙상 감지 켜기'를 눌러 집을 등록해 주세요.");
-        return;
-      }
-      selfSheet(homes, homeId);
-    }
-  };
-  FD.SelfDetect = SelfDetect;
-  function selfSheet(homes, homeId) {
-    const me = Sel.me();
-    let hid = homes.some(h => h.id === homeId) ? homeId : homes[0].id;
-    const locs = ['안방', '거실', '현관', '주방', '작은방'];
-    const html = () => `
-      <p class="row__sub" style="margin-bottom:16px">이 휴대폰의 카메라로 낙상을 감지해요. 로그인한 계정으로 바로 연결돼서 연결 코드를 입력하지 않아도 돼요.</p>
-      ${homes.length > 1 ? `<div class="label">감지할 집</div>
-      <div class="segmented" style="margin-bottom:16px">${homes.map(h => `<button type="button" class="${h.id === hid ? 'is-on' : ''}" data-action="sd.home" data-id="${h.id}">${esc(Sel.homeName(h, me))}</button>`).join('')}</div>` : ''}
-      ${field({ id: 'sd-loc', label: '휴대폰을 둘 위치', placeholder: '예) 안방, 거실', maxlength: 12, value: (document.getElementById('sd-loc') && document.getElementById('sd-loc').value) || '', onenter: 'sd.submit' })}
-      <div class="chips" style="margin:-6px 0 18px">${locs.map(l => `<button type="button" class="chip" data-action="sd.loc" data-loc="${l}">${l}</button>`).join('')}</div>
-      <div class="notice">${ic('circle-info')}<span>감지하는 동안에는 휴대폰을 낙상을 볼 수 있는 곳에 세워 두고 충전기를 꽂아 두세요. 다음 화면에서 카메라 권한을 허용하면 감지를 시작해요.</span></div>
-      <button class="btn btn--primary btn--lg btn--block" style="margin-top:16px" data-action="sd.submit">연결하고 감지 시작</button>`;
-    const api = openSheet({ title: '이 휴대폰으로 감지하기', html: html() });
-    on('sd.home', el => { hid = el.dataset.id; api.replace(html()); });
-    on('sd.loc', el => { document.getElementById('sd-loc').value = el.dataset.loc; setError('sd-loc', ''); });
-    on('sd.submit', async el => {
-      const loc = val('sd-loc');
-      if (!loc) { setError('sd-loc', '위치 이름을 입력해 주세요.'); return; }
-      let p;
-      try { p = await UI.busy(el, () => Act.startDevicePairing(hid, { type: 'phone', location: loc })); } catch (e) { UI.showError(e, { location: 'sd-loc' }); return; }
-      closeSheet();
-      await SelfDetect.open({ mode: 'self', code: p.code });
-    });
-  }
-  on('settings.detector', () => SelfDetect.start());
+  /* 이 휴대폰으로 감지하기 (Android 앱 안에서만): 처음 설정·기기 추가와 같은 흐름 (devices.js) */
+  on('settings.detector', () => FD.DeviceConnect.self.start());
   on('settings.profile', () => R.go('/settings/profile'));
   on('settings.notif', () => R.go('/settings/notifications'));
 

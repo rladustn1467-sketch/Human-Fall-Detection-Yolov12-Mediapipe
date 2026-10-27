@@ -114,13 +114,30 @@
     return html;
   }
 
+  /* 이 휴대폰으로 감지하기 카드 (실제 모드, Android 앱 안에서만). 휴대폰의 상태는 비동기로 받아 오고, 바뀌었을 때만 다시 그림 */
+  function selfCard() {
+    if (!UI.nativeDetector() || !FD.DeviceConnect) return '';
+    const S = FD.DeviceConnect.self;
+    S.status().then(r => { if (r && r.changed && R.path() === '/') R.refresh(); });
+    const s = S.last;
+    if (s && s.paired) {
+      const on_ = s.enabled && s.detecting;
+      const sub = !s.enabled ? '감지를 꺼 두었어요' : s.detecting ? '카메라로 낙상을 감지하고 있어요' : '카메라가 아직 준비되지 않았어요';
+      return `<div class="phone-card${on_ ? ' is-on' : ''}"><span class="phone-card__ic">${ic('mobile-screen')}</span><span class="phone-card__main"><span class="phone-card__t" style="display:block">${on_ ? '<i class="live-dot"></i>' : ''}이 휴대폰${s.location ? ' · ' + esc(s.location) : ''}</span><span class="phone-card__s" style="display:block">${sub}</span></span>
+        <button class="btn btn--sm${on_ ? '' : ' btn--primary'}"${on_ ? ' style="background:rgba(255,255,255,.2);color:#fff"' : ''} data-action="home.self">상태 보기</button></div>`;
+    }
+    return `<div class="phone-card"><span class="phone-card__ic">${ic('mobile-screen')}</span><span class="phone-card__main"><span class="phone-card__t" style="display:block">이 휴대폰으로 감지하기</span><span class="phone-card__s" style="display:block">연결 코드 없이 이 휴대폰을 바로 연결해요</span></span>
+      <button class="btn btn--primary btn--sm" data-action="home.self">연결하기</button></div>`;
+  }
+  on('home.self', () => FD.DeviceConnect.self.start());
+
   function phoneCard(me) {
     if (!me.isTarget) {
       return `<div class="phone-card"><span class="phone-card__ic">${ic('bell')}</span><span class="phone-card__main"><span class="phone-card__t" style="display:block">알림만 받는 중</span><span class="phone-card__s" style="display:block">가족의 낙상 알림을 받고 있어요</span></span>
         <button class="btn btn--primary btn--sm" data-action="home.enable">낙상 감지 켜기</button></div>`;
     }
-    // 실제 모드: 내 폰 카메라 감지는 아직 없어서 카드를 보이지 않음 (시험 모드 카드·Act.phoneCamera·phoneCamera 값은 그대로)
-    if (LIVE) return '';
+    // 실제 모드: Android 앱 안에서만 '이 휴대폰으로 감지하기' (devices.js). 휴대폰이 알려 준 연결 상태 그대로 표시
+    if (LIVE) return selfCard();
     if (me.phoneCamera) {
       return `<div class="phone-card is-on"><span class="phone-card__ic">${ic('mobile-screen')}</span><span class="phone-card__main"><span class="phone-card__t" style="display:block"><i class="live-dot"></i>내 폰 카메라로 감지 중</span><span class="phone-card__s" style="display:block">이 휴대전화 카메라를 사용하고 있어요</span></span>
         <button class="btn btn--sm" style="background:rgba(255,255,255,.2);color:#fff" data-action="phone.off">중지</button></div>`;

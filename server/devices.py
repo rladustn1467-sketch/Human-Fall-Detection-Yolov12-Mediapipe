@@ -12,9 +12,13 @@ The status shown in the app is computed from the stored times, never stored:
   disconnected  no signal yet, no signal for OFFLINE_AFTER_MS, or the device reports the camera is not working
   ok            otherwise
 Test falls from a device make no incident and no alert: only the time is shown on the device screen.
+Device types: "phone" (this phone or a spare phone, the Android app) is the product device. "pc" (the PC detector
+program) is a developer tool: pairing codes for it are issued only when the server runs with FD_DEV_DEVICES=1
+(copy/test servers; never in the production .env). PC devices that are already connected keep working.
 The old shared-token API (/api/events) and the admin registration (legacy_devices.py) are unchanged.
 """
 import hashlib
+import os
 import re
 import secrets
 import time
@@ -24,7 +28,9 @@ import db
 import incidents
 from accounts import AccountError
 
-TYPES = ("pc", "phone")
+TYPES = ("pc", "phone")                 # 저장되는 기기 종류 (DB CHECK 와 같음)
+PRODUCT_TYPES = ("phone",)              # 사용자에게 제공하는 기기
+DEV_TYPES = ("pc",)                     # 개발·시험 도구 (FD_DEV_DEVICES=1 인 서버에서만 연결 코드 발급)
 PAIR_MINUTES = 10
 PAIR_CODE_LENGTH = 6
 PAIR_LIMIT_PER_IP = (10, 15 * 60)       # 틀린 연결 코드 (같은 주소에서 15분에 10번)
@@ -42,8 +48,17 @@ def _token_hash(token):
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
+def dev_devices():
+    """True only on servers started with FD_DEV_DEVICES=1 (copy/test servers)."""
+    return os.environ.get("FD_DEV_DEVICES", "").strip() == "1"
+
+
+def pairing_types():
+    return PRODUCT_TYPES + (DEV_TYPES if dev_devices() else ())
+
+
 def _clean_type(value):
-    if value not in TYPES:
+    if value not in pairing_types():
         raise AccountError(400, "기기 종류를 골라 주세요.", "type")
     return value
 

@@ -17,6 +17,8 @@ import legacy_devices
 from tests.test_api_v2 import ServerCopy
 from tests.test_auth_api import PW, Browser
 
+DEV_DEVICES = {"FD_DEV_DEVICES": "1"}   # PC 감지 프로그램(개발 도구) 연결 코드도 발급되는 시험 서버
+
 JPEG = b"\xff\xd8\xff\xe0" + b"S" * 64 + b"\xff\xd9"
 
 
@@ -35,7 +37,7 @@ def member(server, name):
 class DeviceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = ServerCopy()
+        cls.server = ServerCopy(extra_env=DEV_DEVICES)
         # 그룹 1: 에이(감지 대상, 집에 연결) + 비(가족, 집에 연결 안 됨) / 그룹 2: 씨
         cls.a = member(cls.server, "대상에이")
         cls.a.call("POST", "/api/v2/groups")
@@ -108,6 +110,7 @@ class DeviceTest(unittest.TestCase):
         for body, field in (({"type": "homecam", "location": "거실"}, "type"), ({"type": "pc", "location": ""}, "location")):
             status, _, data = self.a.call("POST", f"/api/v2/homes/{self.home}/devices/pairing", body)
             self.assertEqual((status, data["field"]), (400, field), body)
+        self.assertTrue(self.a.state()["state"]["features"]["devDevices"])        # 화면도 개발용 항목을 보여 줌
 
     # ---- 연결 (기기) ----
     def test_pair_once_and_token_is_only_hashed(self):
@@ -267,6 +270,26 @@ class DeviceTest(unittest.TestCase):
 class PairingLimitTest(unittest.TestCase):
     """Wrong pairing codes are limited per address (own server copy, so other tests are not blocked)."""
 
+    def test_product_server_has_no_dev_devices(self):
+        """Without FD_DEV_DEVICES (production): no pairing code for the PC program, phones as usual."""
+        server = ServerCopy(extra_env={"FD_DEV_DEVICES": ""})
+        try:
+            a = member(server, "대상에이")
+            a.call("POST", "/api/v2/groups")
+            a.call("POST", "/api/v2/me/setup", {"info": {}, "home": {"mode": "new", "address": ""}})
+            st = a.state()["state"]
+            home = st["homes"][0]["id"]
+            self.assertFalse(st["features"]["devDevices"])
+            self.assertFalse(Browser(server).state()["state"]["features"]["devDevices"])   # 로그인 전에도
+            path = f"/api/v2/homes/{home}/devices/pairing"
+            for type_ in ("pc", "homecam", "cctv"):
+                status, _, data = a.call("POST", path, {"type": type_, "location": "거실"})
+                self.assertEqual((status, data["field"]), (400, "type"), type_)
+            status, _, data = a.call("POST", path, {"type": "phone", "location": "거실"})
+            self.assertEqual((status, data["pairing"]["type"]), (200, "phone"))
+        finally:
+            server.close()
+
     def test_too_many_wrong_codes(self):
         server = ServerCopy()
         try:
@@ -276,7 +299,7 @@ class PairingLimitTest(unittest.TestCase):
             home = a.state()["state"]["homes"][0]["id"]
             for _ in range(10):
                 self.assertEqual(server.request("POST", "/api/v2/device/pair", {"code": "WRONG2"})[0], 400)
-            good = a.call("POST", f"/api/v2/homes/{home}/devices/pairing", {"type": "pc", "location": "거실"})[2]["pairing"]["code"]
+            good = a.call("POST", f"/api/v2/homes/{home}/devices/pairing", {"type": "phone", "location": "거실"})[2]["pairing"]["code"]
             status, headers, _ = server.request("POST", "/api/v2/device/pair", {"code": good})
             self.assertEqual(status, 429)                                            # 맞는 코드도 잠시 막힘
             self.assertIn("retry-after", headers)

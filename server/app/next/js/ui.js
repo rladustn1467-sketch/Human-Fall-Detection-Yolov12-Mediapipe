@@ -105,10 +105,10 @@
   const validEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
 
   /* ---------- 라벨 ---------- */
-  // 홈캠·CCTV 는 시험 모드의 예시 기기. 실제 모드는 실제로 연결할 수 있는 감지 기기만 (devices.py)
+  // 홈캠·CCTV 는 시험 모드의 예시 기기. 실제 모드의 연결 방식 목록은 devices.js (PC 는 개발용 서버에서만) (devices.py)
   const DEVICE_TYPE = { homecam: '홈캠', cctv: 'CCTV', pc: 'PC 감지 프로그램', phone: '감지용 휴대폰' };
   const DEVICE_ICON = { homecam: 'video', cctv: 'camera', pc: 'desktop', phone: 'mobile-screen' };
-  const deviceTypes = () => (FD.MODE === 'live' ? ['pc', 'phone'] : ['homecam', 'cctv']);
+  const deviceTypes = () => (FD.MODE === 'live' ? ['phone'] : ['homecam', 'cctv']);   // 시험 모드 기기 추가 시트용
   const STATUS_LABEL = { ok: '정상', disconnected: '연결 안 됨', off: '꺼짐' };
   const RESULT_LABEL = { self: '본인 응답', family: '가족 확인', reported: '신고됨', auto_reported: '자동 신고됨' };
   const RESPONSE_LABEL = { within60: '60초 내 응답', after60: '60초 후 응답', none: '무응답으로 가족 알림' };

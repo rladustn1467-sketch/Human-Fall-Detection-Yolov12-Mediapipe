@@ -31,7 +31,7 @@ def phone():
 class DeviceLinkTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = ServerCopy()
+        cls.server = ServerCopy(extra_env={"FD_DEV_DEVICES": "1"})   # PC 감지 프로그램 = 개발 도구 (시험 서버에서만 연결 코드)
         cls.events_url = f"http://127.0.0.1:{cls.server.port}/api/events"   # 대시보드가 가진 주소 그대로
         cls.a = Browser(cls.server)
         cls.a.call("POST", "/api/v2/auth/signup", {"name": "대상에이", "phone": phone(), "password": PW})

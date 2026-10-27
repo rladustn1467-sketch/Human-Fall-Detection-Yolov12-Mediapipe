@@ -59,12 +59,12 @@
        <button class="btn btn--ghost btn--lg btn--block" data-action="go.login">이미 계정이 있어요 · 로그인</button>`);
     return html;
   });
-  /* 안 쓰는 휴대폰을 감지 전용 기기로: 로그인하지 않고 연결 코드로 연결 (Android 앱 안에서만, settings.js FD.SelfDetect).
+  /* 안 쓰는 휴대폰을 감지 전용 기기로: 로그인하지 않고 연결 코드로 연결 (Android 앱 안에서만, devices.js).
      코드는 평소 쓰는 휴대폰에서 이 앱에 로그인한 뒤 홈 화면의 '기기 추가' → '감지용 휴대폰'에서 받음 */
   const dedicatedEntry = () => (LIVE && UI.nativeDetector() ? `<div class="card" style="margin-top:22px">
       <button class="row" data-action="ob.dedicated"><span class="det-dev__ic">${ic('mobile-screen')}</span><span class="row__main"><span class="row__title">안 쓰는 휴대폰을 감지 기기로 쓰기</span><span class="row__sub" style="display:block">로그인하지 않고, 다른 휴대폰에서 받은 연결 코드로 연결해요</span></span>${ic('chevron-right', 'chev')}</button>
     </div>` : '');
-  on('ob.dedicated', () => FD.SelfDetect && FD.SelfDetect.openDedicated());
+  on('ob.dedicated', () => FD.DeviceConnect && FD.DeviceConnect.self.openDedicated());
   on('go.login', () => R.go('/ob/login'));
   on('go.signup', () => R.go('/ob/signup'));
 
@@ -624,7 +624,7 @@
     });
     on('pw.change', el => { collectPw(); D()[el.dataset.key + 'Keep'] = false; redrawHere(); });
     on('pw.keep', el => { collectPw(); const d = D(); d[el.dataset.key + 'Keep'] = true; d[el.dataset.key] = ''; redrawHere(); });
-    on('pw.next', async () => {
+    on('pw.next', async el => {
       collectPw();
       const d = D(); let ok = true;
       ['central', 'door'].forEach(k => {   // 입력한 칸만 규칙 확인 (비워 두면 등록하지 않음)
@@ -638,46 +638,90 @@
       const losing = h ? ['central', 'door'].map(k => UI.entrance(h, k)).filter(e => e.registered && d[e.kind + 'Method'] !== 'code') : [];
       if (losing.length) {
         const names = losing.map(e => e.name).join('·');
-        const yes = await UI.confirm({ title: `${names} 비밀번호를 삭제할까요?`, body: `출입 방식을 바꾸면 처음 설정을 완료할 때 등록된 ${names} 비밀번호가 삭제돼요. 다른 현관 정보는 그대로예요.`, ok: '계속', cancel: '취소', danger: true });
+        const yes = await UI.confirm({ title: `${names} 비밀번호를 삭제할까요?`, body: `출입 방식을 바꾸면 ${LIVE ? '' : '처음 설정을 완료할 때 '}등록된 ${names} 비밀번호가 삭제돼요. 다른 현관 정보는 그대로예요.`, ok: '계속', cancel: '취소', danger: true });
         if (!yes) return;
       }
       d.entSkipped = false;
+      if (LIVE && !(await saveSetup(el))) return;
       R.go(curBase() + '/device');
     });
-    on('pw.skip', async () => {
+    on('pw.skip', async el => {
       const ok = await UI.confirm({ title: '현관 정보를 나중에 알려 줄까요?', body: '비밀번호가 없으면 구급대가 출입하는 데 시간이 걸릴 수 있어요. 나중에 가족 탭의 집 관리에서 설정할 수 있어요.', ok: '건너뛰기', cancel: '계속 입력' });
       if (!ok) return;
       const d = D(); d.central = ''; d.door = ''; d.entSkipped = true;   // 건너뛰면 현관 정보는 아무것도 바꾸지 않음
+      if (LIVE && !(await saveSetup(el))) return;
       R.go(curBase() + '/device');
     });
+
+    /* 실제 모드: 건강 정보 + 집 + 현관 정보를 서버가 한 트랜잭션으로 저장 (실패하면 아무것도 저장되지 않고 3단계에 머묾).
+       서버는 이때 가입 완료로 표시함 → 4단계에서 앱을 꺼도 다음에는 홈으로 ('나중에 연결'과 같음).
+       저장한 집은 draft 에 '기존 집'으로 기억: 뒤로 와서 다시 '다음'을 눌러도 집을 새로 만들지 않고 같은 집을 다시 저장 */
+    async function saveSetup(el) {
+      const d = D(), me = Sel.me();
+      const info = {};
+      ['birth', 'conditions', 'medications'].forEach(k => { info[k] = d.info[k] === undefined ? null : d.info[k]; });
+      const home = d.homeMode === 'existing' && d.homeId ? { mode: 'existing', id: d.homeId } : { mode: 'new', address: d.address || '' };
+      const entrances = entrancesToSend(d);
+      const before = me.homeIds.slice();
+      try {
+        await UI.busy(el, () => Act.finishSetup({ info, home, entrances }));
+      } catch (e) { UI.showError(e); return false; }
+      const after = Sel.me().homeIds;
+      const homeId = home.mode === 'existing' ? home.id : after.find(id => !before.includes(id));
+      if (!homeId) { UI.toast('집 정보를 불러오지 못했어요. 다시 시도해 주세요.'); return false; }
+      d.homeMode = 'existing'; d.homeId = homeId; d.savedHomeId = homeId;
+      ['central', 'door'].forEach(k => { d[k] = ''; d[k + 'Keep'] = true; });   // 비밀번호는 저장됨 (다시 보내지 않음)
+      return true;
+    }
 
     /* O-09 기기 연결 */
     R.register(base + '/device', () => {
       const d = D();
-      // 실제 모드의 '이 휴대폰으로 감지하기'는 Android 앱 안에서만 (브라우저에서는 이 휴대폰 카메라로 감지할 수 없어 보이지 않음)
-      const selfOk = LIVE && UI.nativeDetector();
+      if (LIVE) return liveDevicePage(d);
       return page(`
         ${top(3, 4)}
         <p class="tag tag--primary">${STEP_NAMES[3]} · 4/4</p>
         <h1 class="ob__title" style="margin-top:10px">감지할 카메라를<br>연결해 주세요</h1>
         <div class="notice" style="margin-top:16px">${ic('eye-slash')}<span>영상은 낙상 판단에만 쓰이고 저장되지 않아요. 낙상이 감지되면 배경과 사람을 가린 이미지만 기록돼요.</span></div>
-        ${LIVE ? `<div class="notice" style="margin-top:10px">${ic('circle-info')}<span>${selfOk
-          ? "PC 감지 프로그램이나 안 쓰는 휴대폰(감지 전용)은 설정을 마친 뒤 홈 화면의 '기기 추가'에서 연결 코드로 연결해요."
-          : "감지 기기(PC 감지 프로그램·안 쓰는 휴대폰)는 설정을 마친 뒤 홈 화면의 '기기 추가'에서 연결 코드로 연결해요. '나중에 연결할게요'를 눌러 설정을 마쳐 주세요."}</span></div>` : ''}
         <div id="dev-added" style="margin-top:18px">${devAddedHtml(d)}</div>
         <div class="stack" style="margin-top:14px">
-          ${LIVE ? '' : `<button class="choice" data-action="dev.add"><span class="choice__ic">${ic('video')}</span><span><span class="choice__t">홈캠·CCTV 추가</span><span class="choice__s" style="display:block">집에 설치된 카메라를 연결해요.</span></span></button>`}
-          ${!LIVE ? `<button class="choice ${d.phoneCamera ? 'choice--on' : ''}" data-action="dev.phone"><span class="choice__ic">${ic('mobile-screen')}</span><span><span class="choice__t">내 폰 카메라 사용</span><span class="choice__s" style="display:block">${d.phoneCamera ? '내 폰 카메라로 감지하도록 설정했어요.' : '이 휴대전화의 카메라로 감지해요.'}</span></span></button>`
-            : selfOk ? `<button class="choice ${d.phoneCamera ? 'choice--on' : ''}" data-action="dev.phone"><span class="choice__ic">${ic('mobile-screen')}</span><span><span class="choice__t">이 휴대폰으로 감지하기</span><span class="choice__s" style="display:block">${d.phoneCamera ? '설정을 마치면 이 휴대폰을 바로 연결해요. 연결 코드는 필요 없어요.' : '평소 쓰는 이 휴대폰의 카메라로 감지해요. 연결 코드는 필요 없어요.'}</span></span></button>` : ''}
+          <button class="choice" data-action="dev.add"><span class="choice__ic">${ic('video')}</span><span><span class="choice__t">홈캠·CCTV 추가</span><span class="choice__s" style="display:block">집에 설치된 카메라를 연결해요.</span></span></button>
+          <button class="choice ${d.phoneCamera ? 'choice--on' : ''}" data-action="dev.phone"><span class="choice__ic">${ic('mobile-screen')}</span><span><span class="choice__t">내 폰 카메라 사용</span><span class="choice__s" style="display:block">${d.phoneCamera ? '내 폰 카메라로 감지하도록 설정했어요.' : '이 휴대전화의 카메라로 감지해요.'}</span></span></button>
         </div>`,
         `<button class="btn btn--primary btn--lg btn--block" data-action="flow.finish">${(d.devices.length || d.phoneCamera) ? '완료' : '나중에 연결할게요'}</button>`);
-    });
+    }, { live: true });   // 실제 모드: 기기가 연결되면 서버 상태대로 다시 그림
+    /* 실제 모드 4단계: 3단계에서 저장한 집에 감지 기기를 연결 (홈 '기기 추가'와 같은 흐름, devices.js).
+       연결된 기기와 상태는 서버 상태 그대로. 저장이 끝났으므로 뒤로 가지 않고, '완료'·'나중에 연결할게요'는 홈으로만 */
+    function liveDevicePage(d) {
+      const me = Sel.me();
+      // 앱을 다시 열어 이 화면으로 바로 온 경우(임시 입력값 없음): 이미 저장된 내 집으로
+      const homeId = d.savedHomeId || (me.onboarded !== false && me.homeIds.length ? me.homeIds[me.homeIds.length - 1] : null);
+      if (!homeId) {
+        return page(`${top(3, 4)}<h1 class="ob__title" style="margin-top:10px">집 정보를 먼저 저장해 주세요</h1>
+          <p class="ob__sub">현관 단계에서 '다음'을 누르면 집 정보가 저장되고 기기를 연결할 수 있어요.</p>`,
+          `<button class="btn btn--primary btn--lg btn--block" data-action="dev.back-pw">현관 단계로</button>`);
+      }
+      d.savedHomeId = homeId;
+      const devs = Sel.devices(homeId);
+      const devRow = x => `<div class="dev-added"><i class="fa-solid fa-${UI.DEVICE_ICON[x.type] || 'video'} ic" aria-hidden="true"></i><span style="flex:1">${esc(UI.deviceName(x))}<br>
+        <small class="${x.status === 'ok' ? 'muted' : ''}" style="${x.status === 'ok' ? '' : 'color:var(--stop)'}">${esc(UI.STATUS_LABEL[x.status])}${x.status === 'disconnected' && UI.DEVICE_PROBLEM[x.problem] ? ' · ' + esc(UI.DEVICE_PROBLEM[x.problem]) : ''}</small></span></div>`;
+      return page(`
+        ${top(3, 4, { noBack: true })}
+        <p class="tag tag--primary">${STEP_NAMES[3]} · 4/4</p>
+        <h1 class="ob__title" style="margin-top:10px">감지할 기기를<br>연결해 주세요</h1>
+        <div class="notice" style="margin-top:16px">${ic('eye-slash')}<span>영상은 낙상 판단에만 쓰이고 저장되지 않아요. 낙상이 감지되면 배경과 사람을 가린 이미지만 기록돼요.</span></div>
+        ${devs.length ? `<p class="label" style="margin-top:18px">연결된 기기</p><div>${devs.map(devRow).join('')}</div>` : ''}
+        <div class="stack" style="margin-top:14px">${FD.DeviceConnect.choicesHtml(homeId)}</div>
+        <p class="row__sub" style="margin-top:14px">지금 연결할 기기가 없으면 '나중에 연결할게요'를 눌러 주세요. 홈 화면의 '기기 추가'에서 언제든 연결할 수 있어요.</p>`,
+        `<button class="btn btn--primary btn--lg btn--block" data-action="flow.finish">${devs.length ? '완료' : '나중에 연결할게요'}</button>`);
+    }
+    on('dev.back-pw', () => R.go(curBase() + '/password'));
     function devAddedHtml(d) {
       return d.devices.map((x, i) => `<div class="dev-added"><i class="fa-solid fa-${UI.DEVICE_ICON[x.type]} ic" aria-hidden="true"></i><span style="flex:1">${esc(UI.DEVICE_TYPE[x.type])} · ${esc(x.location)}<br><small class="muted">연결됨</small></span><button class="icon-btn" data-action="dev.rm" data-i="${i}" aria-label="삭제">${ic('xmark')}</button></div>`).join('');
     }
     on('dev.rm', el => { const d = D(); d.devices.splice(+el.dataset.i, 1); R.go(R.path()); });
-    on('dev.phone', () => {
-      if (LIVE && !UI.nativeDetector()) return;   // 실제 모드: Android 앱 안에서만 (설정을 마친 뒤 연결, finishFlow)
+    on('dev.phone', () => {   // 시험 모드만 (실제 모드는 devices.js 의 '이 휴대폰으로 감지하기')
+      if (LIVE) return;
       const d = D(); d.phoneCamera = !d.phoneCamera; R.go(R.path());
     });
     on('dev.add', () => {
@@ -693,15 +737,14 @@
 
   /* 기기 추가 시트 (온보딩, 집 상세 등에서 공통 사용) */
   function deviceSheet(o) {
-    const types = UI.deviceTypes();   // 시험 모드 = 홈캠·CCTV 예시, 실제 모드 = PC 감지 프로그램·감지용 휴대폰
+    const types = UI.deviceTypes();   // 시험 모드 = 홈캠·CCTV 예시 (실제 모드의 기기 연결은 devices.js)
     let type = (o.value && o.value.type) || types[0];
     const locs = ['안방', '거실', '현관', '주방', '작은방'];
-    const html = () => `${o.lead || ''}
+    const html = () => `
       <div class="label">기기 종류</div>
-      <div class="segmented" style="margin-bottom:${o.typeHint ? 8 : 16}px">
+      <div class="segmented" style="margin-bottom:16px">
         ${types.map(t => `<button type="button" class="${type === t ? 'is-on' : ''}" data-action="ds.type" data-type="${t}">${esc(UI.DEVICE_TYPE[t])}</button>`).join('')}
       </div>
-      ${o.typeHint ? `<p class="row__sub" style="margin-bottom:16px">${esc(o.typeHint(type))}</p>` : ''}
       ${field({ id: 'ds-loc', label: '위치 이름', placeholder: '예) 안방, 거실', maxlength: 12, value: (document.getElementById('ds-loc') && document.getElementById('ds-loc').value) || (o.value && o.value.location) || '', onenter: 'ds.submit' })}
       <div class="chips" style="margin:-6px 0 18px">${locs.map(l => `<button type="button" class="chip" data-action="ds.loc" data-loc="${l}">${l}</button>`).join('')}</div>
       <button class="btn btn--primary btn--lg btn--block" data-action="ds.submit">${esc(o.submit || '연결하기')}</button>`;
@@ -732,22 +775,10 @@
     const d = D(); const me = Sel.me();
     const info = {};
     ['birth', 'conditions', 'medications'].forEach(k => { info[k] = d.info[k] === undefined ? null : d.info[k]; });
-    if (LIVE) {
-      // 서버가 건강 정보 + 집 + 현관 출입 방식·비밀번호를 한 트랜잭션으로 저장 (실패하면 아무것도 저장되지 않음). 기기는 아직 없음
-      const home = d.homeMode === 'existing' && d.homeId ? { mode: 'existing', id: d.homeId } : { mode: 'new', address: d.address || '' };
-      const entrances = entrancesToSend(d);
-      const homesBefore = me.homeIds.slice();
-      try {
-        await UI.busy(el, () => Act.finishSetup({ info, home, entrances }));
-      } catch (e) { UI.showError(e); return; }
+    if (LIVE) {   // 저장은 3단계에서 끝남 (saveSetup). 기기는 4단계에서 바로 연결됨
       draft = null;
       toast(flow === 'enable' ? '낙상 감지 대상으로 등록했어요' : '준비가 끝났어요', 'ok');
       R.go('/', { replace: true });
-      // '이 휴대폰으로 감지하기'를 골랐으면: 집이 생긴 지금 이 휴대폰을 연결 (위치를 고른 뒤 연결 코드 없이, settings.js)
-      if (d.phoneCamera && UI.nativeDetector() && FD.SelfDetect) {
-        const after = Sel.me().homeIds;
-        FD.SelfDetect.start(after.find(id => !homesBefore.includes(id)) || (home.mode === 'existing' ? home.id : after[0]));
-      }
       return;
     }
     Act.enableTarget(me.id, info);

@@ -386,6 +386,11 @@ def _home(row, codes=None, access=None):
             "centralAccess": access.get("central"), "doorAccess": access.get("door")}
 
 
+def _dev_devices():
+    import devices   # devices 가 이 모듈을 쓰므로 함수 안에서 불러옴
+    return devices.dev_devices()
+
+
 def empty_state(now=None):
     now_ms = int((time.time() if now is None else now) * 1000)
     return {
@@ -394,6 +399,8 @@ def empty_state(now=None):
         "groups": [], "people": [], "homes": [], "devices": [],
         "incidents": [], "history": [], "notifs": [],
         "serverNow": now_ms,   # 화면이 서버 시각 기준으로 남은 시간을 계산하도록 (store.js)
+        # 개발·시험 서버에서만 켜지는 화면 항목 (devices.py: FD_DEV_DEVICES=1 → PC 감지 프로그램·홈캠/CCTV 시연 흐름)
+        "features": {"devDevices": _dev_devices()},
     }
 
 
