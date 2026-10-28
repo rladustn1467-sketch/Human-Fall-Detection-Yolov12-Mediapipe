@@ -70,7 +70,7 @@
     const isOpen = openState[h.id] !== undefined ? openState[h.id] : (abnormal || !!incident);
     const devs = Sel.devices(h.id).slice().sort((a, b) => (a.status === 'ok') - (b.status === 'ok'));
     const canEdit = Sel.canEditHome(h.id, me);
-    const icon = sum.kind === 'ok' ? 'shield-check' : sum.kind === 'warn' ? 'triangle-exclamation' : 'circle-pause';
+    const icon = sum.kind === 'ok' ? 'shield-halved' : sum.kind === 'warn' ? 'triangle-exclamation' : 'circle-pause';
     const summary = sum.kind === 'ok' ? `${sum.title} · ${sum.detail}` : sum.kind === 'warn' ? `${sum.title} · ${sum.detail}` : `${sum.title} · ${sum.detail}`;
     return `<section class="det-home det-home--${incident ? 'incident' : sum.kind}${isOpen ? ' is-open' : ''}" aria-label="${esc(Sel.homeName(h, me))} 감지 현황">
       <button class="det-home__head" data-action="home.toggle" data-id="${h.id}" aria-expanded="${isOpen}">
@@ -109,7 +109,7 @@
     if (normals.length > 2) {
       const first = normals[0], rest = normals.slice(1);
       html += homeCard(first.h, me, active);
-      html += `<button class="det-more" data-action="home.rest" aria-expanded="${restOpen}"><span class="det-ic det-ic--ok">${ic('shield-check')}</span><span style="flex:1">나머지 ${rest.length}곳 · 모두 정상</span>${ic('chevron-down', 'det-home__caret')}</button>
+      html += `<button class="det-more" data-action="home.rest" aria-expanded="${restOpen}"><span class="det-ic det-ic--ok">${ic('shield-halved')}</span><span style="flex:1">나머지 ${rest.length}곳 · 모두 정상</span>${ic('chevron-down', 'det-home__caret')}</button>
         <div id="rest-list" style="display:${restOpen ? 'block' : 'none'}">${rest.map(x => homeCard(x.h, me, active)).join('')}</div>`;
     } else html += normals.map(x => homeCard(x.h, me, active)).join('');
     return html;

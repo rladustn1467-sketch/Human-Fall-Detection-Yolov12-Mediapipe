@@ -52,6 +52,16 @@
             android:foregroundServiceType="camera"
             android:exported="false" />
 
+        <!-- 휴대폰 재시작·앱 업데이트 뒤: 감지하던 휴대폰이면 '감지가 멈춰 있어요' 알림 (카메라 서비스는 직접 시작할 수 없음) -->
+        <receiver
+            android:name=".detect.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -73,4 +83,5 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>
