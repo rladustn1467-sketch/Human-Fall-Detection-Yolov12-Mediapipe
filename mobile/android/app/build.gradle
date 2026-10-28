@@ -113,6 +113,9 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:1.4.2"
     implementation "androidx.lifecycle:lifecycle-service:2.6.2"
     implementation "com.google.mediapipe:tasks-vision:1.1.0"
+    // 가족 휴대폰 푸시 알림 (push/): Firebase Cloud Messaging. 설정 파일 google-services.json 은 저장소에 두지 않음
+    implementation platform("com.google.firebase:firebase-bom:35.1.0")
+    implementation "com.google.firebase:firebase-messaging"
     testImplementation "junit:junit:$junitVersion"
     // PC 에서 도는 단위 시험용 (안드로이드의 org.json 은 PC 시험에서 동작하지 않음)
     testImplementation "org.json:json:20260814"

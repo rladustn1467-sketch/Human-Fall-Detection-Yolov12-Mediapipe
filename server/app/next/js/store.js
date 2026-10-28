@@ -23,6 +23,7 @@
   const subs = new Set();
   let started = false;
   let serverOffset = 0;   // 실제 모드: 서버 시각 - 이 기기 시각 (남은 시간을 서버 시각 기준으로 계산)
+  let refreshNow = async () => {};   // 실제 모드에서 서버 상태를 바로 다시 읽음 (아래 실제 모드 부분에서 정함, push.js)
 
   /* ---------- 시계 (배속 지원) ---------- */
   function clockNow(st) {
@@ -519,6 +520,7 @@
       setTimeout(async () => { await refreshFromServer(); loop(); }, hasOpenIncident() ? ACTIVE_REFRESH_MS : REFRESH_MS);
     })();
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshFromServer(); });
+    refreshNow = () => refreshFromServer(true);   // 푸시를 받았을 때 바로 (push.js)
     /* 낙상 사고 동작: 화면 계약대로 true/false 를 돌려줌.
        false = 다른 가족이 먼저 처리했거나 이미 끝난 사고 (서버 409) → 최신 상태를 받아 다시 그림 */
     async function incidentCall(id, action, body) {
@@ -621,5 +623,5 @@
   /* 구독 */
   function subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }
 
-  FD.Store = { init, subscribe, commit, Sel, Act, now, get state() { return state; }, consts: { S, M, H, D, SELF_WINDOW, AUTO_REPORT } };
+  FD.Store = { init, subscribe, commit, Sel, Act, now, refresh: () => refreshNow(), get state() { return state; }, consts: { S, M, H, D, SELF_WINDOW, AUTO_REPORT } };
 })();

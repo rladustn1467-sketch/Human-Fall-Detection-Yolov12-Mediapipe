@@ -8,6 +8,8 @@ import com.getcapacitor.BridgeActivity;
 import com.humanfall.app.detect.DetectionService;
 import com.humanfall.app.detect.DetectorPlugin;
 import com.humanfall.app.detect.DetectorRuntime;
+import com.humanfall.app.push.AppVisibility;
+import com.humanfall.app.push.PushPlugin;
 
 public class MainActivity extends BridgeActivity {
 
@@ -15,6 +17,8 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         // 이 휴대폰의 감지 화면 (detect/): 웹앱의 설정·첫 화면이 이 플러그인으로 감지 기기 화면을 엶
         registerPlugin(DetectorPlugin.class);
+        // 가족 휴대폰 푸시 알림 (push/): 알림 권한·채널, FCM 토큰, 알림을 눌러 연 사고
+        registerPlugin(PushPlugin.class);
         super.onCreate(savedInstanceState);
         // 감지 기기로 연결된 폰: 앱을 켜면 감지를 이어서 함 (켜기/끄기는 서버 값대로, 카메라 권한이 있을 때만)
         if (DetectorRuntime.link(this).isPaired()) DetectionService.start(this, null);
@@ -35,8 +39,15 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        AppVisibility.set(true);    // 화면에 떠 있는 동안 온 푸시는 시스템 알림으로 띄우지 않음 (앱 긴급 화면이 보여 줌)
+    }
+
+    @Override
     public void onPause() {
         super.onPause();
+        AppVisibility.set(false);
         // WebView 는 쿠키를 약 30초마다 모아서 저장함. 그 전에 앱이 정리되면(최근 앱에서 밀어 닫기, 메모리 정리)
         // 방금 받은 로그인 쿠키가 사라지므로, 앱이 화면에서 내려갈 때 바로 저장
         CookieManager.getInstance().flush();

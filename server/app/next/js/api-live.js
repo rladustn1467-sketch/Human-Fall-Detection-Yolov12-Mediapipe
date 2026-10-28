@@ -71,6 +71,9 @@
     async signup({ name, phone, password }) { return remember(await call('POST', '/api/v2/auth/signup', { name, phone, password })); },
     async login({ phone, password }) { return remember(await call('POST', '/api/v2/auth/login', { phone, password })); },
     async logout() { return remember(await call('POST', '/api/v2/auth/logout')); },
+    /* 가족 휴대폰 푸시 (push.js): 이 휴대폰의 알림 토큰 등록·해제 (로그인한 본인 것만, 로그인 세션에 묶임) */
+    async registerPushToken(token) { return call('POST', '/api/v2/me/push-token', { token, platform: 'android' }); },
+    async unregisterPushToken(token) { return call('DELETE', '/api/v2/me/push-token', { token }); },
     async createGroup() { return remember(await call('POST', '/api/v2/groups')); },
     async regenInvite() { return remember(await call('POST', '/api/v2/groups/invite')); },
     async joinGroup(code) { return remember(await call('POST', '/api/v2/groups/join', { code })); },

@@ -62,7 +62,8 @@ captures/
 .cxx/
 
 # Google Services (e.g. APIs or Firebase)
-# google-services.json
+# Firebase 설정 파일은 저장소에 올리지 않음 (각 PC 의 mobile/android/app/ 에 직접 둠)
+google-services.json
 
 # Freeline
 freeline.py

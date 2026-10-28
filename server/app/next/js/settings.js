@@ -109,14 +109,45 @@
   R.register('/settings/notifications', () => {
     const me = Sel.me(); const p = me.prefs;
     const row = (key, title, sub) => `<div class="row"><span class="row__main"><span class="row__title">${title}</span><span class="row__sub">${sub}</span></span>${UI.toggle(p[key] !== false, 'pref.toggle', `data-key="${key}" aria-label="${title}"`)}</div>`;
-    return `${UI.subHeader('알림 설정')}<div class="page page--tight">
+    return {
+      html: `${UI.subHeader('알림 설정')}<div class="page page--tight">
       <div class="notice notice--stop">${ic('triangle-exclamation')}<span>낙상 알림은 안전을 위해 끌 수 없어요.</span></div>
+      ${FD.Push && FD.Push.available() ? `<div class="card" style="margin-top:16px" id="push-card"><div class="row"><span class="det-dev__ic">${ic('bell')}</span><span class="row__main"><span class="row__title">휴대폰 알림</span><span class="row__sub" id="push-sub" style="display:block">확인하는 중…</span></span><span id="push-act"></span></div></div>` : ''}
       <div class="card" style="margin-top:16px">
         ${row('device', '기기 연결 끊김 알림', '감지 기기의 연결이 끊어지면 알려드려요')}
         ${row('member', '새 구성원 참여 알림', '가족이 그룹에 참여하면 알려드려요')}
         ${row('home', '집 정보 변경 알림', '같은 집의 주소·비밀번호·기기가 바뀌면 알려드려요')}
-      </div></div>`;
+      </div></div>`,
+      mount: root => pushCard(root)
+    };
   }, { parent: '/settings', live: true });
+  /* 휴대폰 알림 (Android 앱): 안드로이드 알림 권한·낙상 알림 채널 상태 그대로. 끈 경우 설정 화면으로 안내 (강제로 바꾸지 않음) */
+  async function pushCard(root) {
+    const sub = root.querySelector('#push-sub'), act = root.querySelector('#push-act');
+    if (!sub || !FD.Push) return;
+    const st = await FD.Push.status();
+    if (!st) { sub.textContent = '알림 상태를 확인하지 못했어요'; return; }
+    if (st.permission === 'granted' && !st.blocked) {
+      sub.textContent = '앱을 닫아 둬도 낙상 알림이 와요 (잠금 화면에는 이름·주소 없이 표시)';
+      act.innerHTML = '';
+    } else if (st.permission === 'prompt') {
+      sub.textContent = '알림을 허용하면 앱을 닫아 둬도 낙상 알림을 받을 수 있어요';
+      act.innerHTML = `<button class="btn btn--primary btn--sm" data-action="push.allow">허용하기</button>`;
+    } else {
+      sub.textContent = '휴대폰 알림이 꺼져 있어 앱을 닫으면 낙상 알림을 받을 수 없어요. 휴대폰 설정에서 낙상 지킴이 알림을 켜 주세요';
+      act.innerHTML = `<button class="btn btn--soft btn--sm" data-action="push.settings">설정 열기</button>`;
+    }
+  }
+  on('push.allow', async () => {
+    try { await FD.Push.requestPermission(); } catch (e) { /* 그대로 */ }
+    await FD.Push.register();
+    R.refresh();
+  });
+  on('push.settings', async () => { try { await FD.Push.openSettings(); } catch (e) { UI.toast('설정 화면을 열지 못했어요'); } });
+  // 설정 앱에서 돌아오면 바뀐 상태로 다시 그림
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && R.path() === '/settings/notifications') R.refresh();
+  });
   on('pref.toggle', async el => {
     const k = el.dataset.key; const me = Sel.me();
     try { await Act.setPref(me.id, k, !(me.prefs[k] !== false)); } catch (e) { UI.showError(e); }
@@ -139,6 +170,7 @@
         if (S) stop = await S.stopForLogout();
         // 감지를 멈추지 못했으면 로그아웃하지 않음 (멈춘 것처럼 보이지 않도록)
         if (stop.self && !stop.stopped) throw new FD.ApiError(0, '이 휴대폰의 감지를 멈추지 못해 로그아웃하지 않았어요. 다시 시도해 주세요.');
+        if (FD.Push) await FD.Push.unregister();   // 이 휴대폰으로 오던 낙상 푸시도 끊음
         await Act.signOut();
       });
     } catch (e) {
@@ -180,7 +212,7 @@
         await UI.busy(el, async () => {
           if (S) stop = await S.stopForLogout();
           if (stop.self && !stop.stopped) throw new FD.ApiError(0, '이 휴대폰의 감지를 멈추지 못해 탈퇴하지 않았어요. 다시 시도해 주세요.');
-          await Act.withdraw(Sel.meId(), pw);
+          await Act.withdraw(Sel.meId(), pw);   // 서버가 계정과 함께 이 휴대폰의 푸시 토큰도 삭제
         });
       } catch (err) {
         UI.showError(err, { password: 'wd-pw' });

@@ -305,6 +305,36 @@ MIGRATIONS = [
                device_id  TEXT
            )""",
     ]),
+    (10, "가족 휴대폰 푸시 알림: 휴대폰별 알림 토큰, 사고별 푸시 전달 (push.py)", [
+        # 알림 토큰은 로그인 세션에 묶음: 로그아웃·탈퇴(세션 삭제)하면 함께 지워지고, 세션이 만료되면 보내지 않음
+        """CREATE TABLE push_tokens (
+               token        TEXT PRIMARY KEY,                -- FCM 등록 토큰 (휴대폰 앱 하나에 하나)
+               user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               session_hash TEXT NOT NULL REFERENCES sessions(token_hash) ON DELETE CASCADE,
+               platform     TEXT NOT NULL CHECK (platform IN ('android')),
+               created_at   INTEGER NOT NULL,
+               updated_at   INTEGER NOT NULL
+           )""",
+        "CREATE INDEX push_tokens_user ON push_tokens (user_id)",
+        # 사고 하나에 사람마다 한 번 (UNIQUE): 같은 사고에 다시 감지돼도 다시 보내지 않음
+        """CREATE TABLE push_deliveries (
+               id              INTEGER PRIMARY KEY AUTOINCREMENT,
+               incident_id     TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               group_id        TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               status          TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'sent', 'simulated', 'no_token',
+                                                               'skipped', 'failed')),
+               provider        TEXT,
+               attempts        INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at INTEGER,
+               sent_count      INTEGER NOT NULL DEFAULT 0,
+               last_error      TEXT,
+               created_at      INTEGER NOT NULL,
+               updated_at      INTEGER NOT NULL,
+               UNIQUE (incident_id, user_id)
+           )""",
+        "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

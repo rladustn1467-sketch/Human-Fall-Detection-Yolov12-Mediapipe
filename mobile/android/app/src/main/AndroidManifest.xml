@@ -24,6 +24,21 @@
 
         </activity>
 
+        <!-- 가족 휴대폰 푸시 알림 (push/): FCM 메시지 받기. 앱이 꺼져 있을 때는 안드로이드가 아래 채널·아이콘으로 표시 -->
+        <service
+            android:name=".push.PushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="fall_alert" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_fall_alert" />
+
         <!-- 이 휴대폰의 감지 화면 (detect/): 앱의 설정(이 휴대폰으로 감지하기)과 로그인 화면 아래(감지용 휴대전화 연결하기)에서 열림 -->
         <activity
             android:name=".detect.DetectorActivity"

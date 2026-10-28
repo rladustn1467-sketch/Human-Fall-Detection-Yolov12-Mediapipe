@@ -99,6 +99,8 @@ def create(conn, home_id, location, source, source_ref=None, dedupe_key=None, no
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'detected', ?)""",
                      (incident_id, home["group_id"], home_id, source, source_ref, dedupe_key, location, detected_at, now))
         _log(conn, incident_id, detected_at, "detected")
+        import push   # 그룹 구성원 모두에게 푸시 (보내기는 서버의 백그라운드 작업이 따로, push.py)
+        push.queue_for_incident(conn, incident_id, home["group_id"], now)
         return incident_id, True
 
 

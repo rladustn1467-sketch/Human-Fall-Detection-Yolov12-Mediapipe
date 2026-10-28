@@ -27,6 +27,7 @@ import address_search
 import alerts
 import db
 import devices
+import push
 import door_codes
 import escalation
 import incidents
@@ -147,6 +148,7 @@ def _timeout_watcher(stop):
                 incidents.tick(conn)
                 alerts.process_due(conn, SMS_SENDER, incidents.now_ms())
                 alerts.process_telegram_due(conn, TELEGRAM_CHANNEL, incidents.now_ms())
+                push.process_due(conn, PUSH_SENDER, incidents.now_ms())
         except Exception as e:
             print(f"[incident] 사고 시간 처리 오류: {type(e).__name__}: {e}")
 
@@ -430,11 +432,14 @@ print(f"[door] 현관 비밀번호 저장: {door_codes.configure(os.environ.get(
 SMS_SENDER = alerts.build_sender(os.environ)
 # 텔레그램: 새 사고의 알림도 같은 보호자 봇으로 (글자만, 버튼 없음). 받을 대화방은 legacy_devices.py 'telegram add'
 TELEGRAM_CHANNEL = alerts.build_telegram(os.environ)
+# 가족 휴대폰 푸시 (push.py): FCM 서비스 계정 키 파일 경로는 FCM_SERVICE_ACCOUNT_FILE (저장소 밖). 없으면 보내지 않음
+PUSH_SENDER = push.build_sender(os.environ)
 DEV_TOOLS = os.environ.get("FD_DEV_TOOLS", "").strip() == "1"
 print(f"[incident] 문자 알림: {SMS_SENDER.name} (모의 발송 - 실제 문자를 보내지 않음) / "
       f"개발용 낙상 발생: {'켜짐 (FD_DEV_TOOLS=1 - 운영 서버에서는 켜지 마세요)' if DEV_TOOLS else '꺼짐'} / "
       f"사고 알림 텔레그램: {'사용 (등록한 그룹의 대화방에만)' if TELEGRAM_CHANNEL else '없음'}")
 # 개발용 기기(PC 감지 프로그램 연결 코드, 홈캠·CCTV 시연 화면)는 FD_DEV_DEVICES=1 로 켠 시험 서버에서만 (devices.py)
+print(f"[push] 가족 휴대폰 푸시: {push.describe(PUSH_SENDER)}")
 print(f"[devices] 개발용 기기: {'켜짐 (FD_DEV_DEVICES=1 - 운영 서버에서는 켜지 마세요)' if devices.dev_devices() else '꺼짐'}")
 
 
@@ -873,6 +878,31 @@ def api_v2_onboarded(body: OnboardedBody, request: Request):
         user_id = _require_user(conn, request)
         accounts.set_onboarded(conn, user_id, body.onboarded)
         return _state_response(conn, user_id)
+
+
+# 가족 휴대폰 푸시 (push.py): 로그인한 휴대폰의 알림 토큰 등록·해제. 토큰은 이 로그인 세션에 묶임 (로그아웃·탈퇴하면 함께 삭제)
+class PushTokenBody(BaseModel):
+    token: Any = None
+    platform: Any = "android"
+
+
+@app.post("/api/v2/me/push-token")
+def api_v2_push_token(body: PushTokenBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        session_hash = accounts._token_hash(request.cookies.get(SESSION_COOKIE))
+        push.register_token(conn, user_id, session_hash, body.token, body.platform)
+        return JSONResponse({"ok": True}, headers=NO_STORE)
+
+
+@app.delete("/api/v2/me/push-token")
+def api_v2_push_token_delete(body: PushTokenBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        push.unregister_token(conn, user_id, body.token)
+        return JSONResponse({"ok": True}, headers=NO_STORE)
 
 
 # C단계: 내 정보·집·탈퇴. 모두 로그인한 사람 본인 기준이고, 집 id 는 그 사람 그룹 안에서만 찾음 (people.py)

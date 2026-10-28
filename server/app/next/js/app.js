@@ -54,6 +54,7 @@
     });
     R.start();
     Emergency.render(true);
+    if (FD.Push) FD.Push.start();   // 가족 휴대폰 푸시 (Android 앱 안에서만)
   }
   boot();
 })();
