@@ -99,6 +99,7 @@ public class DetectionService extends LifecycleService {
         createChannel();
         startInForeground(getString(R.string.detect_notice_starting));
         DetectorRuntime.STATE.serviceRunning = true;
+        BootReceiver.clear(this);   // 감지를 다시 시작함: '감지가 멈춰 있어요' 알림 지움
     }
 
     @Override
