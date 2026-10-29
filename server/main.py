@@ -643,7 +643,14 @@ def respond(event_id: str, body: UserResponse):
 
 @app.get("/images/{event_id}.jpg", dependencies=[Depends(require_auth)])
 def get_image(event_id: str):
+    """Photo of an old /api/events event (old screens, shared token). Photos sent through the device API are kept
+    in the same folder but only served by /api/v2/incidents/{id}/photos (group check), so they are refused here."""
     if not EVENT_ID_RE.match(event_id):
+        raise HTTPException(status_code=404, detail="Image not found")
+    with _lock:
+        ev = events.get(event_id)
+        legacy = bool(ev and ev.get("image"))
+    if not legacy:
         raise HTTPException(status_code=404, detail="Image not found")
     path = IMAGE_DIR / f"{event_id}.jpg"
     if not path.is_file():
@@ -861,12 +868,38 @@ def api_v2_join_group(body: JoinBody, request: Request):
         return _state_response(conn, user_id)
 
 
+def _group_photo_ids(conn, user_id):
+    """Photo ids of the incidents of the user's group (to clean up their files if the group gets deleted)."""
+    return [r["photo_id"] for r in conn.execute(
+        """SELECT p.photo_id FROM incident_photos p JOIN incidents i ON i.id = p.incident_id
+           JOIN users u ON u.group_id = i.group_id WHERE u.id = ?""", (user_id,))]
+
+
+def _remove_unlinked_photos(conn, photo_ids):
+    """Delete the files of photos whose incident records are gone (the group was deleted with its last member).
+    Photos of old /api/events events stay: their event record (events.json) still uses the file."""
+    for photo_id in photo_ids:
+        if not EVENT_ID_RE.match(photo_id) or conn.execute(
+                "SELECT 1 FROM incident_photos WHERE photo_id = ?", (photo_id,)).fetchone():
+            continue
+        with _lock:
+            legacy = photo_id in events
+        if legacy:
+            continue
+        try:
+            (IMAGE_DIR / f"{photo_id}.jpg").unlink(missing_ok=True)
+        except OSError as e:
+            print(f"[photo] 사진 파일을 지우지 못함: {type(e).__name__}: {e}")
+
+
 @app.post("/api/v2/groups/leave")
 def api_v2_leave_group(request: Request):
     _check_origin(request)
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
+        photos = _group_photo_ids(conn, user_id)
         accounts.leave_group(conn, user_id)
+        _remove_unlinked_photos(conn, photos)
         return _state_response(conn, user_id)
 
 
@@ -1223,7 +1256,9 @@ def api_v2_withdraw(body: PasswordBody, request: Request):
     _check_origin(request)
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
+        photos = _group_photo_ids(conn, user_id)
         accounts.withdraw(conn, user_id, body.password, _client_ip(request))
+        _remove_unlinked_photos(conn, photos)
     response = JSONResponse({"authenticated": False, "me_id": None, "state": accounts.empty_state()}, headers=NO_STORE)
     response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax", secure=_cookie_secure(request))
     return response

@@ -99,6 +99,9 @@ class IncidentPhotoTest(unittest.TestCase):
             self.assertEqual((status, headers["content-type"]), (200, "image/jpeg"))
             self.assertEqual(text, JPEG_A.decode("utf-8", "replace"))    # 기기가 보낸 실루엣 그대로
             self.assertEqual(headers["cache-control"], "private, no-cache")   # 로그아웃 뒤 브라우저 보관본도 안 보이게
+        # 옛 화면의 사진 경로는 옛 이벤트 사진에는 그대로 열림
+        status, _, text = self.server.request("GET", f"/images/{event_id}.jpg", headers={"X-Access-Token": self.server.token})
+        self.assertEqual((status, text), (200, JPEG_A.decode("utf-8", "replace")))
 
     def test_retry_links_once(self):
         event_id = uuid.uuid4().hex

@@ -180,6 +180,44 @@ class DeviceTest(unittest.TestCase):
         self.assertEqual((status, headers["content-type"]), (200, "image/jpeg"))
         self.assertEqual(self.c.call("GET", f"/api/v2/incidents/{inc['id']}/photos/{photo}.jpg")[0], 404)
         self.assertIsNotNone(self.view(d["deviceId"])["lastSeenAt"])                 # 낙상도 살아 있다는 신호
+        # 옛 공용 토큰 경로(/images/{id}.jpg)로는 기기 사진을 받을 수 없음 (그룹 확인을 거치지 않으므로)
+        token = {"X-Access-Token": self.server.token}
+        self.assertEqual(self.server.request("GET", f"/images/{photo}.jpg", headers=token)[0], 404)
+
+    def test_photo_files_go_when_the_group_is_deleted(self):
+        images = self.server.dir / "images"
+        for leave in ("withdraw", "leave"):
+            # 혼자 있는 그룹: 마지막 구성원이 탈퇴하거나 나가면 그룹·사고와 함께 사진 파일도 지움
+            d = member(self.server, "혼자디")
+            d.call("POST", "/api/v2/groups")
+            d.call("POST", "/api/v2/me/setup", {"info": {}, "home": {"mode": "new", "address": ""}})
+            home = d.state()["state"]["homes"][0]["id"]
+            token = self.paired(who=d, home=home)["deviceToken"]
+            status, res = self.fall(token)
+            self.assertEqual((status, res["image_saved"]), (200, True), res)
+            photo = next(i for i in d.state()["state"]["incidents"] if i["id"] == res["incident_id"])["photos"][0]["id"]
+            self.assertTrue((images / f"{photo}.jpg").is_file())
+            if leave == "withdraw":
+                self.assertEqual(d.call("POST", "/api/v2/me/withdraw", {"password": PW})[0], 200)
+            else:
+                self.assertEqual(d.call("POST", "/api/v2/groups/leave")[0], 200)
+            self.assertFalse((images / f"{photo}.jpg").exists(), leave)
+            self.assertEqual(self.sql("SELECT COUNT(*) FROM incident_photos WHERE photo_id = ?", photo)[0][0], 0)
+
+    def test_photo_files_stay_while_the_group_stays(self):
+        images = self.server.dir / "images"
+        e = member(self.server, "남는이")
+        e.call("POST", "/api/v2/groups")
+        e.call("POST", "/api/v2/me/setup", {"info": {}, "home": {"mode": "new", "address": ""}})
+        st = e.state()["state"]
+        f = member(self.server, "나가는에프")
+        f.call("POST", "/api/v2/groups/join", {"code": st["groups"][0]["invite"]["code"]})
+        token = self.paired(who=e, home=st["homes"][0]["id"])["deviceToken"]
+        res = self.fall(token)[1]
+        photo = next(i for i in e.state()["state"]["incidents"] if i["id"] == res["incident_id"])["photos"][0]["id"]
+        self.assertEqual(f.call("POST", "/api/v2/me/withdraw", {"password": PW})[0], 200)   # 다른 구성원이 남음
+        self.assertTrue((images / f"{photo}.jpg").is_file())
+        self.assertEqual(e.call("GET", f"/api/v2/incidents/{res['incident_id']}/photos/{photo}.jpg")[0], 200)
 
     def test_same_event_id_from_two_devices_never_shares_a_photo(self):
         d1, d2 = self.paired(), self.paired(location="안방")
