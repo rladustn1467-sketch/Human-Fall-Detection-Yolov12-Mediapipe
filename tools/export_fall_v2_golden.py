@@ -3,7 +3,8 @@
 From the Android-style pose logs (tools/urfall_record_android.py, tools/caucafall_record.py) it writes, per
 sequence: the frame times, PoseBridge boxes and landmarks (x, y, visibility rounded to 6 decimals), and what the
 Python code gives for exactly those rounded inputs: the main person's A1, H3, B1, C1 per frame
-(tools/urfall_features.py, timing="time" like the app) and the alarm time of fall_logic.v2.FallRuleV2.
+(tools/urfall_features.py, timing="time" like the app), the alarm time of fall_logic.v2.FallRuleV2 and every
+alarm of FallAlertsV2.
 Besides the full logs there are cases with frames left out (tools/v2_uneven_frames.py patterns), as when a phone
 camera drops frames. The JVM test replays them.
 
@@ -23,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from fall_logic.v2 import FallRuleV2, Params  # noqa: E402
+from fall_logic.v2 import FallAlertsV2, FallRuleV2, Params  # noqa: E402
 from tools import pose_log  # noqa: E402
 from tools.urfall_features import sequence_rows  # noqa: E402
 from tools.v2_uneven_frames import SEED, every_other_jitter, random_40, stalls  # noqa: E402
@@ -52,10 +53,12 @@ def case(name, header, frames, label=None):
         if row["person"] == "" or row["main"] == 1:
             by_frame[row["frame"]] = [None if row[f] == "" else row[f] for f in FEATS]
     expected = [by_frame[r["index"] + 1] for r in rounded]
-    rule = FallRuleV2(Params())
+    rule, alerts = FallRuleV2(Params()), FallAlertsV2(Params())
     for r, e in zip(rounded, expected):
         rule.update(r["now"], *e)
-    return {"name": label or name, "fps": fps, "frames": out_frames, "expected": expected, "alarm": rule.alarm}
+        alerts.update(r["now"], *e)
+    return {"name": label or name, "fps": fps, "frames": out_frames, "expected": expected, "alarm": rule.alarm,
+            "alarms": alerts.alarms}
 
 
 def main():

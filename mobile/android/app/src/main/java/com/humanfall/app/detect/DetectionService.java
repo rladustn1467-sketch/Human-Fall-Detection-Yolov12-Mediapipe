@@ -33,6 +33,7 @@ import com.humanfall.app.BuildConfig;
 import com.humanfall.app.R;
 import java.io.File;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -324,9 +325,9 @@ public class DetectionService extends LifecycleService {
                 done++;
                 if (Double.isNaN(legacyFirst) && DetectorRuntime.STATE.lastFallAt != fallsBefore) legacyFirst = (at - start) / 1000.0;
             }
-            Double v2 = pipeline.v2Alarm();
+            List<Double> v2 = pipeline.v2Alarms();
             Log.i(TAG, "시험용 영상 끝: 프레임 " + done + "/" + files.length + " legacy_first=" + (Double.isNaN(legacyFirst) ? "none" : legacyFirst)
-                    + " v2_alarm=" + (v2 == null ? "none" : (v2 - start / 1000.0)));
+                    + " v2_alarm=" + (v2.isEmpty() ? "none" : (v2.get(0) - start / 1000.0)) + " v2_alarms=" + v2.size());
         });
     }
 

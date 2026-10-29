@@ -2,7 +2,7 @@
 import math
 import unittest
 
-from fall_logic.v2 import FallRuleV2, Params
+from fall_logic.v2 import FallAlertsV2, FallRuleV2, Params
 
 FPS = 30
 UP = dict(a1=85.0, h3=2.5, b1=0.4, c1=0.0)            # 서 있음
@@ -61,3 +61,36 @@ class ParamsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def alarms(frames):
+    a = FallAlertsV2()
+    for i, f in enumerate(frames):
+        a.update(i / FPS, **f)
+    return a.alarms
+
+
+class AlertsAgainTest(unittest.TestCase):
+    def test_staying_down_alarms_once(self):
+        self.assertEqual(len(alarms([UP] * 30 + [DOWN] * 600)), 1)          # 20초 누워 있어도 한 번
+
+    def test_alarm_again_after_getting_up_for_two_seconds(self):
+        frames = [UP] * 30 + [DOWN] * 60 + [UP] * 70 + [DOWN] * 60          # 2.3초 일어나 있음
+        got = alarms(frames)
+        self.assertEqual(len(got), 2)
+        self.assertGreater(got[1], (30 + 60 + 70) / FPS)
+
+    def test_short_rise_does_not_reset(self):
+        frames = [UP] * 30 + [DOWN] * 60 + [UP] * 50 + [DOWN] * 60          # 1.7초만 일어남
+        self.assertEqual(len(alarms(frames)), 1)
+
+    def test_no_person_neither_resets_nor_breaks(self):
+        nobody = dict(a1=None, h3=None, b1=None, c1=None)
+        frames = [UP] * 30 + [DOWN] * 60 + [UP] * 30 + [nobody] * 20 + [UP] * 31 + [DOWN] * 60
+        self.assertEqual(len(alarms(frames)), 2)                            # 0.67초 틈은 이어진 것
+        frames = [UP] * 30 + [DOWN] * 60 + [nobody] * 600 + [DOWN] * 60
+        self.assertEqual(len(alarms(frames)), 1)                            # 안 보이는 동안은 초기화 안 함
+
+    def test_first_alarm_same_as_the_rule(self):
+        frames = [UP] * 30 + [DOWN] * 60
+        self.assertEqual(alarms(frames)[0], run(frames))

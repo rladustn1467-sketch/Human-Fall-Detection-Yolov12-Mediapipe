@@ -47,9 +47,9 @@ final class FallPipeline {
         this.v2 = new V2Shadow();
     }
 
-    /** v2's alarm time in seconds (the clock given to process), or null. Log only. */
-    Double v2Alarm() {
-        return v2.alarm();
+    /** v2's alarm times in seconds (the clock given to process). Log only. */
+    List<Double> v2Alarms() {
+        return v2.alarms();
     }
 
     Stats process(Bitmap camera, long nowMs) {

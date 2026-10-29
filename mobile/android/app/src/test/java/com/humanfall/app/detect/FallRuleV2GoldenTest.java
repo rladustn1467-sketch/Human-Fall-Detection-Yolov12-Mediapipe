@@ -50,6 +50,7 @@ public class FallRuleV2GoldenTest {
             String name = seq.getString("name");
             V2Features features = new V2Features();
             FallRuleV2 rule = new FallRuleV2();
+            FallAlertsV2 alerts = new FallAlertsV2();
             V2Shadow shadow = new V2Shadow();
             JSONArray fs = seq.getJSONArray("frames"), ex = seq.getJSONArray("expected");
             for (int i = 0; i < fs.length(); i++) {
@@ -78,7 +79,8 @@ public class FallRuleV2GoldenTest {
                 JSONArray e = ex.getJSONArray(i);
                 Double[] actual = {got.a1, got.h3, got.b1, got.c1};
                 for (int k = 0; k < 4; k++) close(name + " frame " + i + " " + NAMES[k], opt(e, k), actual[k]);
-                boolean fired = rule.update(f.getDouble("t"), got.a1, got.h3, got.b1, got.c1) != null;
+                rule.update(f.getDouble("t"), got.a1, got.h3, got.b1, got.c1);
+                boolean fired = alerts.update(f.getDouble("t"), got.a1, got.h3, got.b1, got.c1) != null;
                 V2Shadow.Result sh = shadow.update(f.getDouble("t"), boxes, lms);
                 Double[] viaShadow = {sh.a1, sh.h3, sh.b1, sh.c1};
                 for (int k = 0; k < 4; k++) close(name + " frame " + i + " shadow " + NAMES[k], opt(e, k), viaShadow[k]);
@@ -87,7 +89,13 @@ public class FallRuleV2GoldenTest {
             }
             Double expected = seq.isNull("alarm") ? null : seq.getDouble("alarm");
             close(name + " alarm", expected, rule.alarm());
-            close(name + " shadow alarm", expected, shadow.alarm());
+            JSONArray all = seq.getJSONArray("alarms");
+            assertEquals(name + " alarms", all.length(), alerts.alarms().size());
+            assertEquals(name + " shadow alarms", all.length(), shadow.alarms().size());
+            for (int k = 0; k < all.length(); k++) {
+                close(name + " alarm " + k, all.getDouble(k), alerts.alarms().get(k));
+                close(name + " shadow alarm " + k, all.getDouble(k), shadow.alarms().get(k));
+            }
             if (expected != null) alarms++;
         }
         return new int[]{frames, alarms};
@@ -127,7 +135,7 @@ public class FallRuleV2GoldenTest {
         }
         assertTrue(shadow.broken());
         assertNull(shadow.update(0.1, new ArrayList<>(), new ArrayList<>()));
-        assertNull(shadow.alarm());
+        assertTrue(shadow.alarms().isEmpty());
     }
 
     @Test

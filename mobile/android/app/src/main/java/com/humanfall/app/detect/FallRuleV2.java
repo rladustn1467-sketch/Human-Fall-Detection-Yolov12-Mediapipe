@@ -67,10 +67,19 @@ public final class FallRuleV2 {
         return n % 2 == 1 ? v.get(n / 2) : (v.get(n / 2 - 1) + v.get(n / 2)) / 2;
     }
 
+    private boolean isLow(Double a1, Double h3) {
+        return (a1 != null && a1 < p.lowAngle) || (h3 != null && h3 < p.lowHead);
+    }
+
+    /** Low posture, or a wide person box. */
+    public boolean isWide(Double a1, Double h3, Double b1) {
+        return isLow(a1, h3) || (b1 != null && b1 > p.wideBox);
+    }
+
     /** One frame in time order. Returns the alarm time when the rule fires on this frame (only the first time). */
     public Double update(double t, Double a1, Double h3, Double b1, Double c1) {
-        boolean low = (a1 != null && a1 < p.lowAngle) || (h3 != null && h3 < p.lowHead);
-        boolean wide = low || (b1 != null && b1 > p.wideBox);
+        boolean low = isLow(a1, h3);
+        boolean wide = isWide(a1, h3, b1);
         boolean hasValue = a1 != null || h3 != null || b1 != null;
         Double fired = null;
 

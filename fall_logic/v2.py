@@ -17,6 +17,11 @@ Rule:
                    do not break the run, a frame with values that is not wide does
   fall = (A) or (B)
 The smoothing needs the next value, so the speed of a frame is judged one frame later (one frame of delay).
+
+FallAlertsV2 wraps the rule for a camera that keeps running (user decisions 2026-10-29, docs/fall_rule_v2.md):
+after an alarm nothing more is reported while the person stays down (the server's incident follows up); once
+frames that are not wide have lasted up_seconds (gaps without values up to gap_seconds allowed, a wide frame
+breaks it) the rule starts over and can alarm again. Only the main person is judged.
 Pure Python, no other packages, so it can be ported to the Android app like LegacyFallLogic.
 """
 from dataclasses import dataclass
@@ -59,11 +64,15 @@ class FallRuleV2:
     def _is_low(self, a1, h3):
         return (a1 is not None and a1 < self.p.low_angle) or (h3 is not None and h3 < self.p.low_head)
 
+    def is_wide(self, a1, h3, b1):
+        """Low posture, or a wide person box."""
+        return self._is_low(a1, h3) or (b1 is not None and b1 > self.p.wide_box)
+
     def update(self, t, a1=None, h3=None, b1=None, c1=None):
         """One frame. Returns the alarm time when the rule fires on this frame (only the first time), else None."""
         p = self.p
         low = self._is_low(a1, h3)
-        wide = low or (b1 is not None and b1 > p.wide_box)
+        wide = self.is_wide(a1, h3, b1)
         has_value = a1 is not None or h3 is not None or b1 is not None
         fired = []
 
@@ -111,4 +120,40 @@ class FallRuleV2:
         if fired and self.alarm is None:
             self.alarm = min(fired)
             return self.alarm
+        return None
+
+
+UP_SECONDS = 2.0   # 알림 뒤 이만큼 '넓게 본 낮은 자세'가 아니면 일어난 것으로 보고 처음부터
+
+
+class FallAlertsV2:
+    """FallRuleV2 that can alarm again after the person got up. update() returns the alarm time or None;
+    alarms holds every alarm time."""
+
+    def __init__(self, params=Params(), up_seconds=UP_SECONDS):
+        self.p = params
+        self.up_seconds = up_seconds
+        self.rule = FallRuleV2(params)
+        self.alarms = []
+        self._up_start = None
+        self._up_last = None
+
+    def update(self, t, a1=None, h3=None, b1=None, c1=None):
+        if self.rule.alarm is None:
+            fired = self.rule.update(t, a1, h3, b1, c1)
+            if fired is not None:
+                self.alarms.append(fired)
+                self._up_start = None
+            return fired
+        # 알린 뒤: 다시 알리지 않고 일어났는지만 봄
+        has_value = a1 is not None or h3 is not None or b1 is not None
+        if has_value and not self.rule.is_wide(a1, h3, b1):
+            if self._up_start is None or t - self._up_last > self.p.gap_seconds:
+                self._up_start = t
+            self._up_last = t
+            if self._up_last - self._up_start >= self.up_seconds:
+                self.rule = FallRuleV2(self.p)
+                self._up_start = None
+        elif has_value:
+            self._up_start = None
         return None

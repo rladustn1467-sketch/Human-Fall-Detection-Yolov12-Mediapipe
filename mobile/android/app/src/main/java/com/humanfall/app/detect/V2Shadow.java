@@ -7,7 +7,7 @@ import java.util.List;
  * It never sends anything: alerts stay with LegacyFallLogic. An error here only turns the shadow off, so it
  * cannot stop the current detection.
  *
- * Like FallRuleV2 it alarms only the first time (when to alarm again is not decided yet).
+ * It alarms like FallAlertsV2: once while the person stays down, again after they got up.
  */
 final class V2Shadow {
     /** One frame: the rule's inputs (null = not available) and whether v2 fired on it. */
@@ -17,7 +17,7 @@ final class V2Shadow {
     }
 
     private final V2Features features;
-    private final FallRuleV2 rule = new FallRuleV2();
+    private final FallAlertsV2 alerts = new FallAlertsV2();
     private boolean broken;
 
     V2Shadow() {
@@ -34,7 +34,7 @@ final class V2Shadow {
             r.h3 = f.h3;
             r.b1 = f.b1;
             r.c1 = f.c1;
-            r.fired = rule.update(now, f.a1, f.h3, f.b1, f.c1) != null;
+            r.fired = alerts.update(now, f.a1, f.h3, f.b1, f.c1) != null;
             return r;
         } catch (RuntimeException e) {
             broken = true;
@@ -42,9 +42,9 @@ final class V2Shadow {
         }
     }
 
-    /** v2's alarm time (seconds, same clock as update), or null. */
-    Double alarm() {
-        return rule.alarm();
+    /** v2's alarm times so far (seconds, same clock as update). */
+    List<Double> alarms() {
+        return alerts.alarms();
     }
 
     boolean broken() {
