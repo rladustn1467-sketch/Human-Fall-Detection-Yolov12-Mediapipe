@@ -219,6 +219,58 @@ class ActionTest(IncidentTestBase):
         self.assertEqual(self.view(self.b, iid)["status"], "no_response")   # 사고 기록은 그룹에 남음
 
 
+class CheckingTest(IncidentTestBase):
+    """User decisions 2026-10-29: a new fall while a family member is checking alerts the family again on the same
+    incident; checking for 30 minutes reminds the member who is checking, every 30 minutes."""
+    MIN = 60 * S
+
+    def checking(self):
+        iid = self.fall(T, key="first")
+        incidents.tick(self.conn, T + 60 * S)
+        incidents.take_over(self.conn, self.b, iid, now=T + 70 * S)
+        return iid
+
+    def count_kind(self, user, kind):
+        return self.kinds(user).count(kind)
+
+    def test_redetection_while_checking_alerts_the_family_again(self):
+        iid = self.checking()
+        again, created = incidents.create(self.conn, self.home, "거실", "dev", dedupe_key="second", now=T + 5 * self.MIN)
+        self.assertEqual((again, created), (iid, False))                                # 같은 사고
+        self.assertEqual(self.inc(iid)["status"], "checking")                           # 확인 중 그대로
+        self.assertEqual((self.count_kind(self.b, "redetected"), self.count_kind(self.d, "redetected")), (1, 1))
+        self.assertEqual(self.count_kind(self.a, "redetected"), 0)                     # 낙상 대상자 제외 (가족에게)
+        incidents.create(self.conn, self.home, "거실", "dev", dedupe_key="second", now=T + 6 * self.MIN)   # 기기 재전송
+        self.assertEqual(self.count_kind(self.d, "redetected"), 1)                      # 같은 이벤트는 한 번만
+        incidents.create(self.conn, self.home, "거실", "dev", dedupe_key="third", now=T + 7 * self.MIN)
+        self.assertEqual(self.count_kind(self.d, "redetected"), 2)                      # 또 넘어지면 또 알림
+        self.assertEqual([x["text"] for x in self.view(self.d, iid)["log"]].count("같은 집에서 다시 감지됐어요"), 2)
+
+    def test_redetection_before_the_family_is_alerted_is_only_logged(self):
+        iid = self.fall(T, key="first")
+        incidents.create(self.conn, self.home, "거실", "dev", dedupe_key="second", now=T + 5 * S)
+        self.assertEqual(self.count_kind(self.b, "redetected"), 0)
+        self.assertEqual(self.inc(iid)["status"], "detected")
+
+    def test_checking_reminder_every_30_minutes_to_the_checker_only(self):
+        iid = self.checking()
+        start = T + 70 * S
+        incidents.tick(self.conn, start + 30 * self.MIN - 1)
+        self.assertEqual(self.count_kind(self.b, "checking_reminder"), 0)              # 30분 전
+        incidents.tick(self.conn, start + 30 * self.MIN)
+        incidents.tick(self.conn, start + 30 * self.MIN + S)                             # 같은 알림을 두 번 보내지 않음
+        self.assertEqual(self.count_kind(self.b, "checking_reminder"), 1)
+        self.assertEqual((self.count_kind(self.d, "checking_reminder"), self.count_kind(self.a, "checking_reminder")), (0, 0))
+        incidents.tick(self.conn, start + 60 * self.MIN)
+        self.assertEqual(self.count_kind(self.b, "checking_reminder"), 2)
+        incidents.tick(self.conn, start + 200 * self.MIN)                                # 서버가 오래 꺼져 있었음
+        self.assertEqual(self.count_kind(self.b, "checking_reminder"), 3)              # 밀린 것은 한 번만
+        self.assertEqual(self.inc(iid)["status"], "checking")                           # 자동으로 끝내지 않음
+        incidents.close_checked(self.conn, self.b, iid, now=start + 201 * self.MIN)
+        incidents.tick(self.conn, start + 300 * self.MIN)
+        self.assertEqual(self.count_kind(self.b, "checking_reminder"), 3)              # 끝난 뒤에는 없음
+
+
 class PhotoRetentionTest(IncidentTestBase):
     DAY = 24 * 3600 * S
 

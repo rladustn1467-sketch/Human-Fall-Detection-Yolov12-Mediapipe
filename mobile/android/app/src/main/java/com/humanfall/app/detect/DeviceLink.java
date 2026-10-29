@@ -385,11 +385,24 @@ public final class DeviceLink {
     // ---- 낙상 ----
     /**
      * Send one fall (same event id on every retry). Returns the server answer.
+     * When the server ignores it because detection is off there but this phone is on (the server was not told yet),
+     * the phone's 'on' is sent first and the same event is sent once more; if the server can not be told now,
+     * IOException, so the caller keeps the fall for later.
      *
      * @throws Revoked     the token was refused (401, not retried)
      * @throws IOException no network / server error after the retries (the caller may keep it for later)
      */
     public JSONObject sendFall(String eventId, boolean isTest, byte[] jpeg) throws Revoked, IOException {
+        JSONObject r = sendFallOnce(eventId, isTest, jpeg);
+        if (isTest || !enabled || !"off".equals(r.optString("ignored"))) return r;
+        if (sendEnabled(true) != null) {
+            if (isRevoked()) throw new Revoked("revoked");
+            throw new IOException("server still has detection off");
+        }
+        return sendFallOnce(eventId, isTest, jpeg);
+    }
+
+    private JSONObject sendFallOnce(String eventId, boolean isTest, byte[] jpeg) throws Revoked, IOException {
         String token = token();
         if (token == null) throw new Revoked("not paired");
         JSONObject body = new JSONObject();

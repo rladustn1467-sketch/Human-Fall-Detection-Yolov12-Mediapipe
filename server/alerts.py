@@ -30,6 +30,8 @@ NOTIF_TEXT = {
     "closed": "{home} · {loc}: {name}님이 괜찮은 것을 확인하고 종료했어요",
     "reported": "{home} · {loc}: {name}님이 119 신고를 기록했어요 (모의 신고)",
     "auto_reported": "{home} · {loc}: 자동 119 신고가 기록됐어요 (모의 신고)",
+    "redetected": "{home} · {loc}: 확인 중인 사고에서 다시 넘어짐이 감지됐어요",
+    "checking_reminder": "{home} · {loc}: 아직 확인 중인 사고예요. 확인을 마치면 종료해 주세요",
 }
 # 문자 문장 (이름·건강 정보·주소는 넣지 않음)
 SMS_TEXT = {

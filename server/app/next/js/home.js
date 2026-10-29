@@ -229,7 +229,8 @@
    * 알림센터: 나에게 온 알림 기록 (낙상 사고 진행, 가족·집 변경). 열면 읽음으로 표시
    * ---------------------------------------------------------- */
   const NOTIF_ICON = { family_alert: 'triangle-exclamation', help: 'hand', self_ok: 'user-check', checked: 'user-check',
-    closed: 'circle-check', reported: 'truck-medical', auto_reported: 'truck-medical' };
+    closed: 'circle-check', reported: 'truck-medical', auto_reported: 'truck-medical', redetected: 'person-falling',
+    checking_reminder: 'clock' };
   on('notif.open', () => R.go('/notifications'));
   on('notif.item', el => {
     const inc = Sel.incident(el.dataset.inc);

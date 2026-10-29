@@ -25,6 +25,7 @@ from accounts import AccountError
 SELF_WINDOW_MS = 60_000     # 낙상자 응답 대기
 AUTO_REPORT_MS = 180_000    # 가족 알림(무응답·도움 요청) 후 자동 신고(모의)까지
 LATE_MS = 5_000             # 예정 시각보다 이만큼 넘게 늦게 처리되면 (서버가 꺼져 있었음 등) 기록에 표시
+CHECKING_REMIND_MS = 30 * 60_000   # 확인 중이 이만큼 이어질 때마다 확인 중인 가족에게 다시 알림 (사용자 결정 2026-10-29)
 TERMINAL = ("closed", "reported")
 OPEN_STATUSES = ("detected", "no_response", "help", "checking")
 LOCATION_MAX = 20
@@ -74,7 +75,8 @@ def create(conn, home_id, location, source, source_ref=None, dedupe_key=None, no
     """Create a fall incident for a home, or return the one already open there.
 
     Returns (incident_id, created). The same dedupe_key (e.g. a retried event) never makes a second incident,
-    and a home has at most one open incident: a new detection while one is open is only logged on it.
+    and a home has at most one open incident: a new detection while one is open is logged on it, and while a
+    family member is checking it the family is alerted again (in-app + push; user decision 2026-10-29).
     """
     now = now_ms() if now is None else now
     detected_at = now if detected_at is None else detected_at
@@ -84,14 +86,25 @@ def create(conn, home_id, location, source, source_ref=None, dedupe_key=None, no
         if not home:
             raise AccountError(404, "집을 찾을 수 없어요.", "home")
         if dedupe_key:
-            row = conn.execute("SELECT id FROM incidents WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+            row = conn.execute("""SELECT id FROM incidents WHERE dedupe_key = ?
+                                  UNION ALL SELECT incident_id FROM incident_redetections WHERE dedupe_key = ?""",
+                               (dedupe_key, dedupe_key)).fetchone()
             if row:
-                return row["id"], False
-        open_row = conn.execute(f"SELECT id FROM incidents WHERE home_id = ? AND status IN ({_marks(OPEN_STATUSES)})",
+                return row[0], False
+        open_row = conn.execute(f"SELECT * FROM incidents WHERE home_id = ? AND status IN ({_marks(OPEN_STATUSES)})",
                                 (home_id, *OPEN_STATUSES)).fetchone()
         if open_row:
+            if dedupe_key:
+                conn.execute("INSERT INTO incident_redetections (dedupe_key, incident_id, at) VALUES (?, ?, ?)",
+                             (dedupe_key, open_row["id"], now))
             _log(conn, open_row["id"], now, "redetected")
             _touch(conn, open_row["id"], now)
+            if open_row["status"] == "checking":
+                n = conn.execute("SELECT COUNT(*) FROM incident_log WHERE incident_id = ? AND action = 'redetected'",
+                                 (open_row["id"],)).fetchone()[0]
+                family = _family(conn, open_row)
+                _notify(conn, open_row, family, "redetected", None, now, n=n)
+                _push(conn, open_row, family, "redetected", now, n=n)
             return open_row["id"], False
         incident_id = _new_id()
         conn.execute("""INSERT INTO incidents (id, group_id, home_id, source, source_ref, dedupe_key, location,
@@ -99,8 +112,9 @@ def create(conn, home_id, location, source, source_ref=None, dedupe_key=None, no
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'detected', ?)""",
                      (incident_id, home["group_id"], home_id, source, source_ref, dedupe_key, location, detected_at, now))
         _log(conn, incident_id, detected_at, "detected")
-        import push   # 그룹 구성원 모두에게 푸시 (보내기는 서버의 백그라운드 작업이 따로, push.py)
-        push.queue_for_incident(conn, incident_id, home["group_id"], now)
+        # 처음 감지 푸시는 그 집의 감지 대상자에게만 (가족은 60초 무응답·도움 요청 때)
+        import push   # 보내기는 서버의 백그라운드 작업이 따로 (push.py)
+        push.queue(conn, incident_id, home["group_id"], _victims(conn, home_id), "detected", now)
         return incident_id, True
 
 
@@ -149,8 +163,9 @@ def tick(conn, now=None):
     due = conn.execute(
         """SELECT id FROM incidents
            WHERE (status = 'detected' AND detected_at + ? <= ?)
-              OR (status IN ('no_response', 'help') AND auto_report_at IS NOT NULL AND auto_report_at <= ?)""",
-        (SELF_WINDOW_MS, now, now)).fetchall()
+              OR (status IN ('no_response', 'help') AND auto_report_at IS NOT NULL AND auto_report_at <= ?)
+              OR (status = 'checking' AND checked_at + ? <= ?)""",
+        (SELF_WINDOW_MS, now, now, CHECKING_REMIND_MS, now)).fetchall()
     for row in due:
         with db.transaction(conn):
             inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (row["id"],)).fetchone()
@@ -162,6 +177,7 @@ def tick(conn, now=None):
                                 updated_at = ? WHERE id = ?""", (notified, notified + AUTO_REPORT_MS, now, inc["id"]))
                 _log(conn, inc["id"], notified, "no_response", late=now - notified > LATE_MS)
                 _notify_family(conn, inc, "family_alert", None, now, sms=True)
+                _push(conn, inc, _family(conn, inc), "family_alert", now)
                 changed += 1
                 inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (row["id"],)).fetchone()
             if inc["status"] in ("no_response", "help") and inc["auto_report_at"] and inc["auto_report_at"] <= now:
@@ -169,7 +185,24 @@ def tick(conn, now=None):
                 _report(conn, inc, "auto", at, _victims(conn, inc["home_id"]), "auto_reported", late=now - at > LATE_MS)
                 _notify(conn, inc, _members(conn, inc["group_id"]), "auto_reported", None, now, sms=True)
                 changed += 1
+            if inc["status"] == "checking" and _checking_reminder(conn, inc, now):
+                changed += 1
     return changed
+
+
+def _checking_reminder(conn, inc, now):
+    """Every CHECKING_REMIND_MS of checking: remind the member who is checking (in-app + push). After a long
+    server stop only the latest reminder is sent (no burst of old ones). Returns True when one was sent."""
+    due = (now - inc["checked_at"]) // CHECKING_REMIND_MS
+    done = conn.execute("""SELECT COALESCE(MAX(n), 0) FROM incident_log
+                           WHERE incident_id = ? AND action = 'checking_reminder'""", (inc["id"],)).fetchone()[0]
+    if due <= done:
+        return False
+    at = inc["checked_at"] + due * CHECKING_REMIND_MS
+    _log(conn, inc["id"], at, "checking_reminder", inc["checked_by"], due, late=now - at > LATE_MS)
+    _notify(conn, inc, [inc["checked_by"]], "checking_reminder", None, now, n=due)
+    _push(conn, inc, [inc["checked_by"]], "checking_reminder", now, n=due)
+    return True
 
 
 # ---- 사람이 누르는 동작 ----
@@ -248,6 +281,8 @@ def self_help(conn, user_id, incident_id, now=None):
         _log(conn, inc["id"], now, "help", me["id"], n)
         # 문자는 가족에게 처음 알릴 때만 (무응답 알림을 이미 보냈으면 앱 알림만)
         _notify_family(conn, inc, "help", me["id"], now, n=n, sms=first_alert)
+        if n == 1:   # 푸시는 첫 도움 요청 때 (다시 누르면 앱 알림만)
+            _push(conn, inc, _family(conn, inc), "help", now)
         return n
 
 
@@ -314,16 +349,26 @@ def _notify(conn, inc, user_ids, kind, actor_id, now, n=0, sms=False):
     alerts.queue_telegram(conn, inc["group_id"], inc["id"], kind, actor_id, now, n=n)
 
 
-def _notify_family(conn, inc, kind, actor_id, now, n=0, sms=False):
-    """Family = group members who are not detection targets of that home (they see the emergency screen as 'family')."""
+def _family(conn, inc):
+    """Group members who are not detection targets of that home (they see the emergency screen as 'family')."""
     victims = set(_victims(conn, inc["home_id"]))
-    _notify(conn, inc, [u for u in _members(conn, inc["group_id"]) if u not in victims], kind, actor_id, now, n=n, sms=sms)
+    return [u for u in _members(conn, inc["group_id"]) if u not in victims]
+
+
+def _notify_family(conn, inc, kind, actor_id, now, n=0, sms=False):
+    _notify(conn, inc, _family(conn, inc), kind, actor_id, now, n=n, sms=sms)
+
+
+def _push(conn, inc, user_ids, kind, now, n=0):
+    import push   # 보내기는 서버의 백그라운드 작업이 따로 (push.py)
+    push.queue(conn, inc["id"], inc["group_id"], user_ids, kind, now, n=n)
 
 
 # ---- 화면에 보낼 상태 (store.js 의 incident / notif 형식) ----
 LOG_TEXT = {
     "detected": "낙상이 감지됐어요",
     "redetected": "같은 집에서 다시 감지됐어요",
+    "checking_reminder": "30분 넘게 확인 중이라 {name}님께 다시 알렸어요",
     "no_response": "60초 동안 응답이 없어 가족에게 알렸어요",
     "self_ok": "{name}님이 괜찮다고 응답했어요",
     "help": "{name}님이 도움이 필요하다고 응답했어요 ({n}번째)",

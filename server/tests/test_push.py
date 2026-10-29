@@ -35,26 +35,71 @@ class PushTestBase(IncidentTestBase):
         push.register_token(self.conn, user, session or self.session(user), token, now=T)
         return token
 
-    def deliveries(self):
-        return {r["user_id"]: dict(r) for r in self.conn.execute("SELECT * FROM push_deliveries ORDER BY id")}
+    def deliveries(self, kind="detected"):
+        """{user_id: delivery} of one step (kind)."""
+        return {r["user_id"]: dict(r) for r in self.conn.execute(
+            "SELECT * FROM push_deliveries WHERE kind = ? ORDER BY id", (kind,))}
+
+    def steps(self):
+        return sorted((r["user_id"], r["kind"], r["n"]) for r in self.conn.execute("SELECT * FROM push_deliveries"))
 
     def send(self, sender, at=T + S):
         return push.process_due(self.conn, sender, now=at)
 
 
 class ReceiversTest(PushTestBase):
-    def test_every_member_of_the_group_once_per_incident(self):
+    """Who gets a push at which step (user decision 2026-10-29): first detection → the detection targets of that
+    home; 60 s without answer or the first help request → the family; a new fall while checking → the family;
+    every 30 minutes of checking → the member who is checking. Once per step."""
+
+    def test_first_detection_goes_to_the_detection_target_only(self):
         iid = self.fall()
         d = self.deliveries()
-        self.assertEqual(set(d), {self.a, self.b, self.d})                       # 감지 대상(에이)도 포함
+        self.assertEqual(set(d), {self.a})                                        # 감지 대상(에이)만, 가족은 아직
         self.assertNotIn(self.c, d)                                               # 다른 그룹 없음
         self.assertTrue(all(x["incident_id"] == iid and x["status"] == "pending" for x in d.values()))
         self.fall(at=T + 5 * S)                                                   # 진행 중에 다시 감지
         self.fall(at=T + 6 * S, key="dup")
-        self.assertEqual(self.count("push_deliveries"), 3)                        # 다시 보내지 않음
+        self.assertEqual(self.count("push_deliveries"), 1)                        # 다시 보내지 않음
         incidents.self_ok(self.conn, self.a, iid, now=T + 20 * S)
-        second = self.fall(at=T + 30 * S)                                         # 끝난 뒤 새 사고 → 새로 한 번씩
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM push_deliveries WHERE incident_id = ?", (second,)).fetchone()[0], 3)
+        second = self.fall(at=T + 30 * S)                                         # 끝난 뒤 새 사고 → 새로 한 번
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM push_deliveries WHERE incident_id = ?", (second,)).fetchone()[0], 1)
+
+    def test_no_answer_in_60_seconds_goes_to_the_family(self):
+        self.fall()
+        incidents.tick(self.conn, T + 59 * S)
+        self.assertEqual(self.deliveries("family_alert"), {})
+        incidents.tick(self.conn, T + 60 * S)
+        incidents.tick(self.conn, T + 61 * S)
+        self.assertEqual(set(self.deliveries("family_alert")), {self.b, self.d})  # 가족 모두, 대상자 제외, 한 번
+        self.assertEqual(self.count("push_deliveries"), 3)
+
+    def test_first_help_request_goes_to_the_family_once(self):
+        iid = self.fall()
+        incidents.self_help(self.conn, self.a, iid, now=T + 10 * S)
+        self.assertEqual(set(self.deliveries("help")), {self.b, self.d})
+        incidents.self_help(self.conn, self.a, iid, now=T + 20 * S)               # 다시 눌러도 앱 알림만
+        self.assertEqual(self.count("push_deliveries"), 3)
+        self.assertEqual(self.kinds(self.b).count("help"), 2)
+
+    def test_help_after_no_answer_is_pushed_too(self):
+        iid = self.fall()
+        incidents.tick(self.conn, T + 60 * S)
+        incidents.self_help(self.conn, self.a, iid, now=T + 70 * S)
+        self.assertEqual(set(self.deliveries("help")), {self.b, self.d})
+
+    def test_new_fall_while_checking_and_checking_reminder(self):
+        iid = self.fall(key="first")
+        incidents.tick(self.conn, T + 60 * S)
+        incidents.take_over(self.conn, self.b, iid, now=T + 70 * S)
+        self.fall(at=T + 100 * S, key="second")
+        self.fall(at=T + 101 * S, key="second")                                   # 기기 재전송
+        self.assertEqual(set(self.deliveries("redetected")), {self.b, self.d})
+        incidents.tick(self.conn, T + 70 * S + incidents.CHECKING_REMIND_MS)
+        self.assertEqual(set(self.deliveries("checking_reminder")), {self.b})    # 확인 중인 가족만
+        self.assertEqual(self.steps(), sorted([
+            (self.a, "detected", 0), (self.b, "family_alert", 0), (self.d, "family_alert", 0),
+            (self.b, "redetected", 1), (self.d, "redetected", 1), (self.b, "checking_reminder", 1)]))
 
     def test_other_group_incident_reaches_only_that_group(self):
         self.fall(home=self.home_c)
@@ -66,28 +111,37 @@ class ReceiversTest(PushTestBase):
         c1 = self.phone(self.c, "c1")                                             # 다른 그룹
         iid = self.fall()
         sender = push.FakeSender()
-        self.assertEqual(self.send(sender), 3)
-        to = sorted(m["message"]["token"] for m in sender.sent)
-        self.assertEqual(to, sorted([a1, a2, b1]))
-        self.assertNotIn(c1, to)
+        self.assertEqual(self.send(sender), 1)                                    # 처음: 감지 대상자(에이)만
+        self.assertEqual(sorted(m["message"]["token"] for m in sender.sent), sorted([a1, a2]))
         d = self.deliveries()
         self.assertEqual((d[self.a]["status"], d[self.a]["sent_count"]), ("simulated", 2))
-        self.assertEqual(d[self.b]["status"], "simulated")
-        self.assertEqual(d[self.d]["status"], "no_token")                        # 앱을 설치하지 않은 가족
         m = sender.sent[0]["message"]
         self.assertEqual((m["notification"]["body"], m["data"]["incidentId"], m["android"]["notification"]["channel_id"]),
                          ("낙상 사고가 감지됐어요. 확인해 주세요.", iid, "fall_alert"))
-        self.assertNotIn("가족", json.dumps(m, ensure_ascii=False))               # 이름 등 개인정보 없음
+        incidents.tick(self.conn, T + 60 * S)                                    # 60초 무응답 → 가족
+        sender.sent.clear()
+        self.assertEqual(self.send(sender, at=T + 61 * S), 2)
+        to = [m["message"]["token"] for m in sender.sent]
+        self.assertEqual(to, [b1])
+        self.assertNotIn(c1, to)
+        d = self.deliveries("family_alert")
+        self.assertEqual(d[self.b]["status"], "simulated")
+        self.assertEqual(d[self.d]["status"], "no_token")                        # 앱을 설치하지 않은 가족
+        m = sender.sent[0]["message"]
+        self.assertEqual((m["notification"]["body"], m["data"]["step"]), (push.PUSH_TEXT["family_alert"], "family_alert"))
+        for text in push.PUSH_TEXT.values():
+            self.assertNotIn("가족", text)                                        # 이름 등 개인정보 없음
         self.assertEqual(self.send(sender, at=T + 99 * S), 0)                     # 다시 처리해도 다시 보내지 않음
 
     def test_member_who_left_the_group_meanwhile_gets_nothing(self):
         self.phone(self.b, "b1")
         self.fall()
+        incidents.tick(self.conn, T + 60 * S)                                    # 가족 푸시 대기
         accounts.leave_group(self.conn, self.b)
         sender = push.FakeSender()
-        self.send(sender)
+        self.send(sender, at=T + 61 * S)
         self.assertEqual(sender.sent, [])
-        self.assertEqual(self.deliveries()[self.b]["status"], "no_token")
+        self.assertEqual(self.deliveries("family_alert")[self.b]["status"], "no_token")
 
 
 class TokenTest(PushTestBase):
@@ -122,10 +176,11 @@ class TokenTest(PushTestBase):
         push.register_token(self.conn, self.d, accounts._token_hash(old), TOK + "d-old-" + "x" * 30, now=T)
         self.phone(self.a, "a1")
         self.fall()
+        incidents.tick(self.conn, T + 60 * S)
         sender = push.FakeSender()
-        self.send(sender)
+        self.send(sender, at=T + 61 * S)
         self.assertEqual(len(sender.sent), 1)                                     # 에이만
-        self.assertEqual(self.deliveries()[self.d]["status"], "no_token")
+        self.assertEqual(self.deliveries("family_alert")[self.d]["status"], "no_token")
         accounts.withdraw(self.conn, self.a, PW, IP, now=T / 1000)  # 탈퇴 → 토큰 삭제
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM push_tokens WHERE user_id = ?", (self.a,)).fetchone()[0], 0)
 
@@ -144,19 +199,20 @@ class FailureTest(PushTestBase):
         iid = self.fall()
         sender = push.FakeSender()
         self.send(sender)
-        d = self.deliveries()
-        self.assertEqual(d[self.a]["status"], "failed")                          # 무효 토큰: 실패, 토큰 삭제
+        self.assertEqual(self.deliveries()[self.a]["status"], "failed")          # 무효 토큰: 실패, 토큰 삭제
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM push_tokens WHERE user_id = ?", (self.a,)).fetchone()[0], 0)
-        self.assertEqual(d[self.b]["status"], "retry")                           # 일시 오류: 다시 시도
-        self.assertEqual(d[self.d]["status"], "simulated")
-        self.send(sender, at=T + 40 * S)
-        self.send(sender, at=T + 200 * S)
-        self.assertEqual(self.deliveries()[self.b]["status"], "failed")          # 3번 뒤 포기
-        self.assertEqual(self.deliveries()[self.b]["attempts"], 3)
         self.assertEqual(self.inc(iid)["status"], "detected")                    # 사고는 그대로
-        incidents.tick(self.conn, now=T + 61 * S)
+        incidents.tick(self.conn, now=T + 60 * S)
         self.assertEqual(self.inc(iid)["status"], "no_response")                 # 기존 알림 흐름도 그대로
         self.assertIn("family_alert", self.kinds(self.b))
+        self.send(sender, at=T + 61 * S)
+        d = self.deliveries("family_alert")
+        self.assertEqual(d[self.b]["status"], "retry")                           # 일시 오류: 다시 시도
+        self.assertEqual(d[self.d]["status"], "simulated")
+        self.send(sender, at=T + 100 * S)
+        self.send(sender, at=T + 300 * S)
+        self.assertEqual(self.deliveries("family_alert")[self.b]["status"], "failed")   # 3번 뒤 포기
+        self.assertEqual(self.deliveries("family_alert")[self.b]["attempts"], 3)
 
     def test_not_configured_marks_skipped(self):
         self.phone(self.a, "a1")
@@ -288,16 +344,22 @@ class PushApiTest(unittest.TestCase):
         self.assertEqual(a.call("POST", "/api/v2/me/push-token", {"token": "bad"})[0], 400)
         for b, name in ((a, "a"), (f, "f"), (other, "o")):
             self.assertEqual(b.call("POST", "/api/v2/me/push-token", {"token": f"{TOK}{name}-" + "z" * 30})[0], 200)
+        def wait_for(count):
+            end = time.time() + 10
+            while time.time() < end and len(FakeFcm.got) < count:
+                time.sleep(0.2)
+            time.sleep(1.5)
+            return [m["message"]["token"] for m in FakeFcm.got]
+
         FakeFcm.got.clear()
         status, _, data = a.call("POST", "/api/v2/dev/falls", {"homeId": home, "location": "거실"})
         self.assertEqual(status, 200, data)
-        end = time.time() + 10
-        while time.time() < end and len(FakeFcm.got) < 2:
-            time.sleep(0.2)
-        time.sleep(1.5)
-        to = sorted(m["message"]["token"] for m in FakeFcm.got)
-        self.assertEqual(to, sorted([f"{TOK}a-" + "z" * 30, f"{TOK}f-" + "z" * 30]))   # 대상 + 가족, 다른 그룹 없음
+        self.assertEqual(wait_for(1), [f"{TOK}a-" + "z" * 30])                    # 처음: 감지 대상자만
         self.assertTrue(FakeFcm.got[0]["message"]["notification"]["title"].startswith("[개발 시험]"))
+        iid = next(i["id"] for i in a.state()["state"]["incidents"] if i["status"] == "detected")
+        FakeFcm.got.clear()
+        self.assertEqual(a.call("POST", f"/api/v2/incidents/{iid}/help")[0], 200)
+        self.assertEqual(wait_for(1), [f"{TOK}f-" + "z" * 30])                    # 도움 요청: 가족, 다른 그룹 없음
         # 로그아웃 → 그 휴대폰에는 더 이상 안 감
         self.assertEqual(f.call("POST", "/api/v2/auth/logout")[0], 200)
         a.call("DELETE", "/api/v2/me/push-token", {"token": f"{TOK}a-" + "z" * 30})   # 앱이 로그아웃 전에 지움

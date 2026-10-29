@@ -1,7 +1,12 @@
-"""Push notifications to family phones (Firebase Cloud Messaging) when a fall incident is created.
-
-Who gets it: every member of the incident's group (detection targets included), once per incident and person
-(push_deliveries UNIQUE(incident_id, user_id)): a new detection while the incident is open sends nothing new.
+"""Push notifications to phones (Firebase Cloud Messaging) at the steps of a fall incident (user decision
+2026-10-29; incidents.py decides who):
+  detected           the fall is detected: the detection targets of that home ('are you all right?'); the family
+                     does not see the incident for its first 60 s, so they are not pushed yet
+  family_alert       60 s without answer: the family (members who are not detection targets of that home)
+  help               a target asks for help (first request only): the family
+  redetected         a new fall while a family member is checking: the family
+  checking_reminder  still checking after every 30 minutes: the member who is checking
+Once per incident, person, kind and number (push_deliveries UNIQUE(incident_id, user_id, kind, n)).
 Members of other groups never get it: the receivers are taken from the incident's group, and when sending, a
 person who has left that group meanwhile is skipped.
 
@@ -21,7 +26,7 @@ Senders (build_sender):
               was sent to a phone.
   None        not configured: deliveries are marked 'skipped' (the incident works as before).
 
-The message shown on the lock screen has no name or address: "낙상 사고가 감지됐어요. 확인해 주세요."
+The message shown on the lock screen has no name or address (PUSH_TEXT).
 The app opens the incident from the data field incidentId.
 """
 import base64
@@ -37,6 +42,14 @@ from accounts import AccountError
 
 TITLE = "낙상 지킴이"
 BODY = "낙상 사고가 감지됐어요. 확인해 주세요."
+# 잠금 화면 문장 (이름·주소 없음)
+PUSH_TEXT = {
+    "detected": BODY,
+    "family_alert": "낙상 후 60초 동안 응답이 없어요. 확인해 주세요.",
+    "help": "낙상 후 도움을 요청했어요. 확인해 주세요.",
+    "redetected": "확인 중인 사고에서 다시 넘어짐이 감지됐어요. 확인해 주세요.",
+    "checking_reminder": "아직 확인 중인 낙상 사고가 있어요. 확인을 마치면 종료해 주세요.",
+}
 CHANNEL_ID = "fall_alert"                  # 앱(mobile/)의 긴급 알림 채널과 같은 이름
 MAX_ATTEMPTS = 3
 RETRY_BACKOFF_MS = (30_000, 120_000)
@@ -80,15 +93,17 @@ def unregister_token(conn, user_id, token):
         conn.execute("DELETE FROM push_tokens WHERE token = ? AND user_id = ?", (str(token or ""), user_id))
 
 
-# ---- 사고 → 전달 대기 (사고를 만드는 트랜잭션 안에서, incidents.create) ----
-def queue_for_incident(conn, incident_id, group_id, now):
-    """One push per member of the incident's group. Never raises (a push problem must not stop the incident)."""
+# ---- 사고 단계 → 전달 대기 (사고를 바꾸는 트랜잭션 안에서, incidents.py) ----
+def queue(conn, incident_id, group_id, user_ids, kind, now, n=0):
+    """One push per person for this step (only members of the incident's group). Never raises (a push problem
+    must not stop the incident)."""
     try:
-        conn.execute("""INSERT OR IGNORE INTO push_deliveries (incident_id, group_id, user_id, status, next_attempt_at,
-                                                               created_at, updated_at)
-                        SELECT ?, ?, id, 'pending', ?, ?, ? FROM users WHERE group_id = ?""",
-                     (incident_id, group_id, now, now, now, group_id))
-    except Exception as e:   # 푸시 표가 없거나 하는 문제는 기록만 (사고는 그대로 만듦)
+        for user_id in user_ids:
+            conn.execute("""INSERT OR IGNORE INTO push_deliveries (incident_id, group_id, user_id, kind, n, status,
+                                                                   next_attempt_at, created_at, updated_at)
+                            SELECT ?, ?, id, ?, ?, 'pending', ?, ?, ? FROM users WHERE id = ? AND group_id = ?""",
+                         (incident_id, group_id, kind, n, now, now, now, user_id, group_id))
+    except Exception as e:   # 푸시 표가 없거나 하는 문제는 기록만 (사고는 그대로)
         print(f"[push] 전달 대기 등록 실패: {type(e).__name__}")
 
 
@@ -100,14 +115,14 @@ class PushError(Exception):
         self.invalid_token = invalid_token
 
 
-def message(token, incident_id, dev=False):
+def message(token, incident_id, dev=False, kind="detected"):
     """FCM HTTP v1 message: shown by Android itself when the app is in the background or closed (channel
     fall_alert, high priority), data incidentId opens the incident when tapped. No personal data."""
     title = ("[개발 시험] " if dev else "") + TITLE
     return {"message": {
         "token": token,
-        "notification": {"title": title, "body": BODY},
-        "data": {"incidentId": incident_id, "kind": "fall"},
+        "notification": {"title": title, "body": PUSH_TEXT.get(kind, BODY)},
+        "data": {"incidentId": incident_id, "kind": "fall", "step": kind},
         "android": {
             "priority": "high",
             "ttl": "3600s",
@@ -277,7 +292,7 @@ def process_due(conn, sender, now=None):
         else:
             for token in tokens:
                 try:
-                    sender.send(message(token, r["incident_id"], dev=r["source"] == "dev"))
+                    sender.send(message(token, r["incident_id"], dev=r["source"] == "dev", kind=r["kind"]))
                     sent += 1
                 except PushError as e:
                     error = str(e)[:200]

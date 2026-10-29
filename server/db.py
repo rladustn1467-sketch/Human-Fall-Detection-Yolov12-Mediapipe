@@ -335,6 +335,41 @@ MIGRATIONS = [
            )""",
         "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
     ]),
+    (11, "단계별 푸시 (처음 감지·무응답·도움 요청·확인 중 재감지·확인 중 알림), 다시 감지한 이벤트 기록 (push.py, incidents.py)", [
+        # 사고·사람·종류·번호마다 한 번. 예전 줄은 처음 감지 푸시(detected)로 옮김
+        "ALTER TABLE push_deliveries RENAME TO push_deliveries_v10",
+        """CREATE TABLE push_deliveries (
+               id              INTEGER PRIMARY KEY AUTOINCREMENT,
+               incident_id     TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               group_id        TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               kind            TEXT NOT NULL DEFAULT 'detected'
+                               CHECK (kind IN ('detected', 'family_alert', 'help', 'redetected', 'checking_reminder')),
+               n               INTEGER NOT NULL DEFAULT 0,
+               status          TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'sent', 'simulated', 'no_token',
+                                                               'skipped', 'failed')),
+               provider        TEXT,
+               attempts        INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at INTEGER,
+               sent_count      INTEGER NOT NULL DEFAULT 0,
+               last_error      TEXT,
+               created_at      INTEGER NOT NULL,
+               updated_at      INTEGER NOT NULL,
+               UNIQUE (incident_id, user_id, kind, n)
+           )""",
+        """INSERT INTO push_deliveries (id, incident_id, group_id, user_id, kind, n, status, provider, attempts,
+                                       next_attempt_at, sent_count, last_error, created_at, updated_at)
+           SELECT id, incident_id, group_id, user_id, 'detected', 0, status, provider, attempts,
+                  next_attempt_at, sent_count, last_error, created_at, updated_at FROM push_deliveries_v10""",
+        "DROP TABLE push_deliveries_v10",
+        "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
+        # 진행 중인 사고에 다시 감지된 이벤트 (같은 이벤트를 기기가 다시 보내도 한 번만 기록·알림)
+        """CREATE TABLE incident_redetections (
+               dedupe_key  TEXT PRIMARY KEY,
+               incident_id TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+               at          INTEGER NOT NULL
+           )""",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

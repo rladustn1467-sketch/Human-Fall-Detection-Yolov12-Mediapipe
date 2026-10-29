@@ -22,6 +22,28 @@ class DbInitTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_migration_11_keeps_old_push_rows_as_first_detection(self):
+        db.init(self.path, [m for m in db.MIGRATIONS if m[0] <= 10])
+        with db.session(self.path) as conn:
+            conn.execute("INSERT INTO groups (id, name, created_at) VALUES ('g', 'g', 0)")
+            conn.execute("INSERT INTO users (id, name, phone, password_hash, created_at, group_id) VALUES ('u', 'u', '010', 'h', 0, 'g')")
+            conn.execute("INSERT INTO homes (id, group_id, created_at, updated_at) VALUES ('h', 'g', 0, 0)")
+            conn.execute("""INSERT INTO incidents (id, group_id, home_id, source, location, detected_at, status, updated_at)
+                            VALUES ('i', 'g', 'h', 'dev', '거실', 0, 'detected', 0)""")
+            conn.execute("""INSERT INTO push_deliveries (incident_id, group_id, user_id, status, attempts, sent_count,
+                                                         created_at, updated_at) VALUES ('i', 'g', 'u', 'sent', 1, 1, 5, 6)""")
+        self.assertEqual(db.init(self.path), 11)
+        with db.session(self.path) as conn:
+            row = conn.execute("SELECT * FROM push_deliveries").fetchone()
+            self.assertEqual((row["incident_id"], row["user_id"], row["kind"], row["n"], row["status"], row["sent_count"]),
+                             ("i", "u", "detected", 0, "sent", 1))
+            conn.execute("""INSERT INTO push_deliveries (incident_id, group_id, user_id, kind, n, status, created_at, updated_at)
+                            VALUES ('i', 'g', 'u', 'family_alert', 0, 'pending', 7, 7)""")   # 같은 사람, 다른 단계
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("""INSERT INTO push_deliveries (incident_id, group_id, user_id, kind, n, status, created_at, updated_at)
+                                VALUES ('i', 'g', 'u', 'family_alert', 0, 'pending', 8, 8)""")   # 같은 단계는 한 번
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'incident_redetections'").fetchone())
+
     def test_creates_file_and_applies_migrations(self):
         version = db.init(self.path)
         self.assertTrue(self.path.is_file())

@@ -43,6 +43,7 @@ public class DeviceLinkTest {
     volatile boolean revoked = false;
     volatile boolean down = false;        // 서버가 응답하지 못함 (503)
     volatile boolean unpaired = false;
+    volatile boolean revokedEnabledOnly = false;   // 켜짐/꺼짐 알림만 500
     final List<String> eventIds = Collections.synchronizedList(new ArrayList<>());
     final List<JSONObject> eventBodies = Collections.synchronizedList(new ArrayList<>());
 
@@ -65,6 +66,7 @@ public class DeviceLinkTest {
                 return new Object[]{200, String.format(answer, enabled, location)};
             case "/api/v2/device/enabled":
                 if (!authorized(headers)) return new Object[]{401, "{}"};
+                if (revokedEnabledOnly) return new Object[]{500, "{}"};
                 enabled = b.optBoolean("enabled");
                 return new Object[]{200, String.format(answer, enabled, location)};
             case "/api/v2/device/unpair":
@@ -78,6 +80,7 @@ public class DeviceLinkTest {
                 eventBodies.add(b);
                 if (failEvents > 0) { failEvents--; return new Object[]{500, "{}"}; }
                 if (eventStatus != 200) return new Object[]{eventStatus, "{\"message\":\"잘못된 요청\"}"};
+                if (!enabled && !b.optBoolean("is_test")) return new Object[]{200, "{\"ok\":true,\"ignored\":\"off\"}"};   // 서버와 같음
                 return new Object[]{200, "{\"ok\":true,\"incident_id\":\"inc_1\",\"image_saved\":" + b.has("image_jpeg_base64") + "}"};
             default:
                 return new Object[]{404, "{}"};
@@ -173,6 +176,41 @@ public class DeviceLinkTest {
         } catch (IllegalStateException expected) {
             assertEquals(4, eventIds.size());                               // 한 번만
         }
+    }
+
+    @Test
+    public void serverStillOffWhileThisPhoneIsOnSyncsAndSendsAgain() throws Exception {
+        DeviceLink link = paired(new MemStore(), new ArrayList<>());
+        enabled = false;                                                    // 서버에는 아직 '꺼짐' (켬을 못 알린 사이)
+        JSONObject r = link.sendFallOrKeep("e1", new byte[]{1});
+        assertEquals("inc_1", r.optString("incident_id"));                 // 무시되지 않고 사고가 됨
+        assertTrue(enabled);                                                // 서버도 이 휴대폰 값(켜짐)으로 맞춤
+        assertEquals(List.of("e1", "e1"), eventIds);                       // 같은 event id 로 한 번 더 (사고는 하나)
+        assertEquals(0, link.pendingCount());
+    }
+
+    @Test
+    public void serverStillOffAndSyncFailsKeepsTheFall() throws Exception {
+        DeviceLink link = paired(new MemStore(), new ArrayList<>());
+        enabled = false;
+        revokedEnabledOnly = true;                                          // 켜짐 알림만 실패 (500)
+        assertNull(link.sendFallOrKeep("e3", new byte[]{1}));
+        assertEquals(1, link.pendingCount());                               // 버리지 않고 보관했다가 다시
+        revokedEnabledOnly = false;
+        link.heartbeat(true);                                               // 다음 상태 신호: 켜짐을 알리고 다시 보냄
+        assertTrue(enabled);
+        assertEquals(0, link.pendingCount());
+        assertEquals("e3", eventIds.get(eventIds.size() - 1));
+    }
+
+    @Test
+    public void thisPhoneOffLeavesTheFallIgnored() throws Exception {
+        DeviceLink link = paired(new MemStore(), new ArrayList<>());
+        assertNull(link.setEnabled(false));                                 // 이 휴대폰에서 끔 → 서버도 꺼짐
+        JSONObject r = link.sendFallOrKeep("e2", new byte[]{1});
+        assertEquals("off", r.optString("ignored"));                       // 꺼 둔 상태는 그대로 무시
+        assertFalse(enabled);
+        assertEquals(List.of("e2"), eventIds);                             // 다시 보내지 않음
     }
 
     @Test
