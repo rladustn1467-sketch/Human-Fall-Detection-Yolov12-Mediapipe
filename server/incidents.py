@@ -112,6 +112,22 @@ def add_photo(conn, incident_id, photo_id, now=None):
                      (photo_id, incident_id, now))
 
 
+PHOTO_KEEP_MS = 14 * 24 * 3600 * 1000   # 끝난 사고의 사진 보관 기간 (사용자 결정 2026-10-29)
+
+
+def expire_photos(conn, now=None, keep_ms=PHOTO_KEEP_MS):
+    """Unlink the photos of incidents that ended (closed or reported) at least keep_ms ago and return their ids,
+    so the caller can delete the files. Open incidents keep their photos, also while a family member is checking
+    ('checking'): only ended incidents have closed_at. The incident record itself stays."""
+    now = now_ms() if now is None else now
+    with db.transaction(conn):
+        ids = [r["photo_id"] for r in conn.execute(
+            """SELECT p.photo_id FROM incident_photos p JOIN incidents i ON i.id = p.incident_id
+               WHERE i.closed_at IS NOT NULL AND i.closed_at + ? <= ? ORDER BY p.at""", (keep_ms, now))]
+        conn.executemany("DELETE FROM incident_photos WHERE photo_id = ?", [(i,) for i in ids])
+    return ids
+
+
 def check_photo(conn, user_id, incident_id, photo_id):
     """Raise 404 unless the photo belongs to an incident of the user's own group (other groups: same as missing)."""
     _load(conn, user_id, incident_id)

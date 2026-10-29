@@ -219,6 +219,47 @@ class ActionTest(IncidentTestBase):
         self.assertEqual(self.view(self.b, iid)["status"], "no_response")   # 사고 기록은 그룹에 남음
 
 
+class PhotoRetentionTest(IncidentTestBase):
+    DAY = 24 * 3600 * S
+
+    def photos(self):
+        return sorted(r[0] for r in self.conn.execute("SELECT photo_id FROM incident_photos"))
+
+    def test_photos_of_ended_incidents_go_after_14_days_open_and_checking_stay(self):
+        closed = self.fall(T)
+        incidents.add_photo(self.conn, closed, "p_closed", now=T)
+        incidents.self_ok(self.conn, self.a, closed, now=T + 10 * S)                    # 종료 (closed)
+        reported = self.fall(T + 100 * S)
+        incidents.add_photo(self.conn, reported, "p_reported", now=T + 100 * S)
+        incidents.report(self.conn, self.b, reported, [self.a], now=T + 200 * S)        # 신고됨 (reported)
+        checking = self.fall(T + 300 * S)
+        incidents.add_photo(self.conn, checking, "p_checking", now=T + 300 * S)
+        incidents.tick(self.conn, T + 360 * S)
+        incidents.take_over(self.conn, self.b, checking, now=T + 370 * S)                # 확인 중 (끝나지 않음)
+        detected = self.fall(T, home=self.home_c)
+        incidents.add_photo(self.conn, detected, "p_open", now=T)                       # 다른 집, 진행 중
+
+        all_four = ["p_checking", "p_closed", "p_open", "p_reported"]
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 10 * S + 14 * self.DAY - 1), [])
+        self.assertEqual(self.photos(), all_four)                                         # 14일이 안 됨
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 10 * S + 14 * self.DAY), ["p_closed"])
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 200 * S + 14 * self.DAY), ["p_reported"])
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 100 * self.DAY), [])  # 확인 중·진행 중은 안 지움
+        self.assertEqual(self.photos(), ["p_checking", "p_open"])
+        self.assertEqual(self.inc(closed)["status"], "closed")                            # 사고 기록은 남음
+        self.assertEqual(self.view(self.b, closed)["photos"], [])
+
+    def test_checking_photo_goes_14_days_after_it_is_closed(self):
+        iid = self.fall(T)
+        incidents.add_photo(self.conn, iid, "p1", now=T)
+        incidents.tick(self.conn, T + 60 * S)
+        incidents.take_over(self.conn, self.b, iid, now=T + 70 * S)
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 30 * self.DAY), [])
+        incidents.close_checked(self.conn, self.b, iid, now=T + 31 * self.DAY)
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 31 * self.DAY + 14 * self.DAY - 1), [])
+        self.assertEqual(incidents.expire_photos(self.conn, now=T + 31 * self.DAY + 14 * self.DAY), ["p1"])
+
+
 class ConcurrencyTest(IncidentTestBase):
     def race(self, *calls):
         """Run the calls at the same moment on separate connections (like separate requests)."""

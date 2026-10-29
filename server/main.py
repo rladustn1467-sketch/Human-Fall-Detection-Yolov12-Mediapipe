@@ -94,6 +94,9 @@ MAX_IMAGE_BYTES = 1_000_000  # 디코딩 후 최대 1MB
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 로그인 쿠키 유지 기간(초)
 SERVER_PORT = 8000  # 접속 주소 안내용 (실행 포트와 맞출 것)
 TIMEOUT_CHECK_INTERVAL = 1  # 응답 시간 초과를 검사하는 주기(초)
+# 끝난 사고의 사진 보관 기간(일)과 지우는 작업 주기(초). 시험에서만 짧게 바꿈
+PHOTO_RETENTION_DAYS = float(os.environ.get("PHOTO_RETENTION_DAYS", "14"))
+PHOTO_CLEANUP_SECONDS = float(os.environ.get("PHOTO_CLEANUP_SECONDS", "3600"))
 
 BASE_DIR = Path(__file__).parent
 IMAGE_DIR = BASE_DIR / "images"
@@ -134,9 +137,42 @@ LATE_PREFIX = "시간 초과 후 "  # 제한 시간이 지난 뒤 누른 응답�
 dispatcher = NotificationDispatcher(build_notifiers(os.environ))
 
 
+def _expire_photos():
+    """Delete the photos of incidents that ended PHOTO_RETENTION_DAYS ago (incidents.expire_photos). For a photo of
+    an old /api/events event, its event record also forgets the photo, so the old screens show none."""
+    with db.session(DB_PATH) as conn:
+        ids = incidents.expire_photos(conn, keep_ms=int(PHOTO_RETENTION_DAYS * 24 * 3600 * 1000))
+    changed = False
+    for photo_id in ids:
+        if not EVENT_ID_RE.match(photo_id):
+            continue
+        with _lock:
+            ev = events.get(photo_id)
+            if ev and ev.get("image"):
+                ev["image"] = None
+                changed = True
+        try:
+            (IMAGE_DIR / f"{photo_id}.jpg").unlink(missing_ok=True)
+        except OSError as e:
+            print(f"[photo] 사진 파일을 지우지 못함: {type(e).__name__}: {e}")
+    if changed:
+        with _lock:
+            _save_events()
+    if ids:
+        print(f"[photo] 끝난 지 {PHOTO_RETENTION_DAYS:g}일이 지난 사고의 사진 {len(ids)}장을 지움")
+
+
 def _timeout_watcher(stop):
-    """Every second: mark overdue events as timed out and run due auto reports, even when nobody is viewing a page."""
+    """Every second: mark overdue events as timed out and run due auto reports, even when nobody is viewing a page.
+    Every PHOTO_CLEANUP_SECONDS (and once at start): delete the photos of incidents that ended long enough ago."""
+    next_cleanup = 0.0
     while not stop.wait(TIMEOUT_CHECK_INTERVAL):
+        if time.time() >= next_cleanup:
+            next_cleanup = time.time() + PHOTO_CLEANUP_SECONDS
+            try:
+                _expire_photos()
+            except Exception as e:  # 사진 정리 오류가 다른 처리를 막지 않도록 따로 잡음
+                print(f"[photo] 사진 보관 기간 처리 오류: {type(e).__name__}: {e}")
         try:
             with _lock:
                 _refresh_timeouts()
