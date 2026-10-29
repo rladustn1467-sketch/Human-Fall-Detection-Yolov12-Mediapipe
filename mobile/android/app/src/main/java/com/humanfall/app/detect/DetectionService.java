@@ -51,7 +51,8 @@ import org.json.JSONObject;
  * Emulator check (debug builds only): with the extra MOCK_FRAMES_DIR, images in that folder are fed through the very
  * same pipeline instead of the camera, so pairing → decision → incident → photo can be tested without a real phone.
  * With MOCK_FPS as well, the folder is one recorded video: its frames go through once, one after another, with the
- * video's own times (frame / fps), so the current rule and v2 (log only) can be compared on the emulator.
+ * video's own times (frame number in the file name / fps; frames left out of the folder = dropped frames), so the
+ * current rule and v2 (log only) can be compared on the emulator.
  */
 public class DetectionService extends LifecycleService {
     static final String TAG = "DetectionService";
@@ -169,8 +170,7 @@ public class DetectionService extends LifecycleService {
                 cameraWanted = false;
                 return;
             }
-            pipeline = new FallPipeline(detector, this::onFall,
-                    BuildConfig.DEBUG && mockDir != null && mockFps > 0 ? mockFps : FallPipeline.CAMERA_FPS_ASSUMED);
+            pipeline = new FallPipeline(detector, this::onFall);
         }
         if (BuildConfig.DEBUG && mockDir != null) {
             startMockFrames();
@@ -297,7 +297,8 @@ public class DetectionService extends LifecycleService {
 
     /**
      * Debug builds only: the folder is one recorded video (frames in name order). Each frame is analysed after the
-     * previous one finished, at the video's own time (start + frame / fps), once. At the end the first alert of the
+     * previous one finished, at the video's own time (start + (number in the file name - 1) / fps, or its position
+     * when the name has no number), once. At the end the first alert of the
      * current rule and v2's alarm (log only) are written, in seconds from the start of the video.
      */
     private void startMockVideo(File[] files) {
@@ -311,7 +312,8 @@ public class DetectionService extends LifecycleService {
                 File f = files[i];
                 Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
                 if (bmp == null) continue;
-                long at = start + Math.round(i * 1000.0 / mockFps);
+                String digits = f.getName().replaceAll("\\D", "");
+                long at = start + Math.round((digits.isEmpty() ? i : Long.parseLong(digits) - 1) * 1000.0 / mockFps);
                 long fallsBefore = DetectorRuntime.STATE.lastFallAt;
                 try {
                     analysisExec.submit(() -> runPipeline(bmp, f.getName(), at)).get();

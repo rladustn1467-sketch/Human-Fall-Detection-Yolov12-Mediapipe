@@ -87,6 +87,38 @@ class TimeFeatureTest(unittest.TestCase):
         self.assertLess(uf.descent_speed((0, 100), (0, 150), 100.0, 0.25), 0)            # 올라가면 음수
         self.assertIsNone(uf.descent_speed(None, (0, 100), 100.0, 0.25))
 
+    def test_frame_seconds_before_matches_frame_count_at_a_steady_rate(self):
+        for fps in (30, 20, 15):
+            times = [k / fps for k in range(60)]
+            for k in range(60):
+                back = round(0.25 * fps)
+                self.assertEqual(uf.frame_seconds_before(times, k, 0.25), k - back if k - back >= 0 else None, (fps, k))
+
+    def test_frame_seconds_before_with_uneven_frames(self):
+        times = [0.0, 0.1, 0.3, 0.5, 0.55, 0.9, 1.3]
+        self.assertIsNone(uf.frame_seconds_before(times, 1, 0.25))     # 시작 뒤 0.25초가 안 됨
+        self.assertEqual(uf.frame_seconds_before(times, 2, 0.25), 0)   # 0.05 → 0.0 (0.05 차이) / 0.1 (0.05 차이): 같으면 이른 쪽
+        self.assertEqual(uf.frame_seconds_before(times, 4, 0.25), 2)   # 0.30 → 0.3
+        self.assertEqual(uf.frame_seconds_before(times, 5, 0.25), 4)   # 0.65 → 0.55 (0.1 차이, 허용 끝)
+        self.assertIsNone(uf.frame_seconds_before(times, 6, 0.25))     # 1.05 → 가장 가까운 0.9 가 0.15 차이
+
+    def test_time_timing_divides_by_the_real_gap(self):
+        # 몸 전체가 1초에 100px(= 몸통 1개) 내려감. 프레임을 불규칙하게 빼도 속도는 1.0 몸통/초
+        frames = []
+        for k in range(30):
+            box, lms = person(standing(top=50 + k / FPS * 100.0))
+            frames.append({"index": k, "now": k / FPS, "boxes": [list(box)], "landmarks": [lms]})
+        sparse = [f for f in frames if f["index"] % 3 != 1 and f["index"] not in (12, 13, 14)]
+        rows = uf.sequence_rows("android", "adl-95", sparse, {}, timing="time")
+        speeds = [r["C1_descent_025"] for r in rows if r["C1_descent_025"] != ""]
+        self.assertGreater(len(speeds), 10)
+        for v in speeds:
+            self.assertAlmostEqual(v, 1.0, places=6)
+        # 프레임 수로 세면 (8프레임 전 = 0.267초로 가정) 빠진 프레임 때문에 속도가 부풀려짐
+        counted = [r["C1_descent_025"] for r in uf.sequence_rows("android", "adl-95", sparse, {}, timing="frames")
+                   if r["C1_descent_025"] != ""]
+        self.assertGreater(max(counted), 1.3)
+
     def test_rows_for_a_falling_sequence(self):
         # 서 있다가(0~14) 한 프레임에 눕고(15~) 그 뒤 사람이 안 보임(25~29)
         frames, labels = [], {"fall-99": {}}

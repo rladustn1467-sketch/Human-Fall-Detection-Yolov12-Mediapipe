@@ -11,15 +11,18 @@ import java.util.List;
  * Input per frame: PoseBridge's boxes (frame pixels) and landmarks (fractions of each box, [33][x, y, z, vis]).
  * A joint counts when its visibility is at least 0.5. The main person is the one whose visible joints span the
  * largest area (at least 5 joints); a phantom second person is left out that way.
- * C1 compares the main person's hip with the main person of {@code round(0.25 * fps)} frames before, so it
- * assumes frames at a steady rate (as in the recorded test videos). On the phone the camera rate varies
- * (KEEP_ONLY_LATEST) - not checked on a real phone yet (docs/fall_rule_v2.md).
+ * C1 compares the main person's hip with the main person of the frame closest in time to 0.25 s before (ties: the
+ * earlier frame; none within 0.1 s, or less than 0.25 s since the first frame: no speed) and divides by the real
+ * time between the two frames, because the phone camera drops frames it cannot keep up with (KEEP_ONLY_LATEST).
+ * With a steady rate this is the same as counting round(0.25 * fps) frames (tools/urfall_features.py timing="time").
  */
 public final class V2Features {
     static final double VIS_MIN = 0.5;
     static final int NOSE = 0, L_SH = 11, R_SH = 12, L_HIP = 23, R_HIP = 24, L_ANK = 27, R_ANK = 28;
     static final int MIN_JOINTS_FOR_EXTENT = 5;
     static final double DESCENT_SECONDS = 0.25;
+    static final double DESCENT_TOLERANCE = 0.1;   // 찾는 시각에서 이만큼 넘게 떨어진 프레임뿐이면 속도 없음
+    static final double TIME_TIE = 1e-9;           // 이 차이 안의 두 프레임은 같은 거리로 보고 더 이른 쪽
 
     /** The rule's inputs for one frame; null = not available. */
     public static final class Frame {
@@ -42,15 +45,9 @@ public final class V2Features {
         double extentArea;
     }
 
-    private final double fps;
-    private final int back;
+    private final List<Double> times = new ArrayList<>();
     private final List<Person> mains = new ArrayList<>();   // 최근 프레임마다 주 인물 (없으면 null)
-
-    /** @param fps the frame rate of the input (UR Fall 30, CAUCAFall 20) */
-    public V2Features(double fps) {
-        this.fps = fps;
-        this.back = (int) Math.rint(DESCENT_SECONDS * fps);   // Python round() 처럼 짝수 쪽으로 반올림
-    }
+    private Double firstTime;
 
     private static boolean visible(double[][] p, int i) {
         return p[i][2] >= VIS_MIN;
@@ -120,11 +117,12 @@ public final class V2Features {
     }
 
     /**
-     * One frame (call for every frame, also when nobody was found).
+     * One frame (call for every frame in time order, also when nobody was found).
+     * @param t         frame time in seconds
      * @param boxes     PoseBridge boxes; may be empty
      * @param landmarks the landmarks of each box (null or empty = no landmarks for that box)
      */
-    public Frame update(List<int[]> boxes, List<double[][]> landmarks) {
+    public Frame update(double t, List<int[]> boxes, List<double[][]> landmarks) {
         Person main = null;
         for (int i = 0; i < boxes.size(); i++) {
             double[][] lms = i < landmarks.size() ? landmarks.get(i) : null;
@@ -132,23 +130,39 @@ public final class V2Features {
             Person p = person(boxes.get(i), lms);
             if (main == null || p.extentArea > main.extentArea) main = p;   // 같으면 앞사람 (Python max 와 같음)
         }
-        mains.add(main);
-        int k = mains.size() - 1;
-        if (main == null) {
-            trim();
-            return Frame.NOBODY;
-        }
+        if (firstTime == null) firstTime = t;
         Double c1 = null;
-        Person prev = k - back >= 0 ? mains.get(k - back) : null;
-        if (prev != null && main.hip != null && prev.hip != null && prev.torso != null && back > 0) {
-            c1 = (main.hip[1] - prev.hip[1]) / prev.torso / (back / fps);
+        if (main != null) {
+            int j = before(t);
+            Person prev = j >= 0 ? mains.get(j) : null;
+            double dt = j >= 0 ? t - times.get(j) : 0;
+            if (prev != null && main.hip != null && prev.hip != null && prev.torso != null && dt > 0) {
+                c1 = (main.hip[1] - prev.hip[1]) / prev.torso / dt;
+            }
         }
-        trim();
-        return new Frame(main.a1, main.h3, main.b1, c1);
+        times.add(t);
+        mains.add(main);
+        // 다음 프레임들이 찾을 시각은 더 늦으므로 그보다 오래된 기록은 버림
+        while (times.get(0) < t - DESCENT_SECONDS - DESCENT_TOLERANCE - TIME_TIE) {
+            times.remove(0);
+            mains.remove(0);
+        }
+        return main == null ? Frame.NOBODY : new Frame(main.a1, main.h3, main.b1, c1);
     }
 
-    /** Keep only the history the speed needs. */
-    private void trim() {
-        while (mains.size() > back + 1) mains.remove(0);
+    /** Index in the history of the frame closest to t - 0.25 s (as urfall_features.frame_seconds_before), or -1. */
+    private int before(double t) {
+        if (t - firstTime < DESCENT_SECONDS - TIME_TIE) return -1;   // 아직 그만큼의 기록이 없음
+        double target = t - DESCENT_SECONDS, bestD = DESCENT_TOLERANCE;
+        int best = -1;
+        for (int j = times.size() - 1; j >= 0; j--) {                 // 최근 프레임부터
+            if (times.get(j) < target - DESCENT_TOLERANCE - TIME_TIE) break;
+            double d = Math.abs(times.get(j) - target);
+            if (d <= bestD + TIME_TIE) {                              // 더 가깝거나 같으면 더 이른 프레임
+                best = j;
+                bestD = Math.min(d, bestD);
+            }
+        }
+        return best;
     }
 }

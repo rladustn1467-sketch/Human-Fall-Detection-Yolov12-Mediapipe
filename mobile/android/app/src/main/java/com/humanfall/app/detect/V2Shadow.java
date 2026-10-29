@@ -20,16 +20,15 @@ final class V2Shadow {
     private final FallRuleV2 rule = new FallRuleV2();
     private boolean broken;
 
-    /** @param fps the frame rate assumed for the descent speed (see V2Features) */
-    V2Shadow(double fps) {
-        features = new V2Features(fps);
+    V2Shadow() {
+        features = new V2Features();
     }
 
     /** null when the shadow is off because of an earlier error. */
     Result update(double now, List<int[]> boxes, List<double[][]> landmarks) {
         if (broken) return null;
         try {
-            V2Features.Frame f = features.update(boxes, landmarks);
+            V2Features.Frame f = features.update(now, boxes, landmarks);
             Result r = new Result();
             r.a1 = f.a1;
             r.h3 = f.h3;

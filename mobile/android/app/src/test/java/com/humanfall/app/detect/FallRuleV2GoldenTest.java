@@ -20,7 +20,8 @@ import org.junit.Test;
  * The Java fall rule v2 (V2Features + FallRuleV2) must give the same per-frame inputs and the same alarm as the
  * Python code (tools/urfall_features.py + fall_logic/v2.py) on recorded pose logs.
  * Golden data: tools/export_fall_v2_golden.py. The small file is in git; the file with every recorded video
- * (161 videos) is checked when the environment variable FALL_V2_GOLDEN_ALL points to it.
+ * (161 videos, each also with frames left out) is checked when the environment variable FALL_V2_GOLDEN_ALL points to it.
+ * Cases with frames left out check the descent speed measured by time (uneven phone frame rates).
  * The app's log-only wrapper V2Shadow (used by FallPipeline) is replayed next to it and must agree.
  */
 public class FallRuleV2GoldenTest {
@@ -47,9 +48,9 @@ public class FallRuleV2GoldenTest {
         for (int c = 0; c < cases.length(); c++) {
             JSONObject seq = cases.getJSONObject(c);
             String name = seq.getString("name");
-            V2Features features = new V2Features(seq.getDouble("fps"));
+            V2Features features = new V2Features();
             FallRuleV2 rule = new FallRuleV2();
-            V2Shadow shadow = new V2Shadow(seq.getDouble("fps"));
+            V2Shadow shadow = new V2Shadow();
             JSONArray fs = seq.getJSONArray("frames"), ex = seq.getJSONArray("expected");
             for (int i = 0; i < fs.length(); i++) {
                 JSONObject f = fs.getJSONObject(i);
@@ -73,7 +74,7 @@ public class FallRuleV2GoldenTest {
                     }
                     lms.add(p);
                 }
-                V2Features.Frame got = features.update(boxes, lms);
+                V2Features.Frame got = features.update(f.getDouble("t"), boxes, lms);
                 JSONArray e = ex.getJSONArray(i);
                 Double[] actual = {got.a1, got.h3, got.b1, got.c1};
                 for (int k = 0; k < 4; k++) close(name + " frame " + i + " " + NAMES[k], opt(e, k), actual[k]);
@@ -100,7 +101,7 @@ public class FallRuleV2GoldenTest {
         }
         int[] r = replay(text);
         assertTrue("frames", r[0] > 1000);
-        assertTrue("both alarms and no alarms covered", r[1] >= 2 && r[1] < 8);
+        assertTrue("both alarms and no alarms covered", r[1] >= 2 && r[1] < 11);
     }
 
     @Test
@@ -113,7 +114,7 @@ public class FallRuleV2GoldenTest {
 
     @Test
     public void shadowErrorTurnsOnlyTheShadowOff() {
-        V2Shadow shadow = new V2Shadow(30);
+        V2Shadow shadow = new V2Shadow();
         List<int[]> boxes = new ArrayList<>();
         List<double[][]> lms = new ArrayList<>();
         boxes.add(new int[]{0, 0, 100, 200});

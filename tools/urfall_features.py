@@ -76,6 +76,9 @@ KEY = (NOSE, L_SH, R_SH, L_HIP, R_HIP, L_KNEE, R_KNEE, L_ANK, R_ANK)
 MIN_JOINTS_FOR_EXTENT = 5           # B2 를 계산하려면 보이는 관절이 이만큼은 있어야 함
 REFERENCE_SECONDS = 1.0             # E2 의 기준 몸통 길이: 시퀀스 첫 1초의 중앙값
 DESCENT_WINDOWS = (("C1_descent_025", 0.25), ("C2_descent_050", 0.5))
+# timing="time": 하강 속도의 '몇 초 전' 프레임을 시각으로 찾음 (프레임 간격이 일정하지 않은 휴대폰 카메라용)
+DESCENT_TOLERANCE = 0.1             # 찾는 시각에서 이만큼 넘게 떨어진 프레임뿐이면 속도 없음
+TIME_TIE = 1e-9                     # 이 차이 안의 두 프레임은 같은 거리로 보고 더 이른 프레임을 고름
 # 서 있을 때 기준 (H1, H2): 영상에서만 잡음 (정답 표시는 쓰지 않음)
 UPRIGHT_MIN_BODY_ANGLE = 70.0       # 몸 선이 거의 세로
 UPRIGHT_MIN_TORSO_LEG = 150.0       # 다리가 펴짐 (의자에 앉은 경우를 뺌)
@@ -181,6 +184,23 @@ def descent_speed(hip_now, hip_before, torso_before, dt):
     return (hip_now[1] - hip_before[1]) / torso_before / dt
 
 
+def frame_seconds_before(times, k, seconds):
+    """Index of the earlier frame whose time is closest to times[k] - seconds (ties: the earlier frame), or None
+    when no earlier frame is within DESCENT_TOLERANCE of it or the log is not yet that long. With a steady rate this is the frame
+    round(seconds * fps) back, like timing="frames" (30 fps, 0.25 s: 7.5 frames -> 8, as Python round)."""
+    if times[k] - times[0] < seconds - TIME_TIE:  # 아직 그만큼의 기록이 없음 (시작 직후)
+        return None
+    target = times[k] - seconds
+    best, best_d = None, DESCENT_TOLERANCE
+    for j in range(k - 1, -1, -1):              # 최근 프레임부터 거슬러 올라감
+        if times[j] < target - DESCENT_TOLERANCE - TIME_TIE:
+            break
+        d = abs(times[j] - target)
+        if d <= best_d + TIME_TIE:              # 더 가깝거나 같으면 더 이른 프레임
+            best, best_d = j, min(d, best_d)
+    return best
+
+
 def is_upright(g):
     """Standing frame for the reference: body line near vertical, legs straight, nose, hip and an ankle visible."""
     a, e = g["A1_body_angle_shoulder"], g["E1_torso_leg_angle"]
@@ -227,9 +247,12 @@ def motion(points_now, points_before, torso_before, dt):
 
 # ---- 시퀀스 처리 ----
 
-def sequence_rows(pipeline, seq, frames, labels, references=None, fps=FPS):
+def sequence_rows(pipeline, seq, frames, labels, references=None, fps=FPS, timing="frames"):
     """CSV rows for one sequence (list of dicts). references: optional dict, filled with this sequence's
-    standing reference (for the summary). fps: frame rate of the log (UR Fall 30, CAUCAFall 20)."""
+    standing reference (for the summary). fps: frame rate of the log (UR Fall 30, CAUCAFall 20).
+    timing: how the descent speeds (C1, C2) find the earlier frame. "frames" = round(seconds * fps) frames back,
+    divided by that nominal time (how the rule's values were found); "time" = the frame closest in time
+    (frame_seconds_before), divided by the real time between the two frames (for uneven frame rates)."""
     kind = "fall" if seq.startswith("fall") else "adl"
     lab = labels.get(seq, {})
     per_frame = []            # 프레임마다 [(person index, geometry)]
@@ -248,6 +271,7 @@ def sequence_rows(pipeline, seq, frames, labels, references=None, fps=FPS):
     if references is not None:
         references[seq] = standing
 
+    times = [r["now"] for r in frames]
     rows = []
     for k, (r, people) in enumerate(zip(frames, per_frame)):
         frame_no = r["index"] + 1
@@ -270,9 +294,15 @@ def sequence_rows(pipeline, seq, frames, labels, references=None, fps=FPS):
                 row["H2_hip_drop"] = drop(g["_hip"], standing["hip_y"], standing["height"])
             # 시간 특징은 주 인물만 (이전 프레임의 주 인물과 비교)
             for col, seconds in DESCENT_WINDOWS:
-                back = round(seconds * fps)
-                prev = main_geo[k - back] if idx == main[k] and k - back >= 0 else None
-                row[col] = (descent_speed(g["_hip"], prev["_hip"], prev["torso_px"], back / fps)
+                if timing == "time":
+                    j = frame_seconds_before(times, k, seconds) if idx == main[k] else None
+                    dt = times[k] - times[j] if j is not None else 0
+                else:
+                    back = round(seconds * fps)
+                    j = k - back if idx == main[k] and k - back >= 0 else None
+                    dt = back / fps
+                prev = main_geo[j] if j is not None else None
+                row[col] = (descent_speed(g["_hip"], prev["_hip"], prev["torso_px"], dt)
                             if prev else None)
             prev1 = main_geo[k - 1] if idx == main[k] and k >= 1 else None
             row["E4_motion"] = motion(g["_key_points"], prev1["_key_points"], prev1["torso_px"], 1 / fps) if prev1 else None

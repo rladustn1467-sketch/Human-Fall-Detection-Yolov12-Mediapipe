@@ -18,8 +18,6 @@ import java.util.UUID;
 final class FallPipeline {
     static final String TAG = "FallPipeline";
     static final double FALL_COOLDOWN_SECONDS = 5.0;   // 대시보드 fall_cooldown 과 같음
-    /** Frame rate v2 assumes for the camera (its descent speed counts frames). Not measured on a real phone. */
-    static final double CAMERA_FPS_ASSUMED = 30.0;
 
     interface Listener {
         /** A new fall: its event id (also used for retries) and the silhouette photo (null if it could not be made). */
@@ -43,10 +41,10 @@ final class FallPipeline {
     private final Map<Integer, Double> fallenAt = new HashMap<>();
     private final V2Shadow v2;
 
-    FallPipeline(PoseDetector detector, Listener listener, double v2Fps) {
+    FallPipeline(PoseDetector detector, Listener listener) {
         this.detector = detector;
         this.listener = listener;
-        this.v2 = new V2Shadow(v2Fps);
+        this.v2 = new V2Shadow();
     }
 
     /** v2's alarm time in seconds (the clock given to process), or null. Log only. */
