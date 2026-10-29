@@ -13,10 +13,13 @@ import java.util.UUID;
  * low-light correction → people and poses → fall rule (LegacyFallLogic, same as the PC) → for each newly fallen
  * person (5 s cooldown per person, like the dashboard) one fall event with a silhouette photo.
  * Only frames judged as a fall produce an event; nothing of the frame itself leaves this class.
+ * Fall rule v2 runs on the same people next to it, for the log only (V2Shadow): it never sends an event.
  */
 final class FallPipeline {
     static final String TAG = "FallPipeline";
     static final double FALL_COOLDOWN_SECONDS = 5.0;   // 대시보드 fall_cooldown 과 같음
+    /** Frame rate v2 assumes for the camera (its descent speed counts frames). Not measured on a real phone. */
+    static final double CAMERA_FPS_ASSUMED = 30.0;
 
     interface Listener {
         /** A new fall: its event id (also used for retries) and the silhouette photo (null if it could not be made). */
@@ -30,6 +33,7 @@ final class FallPipeline {
         boolean brightened;
         boolean posture;   // 이 프레임의 자세만 보면 낙상 (이미 알린 사람인지와 상관없이, 비교·기록용)
         double angle = Double.NaN, aspectRatio = Double.NaN;
+        V2Shadow.Result v2;   // 기록만 하는 v2 판정 (null = 꺼짐)
     }
 
     private final PoseDetector detector;
@@ -37,10 +41,17 @@ final class FallPipeline {
     private final LegacyFallLogic logic = new LegacyFallLogic();
     private final FrameMath.LowLight lowLight = new FrameMath.LowLight();
     private final Map<Integer, Double> fallenAt = new HashMap<>();
+    private final V2Shadow v2;
 
-    FallPipeline(PoseDetector detector, Listener listener) {
+    FallPipeline(PoseDetector detector, Listener listener, double v2Fps) {
         this.detector = detector;
         this.listener = listener;
+        this.v2 = new V2Shadow(v2Fps);
+    }
+
+    /** v2's alarm time in seconds (the clock given to process), or null. Log only. */
+    Double v2Alarm() {
+        return v2.alarm();
     }
 
     Stats process(Bitmap camera, long nowMs) {
@@ -70,6 +81,12 @@ final class FallPipeline {
                     }
                     if (LegacyFallLogic.isFallPosture(f, LegacyFallLogic.DEFAULT_ANGLE_THRESHOLD)) s.posture = true;
                 }
+            }
+            try {
+                s.v2 = v2.update(now, people.boxes, people.landmarks);
+                if (s.v2 != null && s.v2.fired) Log.i(TAG, "v2 판정: 낙상 (기록만, 알림은 보내지 않음) t=" + now);
+            } catch (RuntimeException e) {
+                Log.e(TAG, "v2 판정 오류 - v2 기록을 끔 (지금 방식 감지는 계속)", e);
             }
             if (!r.fallDetected) return s;
 

@@ -50,11 +50,14 @@ import org.json.JSONObject;
  *
  * Emulator check (debug builds only): with the extra MOCK_FRAMES_DIR, images in that folder are fed through the very
  * same pipeline instead of the camera, so pairing → decision → incident → photo can be tested without a real phone.
+ * With MOCK_FPS as well, the folder is one recorded video: its frames go through once, one after another, with the
+ * video's own times (frame / fps), so the current rule and v2 (log only) can be compared on the emulator.
  */
 public class DetectionService extends LifecycleService {
     static final String TAG = "DetectionService";
     public static final String EXTRA_MOCK_FRAMES_DIR = "mock_frames_dir";       // debug 빌드만
     public static final String EXTRA_HEARTBEAT_SECONDS = "heartbeat_seconds";   // debug 빌드만
+    public static final String EXTRA_MOCK_FPS = "mock_fps";                     // debug 빌드만 (녹화 영상 한 번 재생)
     public static final String ACTION_NUDGE = "com.humanfall.app.detect.NUDGE"; // 상태 신호를 바로 한 번
     static final String CHANNEL = "detect";
     static final int NOTIFICATION_ID = 41;
@@ -69,6 +72,7 @@ public class DetectionService extends LifecycleService {
     private FallPipeline pipeline;
     private DeviceLink link;
     private String mockDir;
+    private float mockFps;
     private int heartbeatOverride;
     private boolean cameraWanted;
     private volatile boolean firstFrameReported;   // 카메라가 켜진 뒤 첫 프레임에서 상태 신호를 한 번 바로 보냄
@@ -107,6 +111,7 @@ public class DetectionService extends LifecycleService {
         if (intent != null && BuildConfig.DEBUG) {
             if (intent.hasExtra(EXTRA_MOCK_FRAMES_DIR)) mockDir = intent.getStringExtra(EXTRA_MOCK_FRAMES_DIR);
             if (intent.hasExtra(EXTRA_HEARTBEAT_SECONDS)) heartbeatOverride = intent.getIntExtra(EXTRA_HEARTBEAT_SECONDS, 0);
+            if (intent.hasExtra(EXTRA_MOCK_FPS)) mockFps = intent.getFloatExtra(EXTRA_MOCK_FPS, 0f);
         }
         if (!link.isPaired()) {
             stopSelf();
@@ -164,7 +169,8 @@ public class DetectionService extends LifecycleService {
                 cameraWanted = false;
                 return;
             }
-            pipeline = new FallPipeline(detector, this::onFall);
+            pipeline = new FallPipeline(detector, this::onFall,
+                    BuildConfig.DEBUG && mockDir != null && mockFps > 0 ? mockFps : FallPipeline.CAMERA_FPS_ASSUMED);
         }
         if (BuildConfig.DEBUG && mockDir != null) {
             startMockFrames();
@@ -222,7 +228,7 @@ public class DetectionService extends LifecycleService {
                 bmp.recycle();
                 bmp = rotated;
             }
-            runPipeline(bmp, null);
+            runPipeline(bmp, null, System.currentTimeMillis());
         } catch (RuntimeException e) {
             Log.e(TAG, "프레임 분석 실패", e);
         } finally {
@@ -230,7 +236,7 @@ public class DetectionService extends LifecycleService {
         }
     }
 
-    private void runPipeline(Bitmap bmp, @Nullable String label) {
+    private void runPipeline(Bitmap bmp, @Nullable String label, long nowMs) {
         DetectorRuntime.State st = DetectorRuntime.STATE;
         st.lastFrameAt = System.currentTimeMillis();
         st.frames++;
@@ -240,7 +246,7 @@ public class DetectionService extends LifecycleService {
         }
         FallPipeline.Stats s;
         try {
-            s = pipeline.process(bmp, System.currentTimeMillis());
+            s = pipeline.process(bmp, nowMs);
         } catch (RuntimeException e) {
             // 프레임 한 장의 문제로 감지 전체가 멈추지 않게 그 프레임만 건너뜀
             Log.e(TAG, "프레임 처리 실패 (건너뜀)" + (label != null ? " file=" + label : ""), e);
@@ -249,10 +255,17 @@ public class DetectionService extends LifecycleService {
             bmp.recycle();
         }
         st.persons = s.persons;
-        if (label != null || s.fallInFrame || st.frames % 30 == 0) {
+        if (label != null || s.fallInFrame || st.frames % 30 == 0 || (s.v2 != null && s.v2.fired)) {
             Log.i(TAG, "frame " + st.frames + (label != null ? " file=" + label : "") + " persons=" + s.persons + " posture=" + s.posture + " fall=" + s.fallInFrame + " new=" + s.newFalls
-                    + " angle=" + s.angle + " aspect=" + s.aspectRatio + " brightened=" + s.brightened);
+                    + " angle=" + s.angle + " aspect=" + s.aspectRatio + " brightened=" + s.brightened
+                    + " t=" + nowMs / 1000.0 + " " + v2Text(s.v2));
         }
+    }
+
+    /** v2 (log only): its inputs and whether it fired on this frame. */
+    private String v2Text(@Nullable V2Shadow.Result v) {
+        if (v == null) return "v2=off";
+        return "v2a1=" + v.a1 + " v2h3=" + v.h3 + " v2b1=" + v.b1 + " v2c1=" + v.c1 + " v2fire=" + v.fired;
     }
 
     /** Debug builds only: images from a folder instead of the camera, through the same pipeline. */
@@ -267,6 +280,10 @@ public class DetectionService extends LifecycleService {
         }
         Arrays.sort(files);
         DetectorRuntime.STATE.camera = "mock";
+        if (mockFps > 0) {
+            startMockVideo(files);
+            return;
+        }
         Log.i(TAG, "시험용 사진 입력 시작 (" + files.length + "장, 카메라 대신)");
         mockExec = Executors.newSingleThreadScheduledExecutor();
         final int[] next = {0};
@@ -274,8 +291,41 @@ public class DetectionService extends LifecycleService {
             if (!cameraWanted) return;
             File f = files[next[0]++ % files.length];
             Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
-            if (bmp != null) analysisExec.execute(() -> runPipeline(bmp, f.getName()));
+            if (bmp != null) analysisExec.execute(() -> runPipeline(bmp, f.getName(), System.currentTimeMillis()));
         }, 0, 300, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Debug builds only: the folder is one recorded video (frames in name order). Each frame is analysed after the
+     * previous one finished, at the video's own time (start + frame / fps), once. At the end the first alert of the
+     * current rule and v2's alarm (log only) are written, in seconds from the start of the video.
+     */
+    private void startMockVideo(File[] files) {
+        Log.i(TAG, "시험용 영상 입력 시작 (" + files.length + "장, " + mockFps + " fps, 한 번만)");
+        mockExec = Executors.newSingleThreadScheduledExecutor();
+        mockExec.execute(() -> {
+            long start = System.currentTimeMillis();
+            double legacyFirst = Double.NaN;
+            int done = 0;
+            for (int i = 0; i < files.length && cameraWanted; i++) {
+                File f = files[i];
+                Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
+                if (bmp == null) continue;
+                long at = start + Math.round(i * 1000.0 / mockFps);
+                long fallsBefore = DetectorRuntime.STATE.lastFallAt;
+                try {
+                    analysisExec.submit(() -> runPipeline(bmp, f.getName(), at)).get();
+                } catch (Exception e) {
+                    Log.w(TAG, "시험용 영상 중단", e);
+                    return;
+                }
+                done++;
+                if (Double.isNaN(legacyFirst) && DetectorRuntime.STATE.lastFallAt != fallsBefore) legacyFirst = (at - start) / 1000.0;
+            }
+            Double v2 = pipeline.v2Alarm();
+            Log.i(TAG, "시험용 영상 끝: 프레임 " + done + "/" + files.length + " legacy_first=" + (Double.isNaN(legacyFirst) ? "none" : legacyFirst)
+                    + " v2_alarm=" + (v2 == null ? "none" : (v2 - start / 1000.0)));
+        });
     }
 
     // ---- 낙상 전송 ----

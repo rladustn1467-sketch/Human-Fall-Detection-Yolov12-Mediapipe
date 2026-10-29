@@ -21,6 +21,7 @@ import org.junit.Test;
  * Python code (tools/urfall_features.py + fall_logic/v2.py) on recorded pose logs.
  * Golden data: tools/export_fall_v2_golden.py. The small file is in git; the file with every recorded video
  * (161 videos) is checked when the environment variable FALL_V2_GOLDEN_ALL points to it.
+ * The app's log-only wrapper V2Shadow (used by FallPipeline) is replayed next to it and must agree.
  */
 public class FallRuleV2GoldenTest {
     private static final double EPS = 1e-9;
@@ -48,6 +49,7 @@ public class FallRuleV2GoldenTest {
             String name = seq.getString("name");
             V2Features features = new V2Features(seq.getDouble("fps"));
             FallRuleV2 rule = new FallRuleV2();
+            V2Shadow shadow = new V2Shadow(seq.getDouble("fps"));
             JSONArray fs = seq.getJSONArray("frames"), ex = seq.getJSONArray("expected");
             for (int i = 0; i < fs.length(); i++) {
                 JSONObject f = fs.getJSONObject(i);
@@ -75,11 +77,16 @@ public class FallRuleV2GoldenTest {
                 JSONArray e = ex.getJSONArray(i);
                 Double[] actual = {got.a1, got.h3, got.b1, got.c1};
                 for (int k = 0; k < 4; k++) close(name + " frame " + i + " " + NAMES[k], opt(e, k), actual[k]);
-                rule.update(f.getDouble("t"), got.a1, got.h3, got.b1, got.c1);
+                boolean fired = rule.update(f.getDouble("t"), got.a1, got.h3, got.b1, got.c1) != null;
+                V2Shadow.Result sh = shadow.update(f.getDouble("t"), boxes, lms);
+                Double[] viaShadow = {sh.a1, sh.h3, sh.b1, sh.c1};
+                for (int k = 0; k < 4; k++) close(name + " frame " + i + " shadow " + NAMES[k], opt(e, k), viaShadow[k]);
+                assertEquals(name + " frame " + i + " shadow fired", fired, sh.fired);
                 frames++;
             }
             Double expected = seq.isNull("alarm") ? null : seq.getDouble("alarm");
             close(name + " alarm", expected, rule.alarm());
+            close(name + " shadow alarm", expected, shadow.alarm());
             if (expected != null) alarms++;
         }
         return new int[]{frames, alarms};
@@ -102,6 +109,24 @@ public class FallRuleV2GoldenTest {
         Assume.assumeTrue("FALL_V2_GOLDEN_ALL not set", path != null && !path.isEmpty());
         int[] r = replay(new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8));
         System.out.println("FallRuleV2 전체 비교: 프레임 " + r[0] + ", 알림 " + r[1]);
+    }
+
+    @Test
+    public void shadowErrorTurnsOnlyTheShadowOff() {
+        V2Shadow shadow = new V2Shadow(30);
+        List<int[]> boxes = new ArrayList<>();
+        List<double[][]> lms = new ArrayList<>();
+        boxes.add(new int[]{0, 0, 100, 200});
+        lms.add(new double[3][4]);   // 관절 3개뿐: 계산 중 오류
+        try {
+            shadow.update(0.0, boxes, lms);
+            fail("expected an error");
+        } catch (RuntimeException expected) {
+            // FallPipeline 이 잡아서 기록만 남김
+        }
+        assertTrue(shadow.broken());
+        assertNull(shadow.update(0.1, new ArrayList<>(), new ArrayList<>()));
+        assertNull(shadow.alarm());
     }
 
     @Test

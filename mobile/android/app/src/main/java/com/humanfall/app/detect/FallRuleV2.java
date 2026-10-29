@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * Fall rule v2, a Java copy of fall_logic/v2.py (docs/fall_rule_v2.md), checked against the Python output by
- * FallRuleV2GoldenTest. Not used by FallPipeline yet (the app still runs LegacyFallLogic).
+ * FallRuleV2GoldenTest. FallPipeline runs it for the log only (V2Shadow); alerts still come from LegacyFallLogic.
  *
  * low  = A1 < lowAngle or H3 < lowHead;  wide = low or B1 > wideBox
  * (A) fast drop:  speed smoothed over 3 consecutive values (median) >= dropSpeed, then within dropWindow
