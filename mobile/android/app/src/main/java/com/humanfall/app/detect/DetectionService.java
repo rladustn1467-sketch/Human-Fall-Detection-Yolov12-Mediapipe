@@ -244,6 +244,9 @@ public class DetectionService extends LifecycleService {
         if (!firstFrameReported) {
             firstFrameReported = true;
             beatNow();   // 카메라가 실제로 영상을 받기 시작했음을 서버에 바로 알림
+            // 640 을 넘으면 분석 전에 줄임 (줄이는 방법이 PC 평가 도구와 달라 판정이 조금 달라질 수 있음, docs/fall_rule_v2.md)
+            Log.i(TAG, "첫 프레임 크기 " + bmp.getWidth() + "x" + bmp.getHeight()
+                    + (Math.max(bmp.getWidth(), bmp.getHeight()) > Silhouette.MAX_SIDE ? " (줄여서 분석)" : ""));
         }
         FallPipeline.Stats s;
         try {
