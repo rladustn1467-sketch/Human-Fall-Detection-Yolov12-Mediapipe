@@ -78,6 +78,7 @@ public class DetectionService extends LifecycleService {
     private int heartbeatOverride;
     private boolean cameraWanted;
     private volatile boolean firstFrameReported;   // 카메라가 켜진 뒤 첫 프레임에서 상태 신호를 한 번 바로 보냄
+    private final FrameRate rate = new FrameRate();
 
     /** Start (or nudge) the service. Needs the camera permission: Android refuses a camera service without it. */
     public static boolean start(Context context, @Nullable Intent extras) {
@@ -159,6 +160,9 @@ public class DetectionService extends LifecycleService {
         if (cameraWanted) return;
         cameraWanted = true;
         firstFrameReported = false;
+        rate.clear();
+        DetectorRuntime.STATE.fps = Double.NaN;
+        DetectorRuntime.STATE.frameMs = Double.NaN;
         DetectorRuntime.STATE.camera = "starting";
         DetectorRuntime.STATE.cameraError = null;
         if (detector == null) {
@@ -245,10 +249,12 @@ public class DetectionService extends LifecycleService {
             firstFrameReported = true;
             beatNow();   // 카메라가 실제로 영상을 받기 시작했음을 서버에 바로 알림
             // 640 을 넘으면 분석 전에 줄임 (줄이는 방법이 PC 평가 도구와 달라 판정이 조금 달라질 수 있음, docs/fall_rule_v2.md)
-            Log.i(TAG, "첫 프레임 크기 " + bmp.getWidth() + "x" + bmp.getHeight()
+            st.frameSize = bmp.getWidth() + "x" + bmp.getHeight();
+            Log.i(TAG, "첫 프레임 크기 " + st.frameSize
                     + (Math.max(bmp.getWidth(), bmp.getHeight()) > Silhouette.MAX_SIDE ? " (줄여서 분석)" : ""));
         }
         FallPipeline.Stats s;
+        long began = System.nanoTime();
         try {
             s = pipeline.process(bmp, nowMs);
         } catch (RuntimeException e) {
@@ -259,6 +265,13 @@ public class DetectionService extends LifecycleService {
             bmp.recycle();
         }
         st.persons = s.persons;
+        // 실제로 분석한 속도 (카메라가 밀린 프레임을 버리므로 규칙이 보는 속도는 이것)
+        boolean report = rate.add(System.currentTimeMillis(), (System.nanoTime() - began) / 1_000_000);
+        st.fps = rate.fps();
+        st.frameMs = rate.averageMs();
+        if (report) {
+            Log.i(TAG, String.format(java.util.Locale.ROOT, "처리 속도 %.1f장/초, 프레임당 %.0fms (최근 10초, 크기 %s)", st.fps, st.frameMs, st.frameSize));
+        }
         if (label != null || s.fallInFrame || st.frames % 30 == 0 || (s.v2 != null && s.v2.fired)) {
             Log.i(TAG, "frame " + st.frames + (label != null ? " file=" + label : "") + " persons=" + s.persons + " posture=" + s.posture + " fall=" + s.fallInFrame + " new=" + s.newFalls
                     + " angle=" + s.angle + " aspect=" + s.aspectRatio + " brightened=" + s.brightened

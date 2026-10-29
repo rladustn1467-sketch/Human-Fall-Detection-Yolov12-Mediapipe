@@ -22,6 +22,10 @@ public final class DetectorRuntime {
         public volatile int persons;
         public volatile long lastFallAt;
         public volatile String lastFallResult;
+        /** 최근 10초 동안 1초에 분석한 프레임 수, 프레임당 분석 시간 (ms), 카메라 프레임 크기 (NaN/null = 아직 모름) */
+        public volatile double fps = Double.NaN;
+        public volatile double frameMs = Double.NaN;
+        public volatile String frameSize;
     }
 
     public static final State STATE = new State();

@@ -114,6 +114,8 @@ public class DetectorPlugin extends Plugin {
         o.put("mode", DetectorActivity.savedMode(getContext()));
         o.put("enabled", link.enabled);
         o.put("detecting", DetectorRuntime.cameraOk());
+        double fps = DetectorRuntime.STATE.fps;
+        if (DetectorRuntime.cameraOk() && !Double.isNaN(fps)) o.put("fps", Math.round(fps * 10) / 10.0);
         o.put("held", link.isHeld());
         call.resolve(o);
     }

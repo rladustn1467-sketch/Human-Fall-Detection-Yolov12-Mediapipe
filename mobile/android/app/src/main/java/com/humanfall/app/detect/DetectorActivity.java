@@ -319,6 +319,9 @@ public class DetectorActivity extends AppCompatActivity {
             color = INK;
             body = "잠시만 기다려 주세요.";
         }
+        if (on && DetectorRuntime.cameraOk() && !Double.isNaN(st.fps)) {
+            body += String.format(java.util.Locale.ROOT, "\n분석 속도: 1초에 %.0f장 (한 장에 %.0fms)", st.fps, st.frameMs);
+        }
         if (st.lastFallAt > 0) body += "\n마지막 낙상 감지: " + ago(st.lastFallAt);
         body += link.lastError != null ? "\n" + link.lastError + " (다시 시도 중)"
                 : link.lastOkAt > 0 ? "\n서버와 연결됨 · 마지막 신호 " + ago(link.lastOkAt) : "";
