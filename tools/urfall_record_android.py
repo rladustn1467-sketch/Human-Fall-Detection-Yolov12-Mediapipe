@@ -120,7 +120,32 @@ def find_model(path):
     raise SystemExit("[android] pose_landmarker_full.task 를 찾을 수 없습니다. 앱을 한 번 빌드하거나 --model 로 지정하세요")
 
 
-def record(name, folder, out_path, model_path, cv2, np, mp, vision, base_options):
+def png_frames(folder, cv2):
+    """BGR frames of a UR Fall frame folder, in file-name order."""
+    for file_name in sorted(n for n in os.listdir(folder) if n.lower().endswith(".png")):
+        bgr = cv2.imread(os.path.join(folder, file_name))
+        if bgr is None:
+            raise SystemExit(f"[android] 사진을 읽을 수 없음: {file_name}")
+        yield bgr
+
+
+def video_frames(path, cv2):
+    """BGR frames of a video file, in order."""
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise SystemExit(f"[android] 영상을 열 수 없음: {path}")
+    try:
+        while True:
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            yield bgr
+    finally:
+        cap.release()
+
+
+def record(name, source, frames, fps, out_path, model_path, cv2, np, mp, vision, base_options):
+    """frames: BGR frames in order (png_frames or video_frames); fps: their frame rate (frame times = index / fps)."""
     options = vision.PoseLandmarkerOptions(
         base_options=base_options(model_asset_path=model_path),
         running_mode=vision.RunningMode.VIDEO,
@@ -131,31 +156,28 @@ def record(name, folder, out_path, model_path, cv2, np, mp, vision, base_options
         output_segmentation_masks=False)   # 마스크는 사진용 (관절 결과에는 영향 없음)
     logic = LegacyFallLogic()
     low_light = LowLight(np)
-    names = sorted(n for n in os.listdir(folder) if n.lower().endswith(".png"))
-    falls = 0
+    falls = count = 0
     with vision.PoseLandmarker.create_from_options(options) as landmarker, open(out_path, "w", encoding="utf-8") as fp:
         pose_log.write_line(fp, pose_log.make_header(
-            source=folder, model=model_path, confidence=MIN_CONFIDENCE, angle_threshold=logic.angle_threshold,
-            low_light=True, clock="video", fps=FPS, created=datetime.datetime.now().isoformat(timespec="seconds"),
+            source=source, model=model_path, confidence=MIN_CONFIDENCE, angle_threshold=logic.angle_threshold,
+            low_light=True, clock="video", fps=fps, created=datetime.datetime.now().isoformat(timespec="seconds"),
             pipeline="android", coordinates="boxes: frame pixels (landmark extent + 10%); "
                                             "landmarks: Pose Landmarker on the whole frame, as fractions of the box"))
-        for index, file_name in enumerate(names):
-            bgr = cv2.imread(os.path.join(folder, file_name))
-            if bgr is None:
-                raise SystemExit(f"[android] 사진을 읽을 수 없음: {file_name}")
+        for index, bgr in enumerate(frames):
+            count += 1
             rgb = cv2.cvtColor(shrink(bgr, cv2), cv2.COLOR_BGR2RGB)
             rgb, _ = low_light.process(rgb)
             image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb))
-            result = landmarker.detect_for_video(image, int(round(index * 1000 / FPS)))
+            result = landmarker.detect_for_video(image, int(round(index * 1000 / fps)))
             poses = [[(lm.x, lm.y, lm.z, lm.visibility if lm.visibility is not None else 0.0) for lm in person]
                      for person in result.pose_landmarks]
             h, w = rgb.shape[:2]
             boxes, landmarks = pose_bridge(poses, w, h)
-            now = index / FPS
+            now = index / fps
             falls_detected, fall_data, features = logic.update(now, boxes, landmarks)
             pose_log.write_line(fp, pose_log.make_frame(index, now, boxes, landmarks, falls_detected, fall_data, features))
             falls += bool(falls_detected)
-    print(f"[android] {name}: {len(names)}프레임, 낙상 판정 프레임 {falls} -> {out_path}")
+    print(f"[android] {name}: {count}프레임, 낙상 판정 프레임 {falls} -> {out_path}")
 
 
 def main():
@@ -184,7 +206,7 @@ def main():
         if not args.force and log_frames(out) == frame_count(folder):
             print(f"[android] {name}: 기록 있음, 건너뜀")
             continue
-        record(name, folder, out, model_path, cv2, np, mp, vision, BaseOptions)
+        record(name, folder, png_frames(folder, cv2), FPS, out, model_path, cv2, np, mp, vision, BaseOptions)
 
 
 if __name__ == "__main__":

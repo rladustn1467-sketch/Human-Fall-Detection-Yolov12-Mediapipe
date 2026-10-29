@@ -227,9 +227,9 @@ def motion(points_now, points_before, torso_before, dt):
 
 # ---- 시퀀스 처리 ----
 
-def sequence_rows(pipeline, seq, frames, labels, references=None):
+def sequence_rows(pipeline, seq, frames, labels, references=None, fps=FPS):
     """CSV rows for one sequence (list of dicts). references: optional dict, filled with this sequence's
-    standing reference (for the summary)."""
+    standing reference (for the summary). fps: frame rate of the log (UR Fall 30, CAUCAFall 20)."""
     kind = "fall" if seq.startswith("fall") else "adl"
     lab = labels.get(seq, {})
     per_frame = []            # 프레임마다 [(person index, geometry)]
@@ -270,12 +270,12 @@ def sequence_rows(pipeline, seq, frames, labels, references=None):
                 row["H2_hip_drop"] = drop(g["_hip"], standing["hip_y"], standing["height"])
             # 시간 특징은 주 인물만 (이전 프레임의 주 인물과 비교)
             for col, seconds in DESCENT_WINDOWS:
-                back = round(seconds * FPS)
+                back = round(seconds * fps)
                 prev = main_geo[k - back] if idx == main[k] and k - back >= 0 else None
-                row[col] = (descent_speed(g["_hip"], prev["_hip"], prev["torso_px"], back / FPS)
+                row[col] = (descent_speed(g["_hip"], prev["_hip"], prev["torso_px"], back / fps)
                             if prev else None)
             prev1 = main_geo[k - 1] if idx == main[k] and k >= 1 else None
-            row["E4_motion"] = motion(g["_key_points"], prev1["_key_points"], prev1["torso_px"], 1 / FPS) if prev1 else None
+            row["E4_motion"] = motion(g["_key_points"], prev1["_key_points"], prev1["torso_px"], 1 / fps) if prev1 else None
             rows.append({c: ("" if row.get(c) is None else row[c]) for c in COLUMNS})
     return rows
 
@@ -332,12 +332,26 @@ def reference_table(references):
 CHECK_SEQUENCES = ("fall-02", "fall-06", "adl-04", "adl-30")
 
 
-def draw_checks(pipeline, rows, logs, dataset, out_dir):
-    """For a few sequences: one frame per label state with the main person's joints and A1/B1/C1 drawn on it."""
+def urfall_picture(dataset, seq, frame, cv2):
+    return cv2.imread(os.path.join(dataset, "rgb", f"{seq}-cam0-rgb", f"{seq}-cam0-rgb-{frame:03d}.png"))
+
+
+def video_picture(video_path, frame, cv2):
+    cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame - 1)
+    ok, img = cap.read()
+    cap.release()
+    return img if ok else None
+
+
+def draw_checks(pipeline, rows, logs, dataset, out_dir, sequences=CHECK_SEQUENCES, picture=None):
+    """For a few sequences: one frame per label state with the main person's joints and A1/B1/C1 drawn on it.
+    picture(seq, frame, cv2) gives the BGR frame (default: the UR Fall PNG)."""
     import cv2
+    picture = picture or (lambda seq, frame, cv: urfall_picture(dataset, seq, frame, cv))
     os.makedirs(out_dir, exist_ok=True)
     written = []
-    for seq in CHECK_SEQUENCES:
+    for seq in sequences:
         if seq not in logs:
             continue
         header, frames = logs[seq]
@@ -350,8 +364,7 @@ def draw_checks(pipeline, rows, logs, dataset, out_dir):
             rec = frames[r["frame"] - 1]
             box, lms = rec["boxes"][r["person"]], rec["landmarks"][r["person"]]
             pts = to_pixels(box, lms)
-            path = os.path.join(dataset, "rgb", f"{seq}-cam0-rgb", f"{seq}-cam0-rgb-{r['frame']:03d}.png")
-            img = cv2.imread(path)
+            img = picture(seq, r["frame"], cv2)
             if img is None:
                 continue
             cv2.rectangle(img, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (255, 200, 0), 1)
@@ -375,26 +388,45 @@ def draw_checks(pipeline, rows, logs, dataset, out_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Per-frame fall features CSV from UR Fall pose logs")
+    parser = argparse.ArgumentParser(description="Per-frame fall features CSV from UR Fall / CAUCAFall pose logs")
     parser.add_argument("--pipeline", choices=sorted(LOG_DIRS), default="android")
+    parser.add_argument("--source", choices=("urfall", "caucafall"), default="urfall",
+                        help="caucafall: logs of tools/caucafall_record.py, labels of tools/caucafall_prepare.py")
     parser.add_argument("--dataset", default=DEFAULT_DATASET)
     parser.add_argument("--no-pictures", action="store_true")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
 
-    labels = load_labels(args.dataset)
-    log_dir = LOG_DIRS[args.pipeline]
+    picture, check_seqs = None, CHECK_SEQUENCES
+    if args.source == "caucafall":
+        out_dir = os.path.join(ROOT, "eval_output", "caucafall")
+        log_dir = os.path.join(out_dir, args.pipeline)
+        labels = {}
+        with open(os.path.join(out_dir, "labels.csv"), encoding="utf-8") as fp:
+            for r in csv.DictReader(fp):
+                labels.setdefault(r["sequence"], {})[int(r["frame"])] = int(r["label"])
+        with open(os.path.join(out_dir, "videos.csv"), encoding="utf-8") as fp:
+            video_of = {v["sequence"]: v["video"] for v in csv.DictReader(fp)}
+        videos = os.path.join(os.path.dirname(ROOT), "datasets", "caucafall", "videos")
+        picture = lambda seq, frame, cv2: video_picture(os.path.join(videos, video_of[seq]), frame, cv2)  # noqa: E731
+        check_seqs = ("fall-cfS03-forward", "fall-cfS04-sitting", "adl-cfS06-kneel", "adl-cfS08-pickup")
+    else:
+        out_dir = OUT_DIR
+        log_dir = LOG_DIRS[args.pipeline]
+        labels = load_labels(args.dataset)
     logs, rows, references = {}, [], {}
     for name in sorted(os.listdir(log_dir)):
         if name.endswith(".jsonl"):
             seq = name[:-len(".jsonl")]
             logs[seq] = pose_log.read_log(os.path.join(log_dir, name))
-            rows += sequence_rows(args.pipeline, seq, logs[seq][1], labels, references)
+            rows += sequence_rows(args.pipeline, seq, logs[seq][1], labels, references,
+                                  fps=logs[seq][0].get("fps") or FPS)
     if not rows:
         raise SystemExit(f"[features] {log_dir} 에 기록이 없습니다")
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    out_csv = os.path.join(OUT_DIR, f"features_{args.pipeline}.csv")
+    OUT = out_dir
+    os.makedirs(OUT, exist_ok=True)
+    out_csv = os.path.join(OUT, f"features_{args.pipeline}.csv")
     with open(out_csv, "w", encoding="utf-8", newline="") as fp:
         w = csv.DictWriter(fp, fieldnames=COLUMNS)
         w.writeheader()
@@ -403,13 +435,14 @@ def main():
     summary = (f"# 특징 CSV 요약: {args.pipeline}\n\n- CSV: {out_csv}\n- 시퀀스 {len(logs)}개, 줄 {len(rows)}개, "
                f"프레임 {sum(len(f) for _, f in logs.values())}개\n- 관절 신뢰도 기준 {VIS_MIN}, 시간 특징은 주 인물만\n\n"
                + summarize(rows) + "\n" + reference_table(references))
-    out_md = os.path.join(OUT_DIR, f"summary_{args.pipeline}.md")
+    out_md = os.path.join(OUT, f"summary_{args.pipeline}.md")
     with open(out_md, "w", encoding="utf-8") as fp:
         fp.write(summary)
     print(summary)
     if not args.no_pictures:
-        pics = draw_checks(args.pipeline, rows, logs, args.dataset, os.path.join(OUT_DIR, f"check_{args.pipeline}"))
-        print(f"[features] 확인용 그림 {len(pics)}장: {os.path.join(OUT_DIR, f'check_{args.pipeline}')}")
+        pics = draw_checks(args.pipeline, rows, logs, args.dataset, os.path.join(OUT, f"check_{args.pipeline}"),
+                           check_seqs, picture)
+        print(f"[features] 확인용 그림 {len(pics)}장: {os.path.join(OUT, f'check_{args.pipeline}')}")
     print(f"[features] 저장: {out_csv}, {out_md}")
 
 
