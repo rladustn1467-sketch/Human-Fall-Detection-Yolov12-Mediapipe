@@ -301,13 +301,32 @@
 
   /* ---------------- S-08 그룹 나가기 ---------------- */
   on('group.leave', async () => {
-    const ok = await UI.confirm({ title: '그룹을 나갈까요?', body: '이 그룹의 알림을 받지 않고 정보를 볼 수 없어요. 계정은 유지돼요.', ok: '나가기', cancel: '취소', danger: true });
+    // 이 휴대폰이 '이 휴대폰으로 감지하기'로 이 그룹의 집을 감지 중이면, 나가기 전에 감지를 멈추고 나간 뒤 기기 연결도 해제
+    // (탈퇴와 같은 방법, settings.js). 안 그러면 나간 사람의 휴대폰이 예전 그룹 집으로 계속 낙상을 보냄
+    const S = FD.DeviceConnect && FD.DeviceConnect.self;
+    const st = S && UI.nativeDetector() ? ((await S.status()) || {}).s : null;
+    const selfOn = !!(st && st.paired && st.mode === 'self');
+    const ok = await UI.confirm({ title: '그룹을 나갈까요?',
+      body: '이 그룹의 알림을 받지 않고 정보를 볼 수 없어요. 계정은 유지돼요.'
+        + (selfOn ? ' 이 휴대폰으로 하던 낙상 감지도 멈추고 이 휴대폰의 기기 연결을 해제해요.' : ''),
+      ok: '나가기', cancel: '취소', danger: true });
     if (!ok) return;
+    let stop = { self: false };
     try {
+      if (S) stop = await S.stopForLogout();
+      if (stop.self && !stop.stopped) throw new FD.ApiError(0, '이 휴대폰의 감지를 멈추지 못해 그룹에서 나가지 않았어요. 다시 시도해 주세요.');
       await Act.leaveGroup(Sel.meId());
-    } catch (e) { UI.showError(e); return; }
+    } catch (e) {
+      UI.showError(e);
+      if (stop.self && stop.stopped) toast('그룹에서 나가지 못했어요. 이 휴대폰의 감지는 멈춘 상태예요. 감지 화면에서 다시 켤 수 있어요.');
+      return;
+    }
+    let unpaired = { self: false };
+    if (stop.self && S) unpaired = await S.unpairAfterWithdraw();   // 이 휴대폰의 기기 기록·연결 정리
     FD.Onboarding.resetDraft();
-    toast('그룹에서 나갔어요');
+    toast(stop.self ? (unpaired.removed ? '그룹에서 나갔어요. 이 휴대폰의 감지를 멈추고 기기 연결도 해제했어요.'
+      : '그룹에서 나갔어요. 이 휴대폰의 감지를 멈췄어요. 그룹의 기기 목록에 남은 이 기기는 가족이 삭제할 수 있어요.')
+      : '그룹에서 나갔어요');
     R.go('/ob/group', { replace: true });
   });
 })();

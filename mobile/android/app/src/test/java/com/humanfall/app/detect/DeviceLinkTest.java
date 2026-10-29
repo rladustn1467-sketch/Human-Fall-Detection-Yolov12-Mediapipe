@@ -44,6 +44,7 @@ public class DeviceLinkTest {
     volatile boolean down = false;        // 서버가 응답하지 못함 (503)
     volatile boolean unpaired = false;
     volatile boolean revokedEnabledOnly = false;   // 켜짐/꺼짐 알림만 500
+    volatile String rejectEvent = null;            // 이 event id 는 400 (잘못된 요청)
     final List<String> eventIds = Collections.synchronizedList(new ArrayList<>());
     final List<JSONObject> eventBodies = Collections.synchronizedList(new ArrayList<>());
 
@@ -79,6 +80,7 @@ public class DeviceLinkTest {
                 eventIds.add(b.optString("event_id"));
                 eventBodies.add(b);
                 if (failEvents > 0) { failEvents--; return new Object[]{500, "{}"}; }
+                if (b.optString("event_id").equals(rejectEvent)) return new Object[]{400, "{\"message\":\"잘못된 요청\"}"};
                 if (eventStatus != 200) return new Object[]{eventStatus, "{\"message\":\"잘못된 요청\"}"};
                 if (!enabled && !b.optBoolean("is_test")) return new Object[]{200, "{\"ok\":true,\"ignored\":\"off\"}"};   // 서버와 같음
                 return new Object[]{200, "{\"ok\":true,\"incident_id\":\"inc_1\",\"image_saved\":" + b.has("image_jpeg_base64") + "}"};
@@ -211,6 +213,39 @@ public class DeviceLinkTest {
         assertEquals("off", r.optString("ignored"));                       // 꺼 둔 상태는 그대로 무시
         assertFalse(enabled);
         assertEquals(List.of("e2"), eventIds);                             // 다시 보내지 않음
+    }
+
+    @Test
+    public void unsentFallSurvivesAnAppRestart() throws Exception {
+        MemStore store = new MemStore();
+        DeviceLink link = paired(store, new ArrayList<>());
+        byte[] photo = new byte[300];
+        new Random(7).nextBytes(photo);
+        failEvents = 4;
+        assertNull(link.sendFallOrKeep("e7", photo));
+        assertEquals(1, link.pendingCount());
+        DeviceLink restarted = new DeviceLink(store);                       // 앱이 꺼졌다 다시 켜짐 (같은 저장소)
+        restarted.setSleeper(ms -> { });
+        assertEquals(1, restarted.pendingCount());
+        restarted.heartbeat(true);
+        assertEquals(0, restarted.pendingCount());
+        assertEquals("e7", eventIds.get(eventIds.size() - 1));
+        JSONObject sent = eventBodies.get(eventBodies.size() - 1);
+        assertArrayEquals(photo, java.util.Base64.getDecoder().decode(sent.getString("image_jpeg_base64")));   // 사진도 그대로
+        assertEquals(0, new DeviceLink(store).pendingCount());              // 보낸 뒤에는 저장소에서도 지움
+    }
+
+    @Test
+    public void rejectedFallDoesNotBlockTheOthers() throws Exception {
+        DeviceLink link = paired(new MemStore(), new ArrayList<>());
+        failEvents = 8;                                                     // 두 낙상 모두 보관
+        assertNull(link.sendFallOrKeep("bad", null));
+        assertNull(link.sendFallOrKeep("good", null));
+        assertEquals(2, link.pendingCount());
+        rejectEvent = "bad";                                                // 서버가 이 낙상은 거절 (400, 다시 보내도 같음)
+        link.heartbeat(true);
+        assertEquals(0, link.pendingCount());                               // 거절된 것은 버리고 다음 것은 보냄
+        assertEquals("good", eventIds.get(eventIds.size() - 1));
     }
 
     @Test

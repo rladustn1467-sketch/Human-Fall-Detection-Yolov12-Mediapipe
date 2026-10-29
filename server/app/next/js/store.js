@@ -501,16 +501,39 @@
     const DATA_KEYS = ['groups', 'people', 'homes', 'devices', 'incidents', 'history', 'notifs'];
     const dataOf = st => JSON.stringify(DATA_KEYS.map(k => st && st[k]));
     let refreshing = false;
+    /* 서버 연결이 끊기면 화면 맨 위에 알림: 지금 보이는 상태(예: '감지 중 · 모두 정상')가 최신이 아닐 수 있음.
+       갱신이 연달아 OFFLINE_AFTER 번 실패하면 보이고, 한 번이라도 성공하면 사라짐 */
+    const OFFLINE_AFTER = 2;
+    let failures = 0, lastOkAt = Date.now();
+    function showOffline(on) {
+      let bar = document.getElementById('offline-banner');
+      if (!on) { if (bar) bar.remove(); return; }
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'offline-banner';
+        bar.className = 'offline-banner';
+        bar.setAttribute('role', 'alert');
+        document.body.prepend(bar);
+      }
+      const t = new Date(lastOkAt);
+      const hm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+      bar.textContent = `서버에 연결할 수 없어요 · 마지막 확인 ${hm}. 지금 보이는 상태가 최신이 아닐 수 있어요.`;
+    }
     async function refreshFromServer(force) {
       if (!state || refreshing || (!force && document.visibilityState === 'hidden')) return;
       refreshing = true;
       try {
         const data = await API.fetchState();
+        failures = 0;
+        lastOkAt = Date.now();
+        showOffline(false);
         syncClock(data.state);
         if ((data.me_id || null) !== meId) applyServer(data, 'session');      // 다른 곳에서 로그아웃·세션 만료
         else if (dataOf(data.state) !== dataOf(state)) applyServer(data, 'remote');
       } catch (e) {
-        /* 잠시 연결이 끊김: 다음 주기에 다시 시도 */
+        /* 연결이 끊김: 다음 주기에 다시 시도, 연달아 실패하면 화면에 알림 */
+        failures += 1;
+        if (failures >= OFFLINE_AFTER) showOffline(true);
       } finally {
         refreshing = false;
       }

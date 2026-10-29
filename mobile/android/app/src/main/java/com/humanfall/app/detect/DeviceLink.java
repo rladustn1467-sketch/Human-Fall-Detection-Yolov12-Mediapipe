@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -91,6 +92,43 @@ public final class DeviceLink {
         this.store = store;
         String on = store.get("enabled");
         enabled = on == null || !on.equals("0");
+        loadPending();
+    }
+
+    // ---- 보내지 못한 낙상: 앱 전용 저장소에도 둠 (앱이 꺼졌다 켜져도 남음) ----
+    private void loadPending() {
+        String saved = store.get("pending");
+        if (saved == null || saved.isEmpty()) return;
+        try {
+            JSONArray a = new JSONArray(saved);
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject o = a.getJSONObject(i);
+                String photo = o.optString("jpeg", "");
+                pending.add(new Pending(o.getString("eventId"), photo.isEmpty() ? null : unbase64(photo), o.getLong("at")));
+            }
+        } catch (JSONException | IllegalArgumentException e) {
+            LOG.warning("보관한 낙상을 읽지 못함: " + e.getClass().getSimpleName());
+            pending.clear();
+        }
+    }
+
+    /** Call while holding this object's lock. */
+    private void savePending() {
+        JSONArray a = new JSONArray();
+        try {
+            for (Pending p : pending) {
+                JSONObject o = new JSONObject();
+                o.put("eventId", p.eventId);
+                o.put("at", p.at);
+                if (p.jpeg != null) o.put("jpeg", base64(p.jpeg));
+                a.put(o);
+            }
+        } catch (JSONException e) {
+            return;
+        }
+        Map<String, String> v = new HashMap<>();
+        v.put("pending", a.toString());
+        store.putAll(v);
     }
 
     void setSleeper(Sleeper sleeper) {
@@ -366,7 +404,8 @@ public final class DeviceLink {
         return removed;
     }
 
-    private static final char[] B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+    private static final String B64_TEXT = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    private static final char[] B64 = B64_TEXT.toCharArray();
 
     /** Standard base64 (java.util.Base64 needs Android 8; this app also runs on Android 7). */
     static String base64(byte[] data) {
@@ -380,6 +419,24 @@ public final class DeviceLink {
             sb.append(i + 2 < data.length ? B64[b2 & 63] : '=');
         }
         return sb.toString();
+    }
+
+    /** Standard base64 back to bytes (android.util.Base64 is not available in JVM tests; java.util.Base64 needs API 26). */
+    static byte[] unbase64(String text) {
+        String t = text.replace("=", "");
+        byte[] out = new byte[t.length() * 3 / 4];
+        int buf = 0, bits = 0, n = 0;
+        for (int i = 0; i < t.length(); i++) {
+            int v = B64_TEXT.indexOf(t.charAt(i));
+            if (v < 0) throw new IllegalArgumentException("not base64");
+            buf = (buf << 6) | v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out[n++] = (byte) (buf >> bits);
+            }
+        }
+        return n == out.length ? out : java.util.Arrays.copyOf(out, n);
     }
 
     // ---- 낙상 ----
@@ -457,32 +514,41 @@ public final class DeviceLink {
             synchronized (this) {
                 pending.add(new Pending(eventId, jpeg, System.currentTimeMillis()));
                 while (pending.size() > PENDING_MAX) pending.remove(0);
+                savePending();
             }
             lastError = "서버에 연결할 수 없어요 (낙상 기록을 보관했다가 다시 보내요)";
             return null;
         }
     }
 
-    /** Resend kept falls (same event ids, so the server never makes a second incident). */
+    /**
+     * Resend kept falls (same event ids, so the server never makes a second incident). A fall the server refuses
+     * as a bad request (4xx; sending it again gives the same answer) is dropped so the others behind it still go.
+     */
     void flushPending() {
         List<Pending> todo;
         synchronized (this) {
             long now = System.currentTimeMillis();
+            int before = pending.size();
             for (Iterator<Pending> it = pending.iterator(); it.hasNext(); ) {
                 if (now - it.next().at > PENDING_MAX_AGE_MS) it.remove();
             }
+            if (pending.size() != before) savePending();
             todo = new ArrayList<>(pending);
         }
         for (Pending p : todo) {
             try {
                 sendFall(p.eventId, false, p.jpeg);
-                synchronized (this) {
-                    pending.remove(p);
-                }
             } catch (Revoked e) {
                 return;
+            } catch (IllegalStateException e) {
+                logFailure("보관한 낙상 (서버가 거절해 버림)", e);
             } catch (IOException | RuntimeException e) {
                 return;   // 아직 안 됨: 다음 상태 신호 때 다시
+            }
+            synchronized (this) {
+                pending.remove(p);
+                savePending();
             }
         }
     }
