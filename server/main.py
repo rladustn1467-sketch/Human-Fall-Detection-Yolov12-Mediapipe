@@ -222,6 +222,13 @@ SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DEN
 @app.middleware("http")
 async def _security_headers(request, call_next):
     response = await call_next(request)
+    # 쓰는 동안 로그인 연장: 서버가 만료일을 늦췄으면 같은 쿠키를 새 유지 기간으로 다시 보냄. 응답이 이미 로그인 쿠키를
+    # 정했으면(로그인·로그아웃) 그대로 둠
+    token = getattr(request.state, "renew_session", None)
+    set_cookies = response.headers.getlist("set-cookie") if hasattr(response.headers, "getlist") else []
+    if token and not any(c.startswith(SESSION_COOKIE + "=") for c in set_cookies):
+        response.set_cookie(SESSION_COOKIE, token, max_age=accounts.SESSION_DAYS * 86400, path="/",
+                            httponly=True, samesite="lax", secure=_cookie_secure(request))
     for key, value in SECURITY_HEADERS.items():
         if key not in response.headers:
             response.headers[key] = value
@@ -865,7 +872,11 @@ def _check_origin(request: Request):
 
 
 def _current_user(conn, request: Request):
-    return accounts.session_user(conn, request.cookies.get(SESSION_COOKIE))
+    token = request.cookies.get(SESSION_COOKIE)
+    user_id, renewed = accounts.touch_session(conn, token)
+    if renewed:
+        request.state.renew_session = token   # 만료일을 늦췄으니 쿠키도 다시 보냄 (_security_headers 미들웨어)
+    return user_id
 
 
 def _require_user(conn, request: Request):

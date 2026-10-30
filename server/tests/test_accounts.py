@@ -137,6 +137,30 @@ class SessionTest(AccountsTestBase):
         token = accounts.create_session(self.conn, user_id, now=self.now)
         self.assertIsNone(accounts.session_user(self.conn, token, now=self.now + accounts.SESSION_DAYS * 86400 + 1))
 
+    def expires(self):
+        return self.conn.execute("SELECT expires_at FROM sessions").fetchone()[0]
+
+    def test_used_session_stays_logged_in_unused_one_expires_after_90_days(self):
+        # 사용자 결정 2026-10-30: 마지막으로 쓴 날부터 90일 (쓰면 하루에 한 번 연장)
+        self.assertEqual(accounts.SESSION_DAYS, 90)
+        user_id = self.signup()
+        token = accounts.create_session(self.conn, user_id, now=self.now)
+        day = 86400
+        for d in (30, 60, 89, 120, 170):                                          # 가끔 씀 (90일 안 간격)
+            self.assertEqual(accounts.session_user(self.conn, token, now=self.now + d * day), user_id, d)
+        self.assertEqual(self.expires(), self.now + 170 * day + 90 * day)
+        self.assertIsNone(accounts.session_user(self.conn, token, now=self.now + 170 * day + 90 * day + 1))   # 90일 안 씀
+
+    def test_renewed_at_most_once_a_day(self):
+        user_id = self.signup()
+        token = accounts.create_session(self.conn, user_id, now=self.now)
+        first = self.expires()
+        accounts.session_user(self.conn, token, now=self.now + 3600)                # 1시간 뒤: 그대로
+        self.assertEqual(self.expires(), first)
+        self.assertEqual(accounts.touch_session(self.conn, token, now=self.now + 86400 + 1), (user_id, True))   # 하루 뒤: 연장
+        self.assertEqual(self.expires(), self.now + 86400 + 1 + 90 * 86400)
+        self.assertEqual(accounts.touch_session(self.conn, token, now=self.now + 86400 + 60), (user_id, False))
+
     def test_bad_tokens(self):
         self.assertIsNone(accounts.session_user(self.conn, None))
         self.assertIsNone(accounts.session_user(self.conn, "x" * 500))

@@ -25,7 +25,8 @@ import time
 import db
 
 # ---- 조정 가능한 설정값 ----
-SESSION_DAYS = 30                  # 로그인 유지 기간
+SESSION_DAYS = 90                  # 로그인 유지: 마지막으로 쓴 날부터 (사용자 결정 2026-10-30)
+SESSION_RENEW_SECONDS = 86400      # 쓰는 동안 만료일을 늦추는 것은 하루에 한 번
 INVITE_HOURS = 24                  # 초대 코드 유효 시간
 PASSWORD_MIN, PASSWORD_MAX = 8, 64
 NAME_MIN, NAME_MAX = 2, 20
@@ -199,14 +200,28 @@ def create_session(conn, user_id, now=None):
     return token
 
 
-def session_user(conn, token, now=None):
-    """User id of a valid session cookie, else None."""
+def touch_session(conn, token, now=None):
+    """(user id, renewed) of a valid session cookie, else (None, False). A session in use is kept SESSION_DAYS
+    from its last use: at most once a day its end moves to now + SESSION_DAYS (renewed = True, the caller sends the
+    cookie again). A phone that detects falls with this login is therefore not logged out while it is used."""
     if not token or len(token) > 200:
-        return None
+        return None, False
     now = time.time() if now is None else now
-    row = conn.execute("SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > ?",
-                       (_token_hash(token), now)).fetchone()
-    return row["user_id"] if row else None
+    th = _token_hash(token)
+    row = conn.execute("SELECT user_id, expires_at FROM sessions WHERE token_hash = ? AND expires_at > ?",
+                       (th, now)).fetchone()
+    if not row:
+        return None, False
+    new_end = now + SESSION_DAYS * 86400
+    if new_end - row["expires_at"] < SESSION_RENEW_SECONDS:
+        return row["user_id"], False
+    conn.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ? AND expires_at < ?", (new_end, th, new_end))
+    return row["user_id"], True
+
+
+def session_user(conn, token, now=None):
+    """User id of a valid session cookie, else None (keeps a session in use alive, see touch_session)."""
+    return touch_session(conn, token, now)[0]
 
 
 def end_session(conn, token):

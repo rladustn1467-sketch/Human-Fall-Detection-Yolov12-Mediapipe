@@ -97,6 +97,25 @@ class AuthApiTest(unittest.TestCase):
         self.assertIn(f"max-age={accounts.SESSION_DAYS * 86400}", lower)
         self.assertNotIn("secure", lower)  # HTTP 시험 서버이므로 자동으로 꺼짐 (HTTPS 에서만 켜짐)
         self.assertEqual(headers.get("cache-control"), "no-store")
+        # 쓰는 동안 연장: 하루 넘게 지난 세션이면 만료일을 늦추고 쿠키도 다시 보냄 (DB 시각을 앞당겨 하루 지난 것처럼)
+        import sqlite3, time
+        c = sqlite3.connect(self.server.db_path)
+        mine = accounts._token_hash(b.cookie)
+        c.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", (time.time() + 80 * 86400, mine))
+        c.commit()
+        c.close()
+        status, headers, _ = b.call("GET", "/api/v2/state")
+        self.assertEqual(status, 200)
+        renewed = headers.get("set-cookie", "").lower()
+        self.assertIn("fd_session=", renewed)
+        self.assertIn(f"max-age={accounts.SESSION_DAYS * 86400}", renewed)
+        self.assertIn("httponly", renewed)
+        c = sqlite3.connect(self.server.db_path)
+        left = c.execute("SELECT expires_at FROM sessions WHERE token_hash = ?", (mine,)).fetchone()[0] - time.time()
+        c.close()
+        self.assertGreater(left, 89 * 86400)
+        status, headers, _ = b.call("GET", "/api/v2/state")
+        self.assertNotIn("fd_session=", headers.get("set-cookie", ""))                # 같은 날 다시: 보내지 않음
 
     def test_wrong_password_and_rate_limit(self):
         b = Browser(self.server)

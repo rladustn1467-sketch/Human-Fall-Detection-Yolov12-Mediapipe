@@ -172,7 +172,7 @@ class TokenTest(PushTestBase):
         token_b = self.phone(self.b, "b1", session=accounts._token_hash(cookie))
         accounts.end_session(self.conn, cookie)                                   # 로그아웃 → 토큰도 삭제
         self.assertIsNone(self.conn.execute("SELECT 1 FROM push_tokens WHERE token = ?", (token_b,)).fetchone())
-        old = accounts.create_session(self.conn, self.d, now=T / 1000 - 40 * 86400)  # 만료된 세션의 토큰
+        old = accounts.create_session(self.conn, self.d, now=T / 1000 - (accounts.SESSION_DAYS + 10) * 86400)  # 만료된 세션의 토큰
         push.register_token(self.conn, self.d, accounts._token_hash(old), TOK + "d-old-" + "x" * 30, now=T)
         self.phone(self.a, "a1")
         self.fall()
