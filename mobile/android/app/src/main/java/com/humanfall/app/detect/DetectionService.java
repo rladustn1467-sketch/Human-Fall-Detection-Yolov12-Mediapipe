@@ -46,8 +46,8 @@ import org.json.JSONObject;
  * camera frames → fall decision → fall with silhouette photo. Runs as a foreground service (visible notification),
  * because Android only lets apps use the camera in the background that way.
  *
- * The camera follows the on/off set in the family app (or on this phone): off = the camera is released and no
- * frame is analysed. If the device is deleted in the app (401), the service stops itself.
+ * The camera follows the on/off set on this phone (the family app only shows it): off = the camera is released and
+ * no frame is analysed. If the device is deleted in the app (401), the service stops itself.
  *
  * Emulator check (debug builds only): with the extra MOCK_FRAMES_DIR, images in that folder are fed through the very
  * same pipeline instead of the camera, so pairing → decision → incident → photo can be tested without a real phone.

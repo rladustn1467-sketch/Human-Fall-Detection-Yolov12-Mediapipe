@@ -29,7 +29,8 @@
       await Store.init();
     } catch (e) {
       console.error(e);
-      document.getElementById('view').innerHTML = '<div class="boot"><p>불러오지 못했어요. 새로고침해 주세요.</p></div>';
+      document.getElementById('view').innerHTML = '<div class="boot"><div style="text-align:center"><p>불러오지 못했어요. 인터넷 연결을 확인해 주세요.</p>'
+        + '<button class="btn btn--primary" style="margin-top:12px" onclick="location.reload()">다시 시도</button></div></div>';
       return;
     }
     /* 로그인이 풀렸으면(세션 만료·다른 곳에서 세션 삭제 등) 이 휴대폰의 '이 휴대폰으로 감지하기'도 멈춤 (로그아웃과 같은 방법,

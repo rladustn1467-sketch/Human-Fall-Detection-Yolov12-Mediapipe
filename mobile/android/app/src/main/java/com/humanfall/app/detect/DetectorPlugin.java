@@ -39,6 +39,7 @@ public class DetectorPlugin extends Plugin {
         }
         String code = call.getString("code");
         if (code != null && !code.isEmpty()) i.putExtra(DetectorActivity.EXTRA_CODE, code);
+        if (Boolean.TRUE.equals(call.getBoolean("signedIn", false))) i.putExtra(DetectorActivity.EXTRA_SIGNED_IN, true);
         getActivity().startActivity(i);
         call.resolve();
     }

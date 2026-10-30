@@ -336,6 +336,22 @@ def _leave(conn, user_id, group_id):
     _delete_group_if_empty(conn, group_id)
 
 
+WITHDRAWN_NAME = "탈퇴한 가족"
+
+
+def _forget_name_in_sent_texts(conn, group_id, name):
+    """The SMS and Telegram sentences kept for the other members say '<name>님 댁'; replace the withdrawn person's
+    name in them (audit 2026-10-29, F-3). Logs and notifications keep only user ids, never names."""
+    if not group_id or not name:
+        return
+    conn.execute("""UPDATE notification_deliveries SET body = REPLACE(body, ?, ?)
+                    WHERE notification_id IN (SELECT id FROM notifications WHERE group_id = ?)""",
+                 (name, WITHDRAWN_NAME, group_id))
+    conn.execute("""UPDATE telegram_deliveries SET body = REPLACE(body, ?, ?)
+                    WHERE incident_id IN (SELECT id FROM incidents WHERE group_id = ?)""",
+                 (name, WITHDRAWN_NAME, group_id))
+
+
 def withdraw(conn, user_id, password, ip, now=None):
     """Delete the account after checking the password again. All or nothing (one transaction).
 
@@ -358,6 +374,7 @@ def withdraw(conn, user_id, password, ip, now=None):
         group_id = me["group_id"]
         conn.execute("DELETE FROM auth_failures WHERE key IN (?, ?, ?)",
                      (phone_key, f"join-user:{user_id}", f"address-user:{user_id}"))
+        _forget_name_in_sent_texts(conn, group_id, me["name"])
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         _delete_group_if_empty(conn, group_id)
 

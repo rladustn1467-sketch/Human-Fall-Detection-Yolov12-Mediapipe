@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field
 
 import accounts
+import background
 import address_search
 import alerts
 import db
@@ -185,15 +186,18 @@ def _timeout_watcher(stop):
                 _refresh_timeouts()
         except Exception as e:  # 감시 작업이 멈추지 않도록 오류는 기록만 함
             print(f"[server] 시간 초과 검사 오류: {type(e).__name__}: {e}")
-        # 새 웹앱 낙상 사고: 60초 무응답·자동 신고(모의) 시간 처리, 대기 중인 문자(모의 발송) 처리
+        # 새 웹앱 낙상 사고: 60초 무응답·자동 신고(모의) 시간 처리, 대기 중인 문자(모의)·텔레그램·푸시 보내기.
+        # 단계마다 따로: 한 단계의 오류가 다른 단계(예: 푸시)를 막지 않음 (background.py)
         try:
             with db.session(DB_PATH) as conn:
-                incidents.tick(conn)
-                alerts.process_due(conn, SMS_SENDER, incidents.now_ms())
-                alerts.process_telegram_due(conn, TELEGRAM_CHANNEL, incidents.now_ms())
-                push.process_due(conn, PUSH_SENDER, incidents.now_ms())
+                background.run_each([
+                    ("사고 시간", lambda: incidents.tick(conn)),
+                    ("문자", lambda: alerts.process_due(conn, SMS_SENDER, incidents.now_ms())),
+                    ("텔레그램", lambda: alerts.process_telegram_due(conn, TELEGRAM_CHANNEL, incidents.now_ms())),
+                    ("푸시", lambda: push.process_due(conn, PUSH_SENDER, incidents.now_ms())),
+                ])
         except Exception as e:
-            print(f"[incident] 사고 시간 처리 오류: {type(e).__name__}: {e}")
+            print(f"[incident] 사고 처리 준비 오류: {type(e).__name__}: {e}")
 
 
 @asynccontextmanager
@@ -209,6 +213,19 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Fall Detection Server", lifespan=lifespan)
+
+# 모든 응답에 기본 보안 헤더 (감사 2026-10-29, H-4): 다른 사이트가 화면을 몰래 끼워 보여 주지 못하게, 파일 종류를
+# 짐작하지 않게, 다른 사이트로 주소를 넘기지 않게. 응답이 이미 정한 값(예: 로그인의 no-referrer)은 그대로 둠
+SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin"}
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    response = await call_next(request)
+    for key, value in SECURITY_HEADERS.items():
+        if key not in response.headers:
+            response.headers[key] = value
+    return response
 
 
 # ---- 접근 토큰 ----
@@ -249,8 +266,9 @@ print(f"[report] 텔레그램 '상세 보기' 버튼: {'켜짐' if ESCALATION.sh
 
 class _HideTokenInAccessLog(logging.Filter):
     """uvicorn's access log prints each request path with its query; the old admin login sends the shared token as
-    ?token=..., so it is masked here (behind the HTTPS proxy, the proxy's own log is filtered the same way)."""
-    _token = re.compile(r"(?i)\b(token)=[^&\s\"]+")
+    ?token=..., and the address search sends the home address as ?q=..., so both are masked here (behind the HTTPS
+    proxy, the proxy's own log is filtered the same way)."""
+    _token = re.compile(r"(?i)\b(token|q)=[^&\s\"]+")
 
     def filter(self, record):
         if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
@@ -484,6 +502,34 @@ print(f"[incident] 문자 알림: {SMS_SENDER.name} (모의 발송 - 실제 문�
 # 개발용 기기(PC 감지 프로그램 연결 코드, 홈캠·CCTV 시연 화면)는 FD_DEV_DEVICES=1 로 켠 시험 서버에서만 (devices.py)
 print(f"[push] 가족 휴대폰 푸시: {push.describe(PUSH_SENDER)}")
 print(f"[devices] 개발용 기기: {'켜짐 (FD_DEV_DEVICES=1 - 운영 서버에서는 켜지 마세요)' if devices.dev_devices() else '꺼짐'}")
+
+
+def config_warnings(env):
+    """Settings a real service needs, checked once at start. Only names and what is missing are printed, never
+    values (audit 2026-10-29, H-5). Returns the warning lines."""
+    get = lambda k: str(env.get(k, "") or "").strip()
+    out = []
+    if not get("DOOR_CODE_KEY"):
+        out.append("DOOR_CODE_KEY 가 없어 현관 비밀번호를 저장할 수 없어요")
+    if not get("JUSO_API_KEY"):
+        out.append("JUSO_API_KEY 가 없어 주소 검색이 안 돼요 (직접 입력만)")
+    fcm = get("FCM_SERVICE_ACCOUNT_FILE")
+    if not fcm:
+        out.append("FCM_SERVICE_ACCOUNT_FILE 이 없어 휴대폰 푸시 알림이 안 가요")
+    elif not Path(fcm).is_file():
+        out.append("FCM_SERVICE_ACCOUNT_FILE 의 파일을 찾을 수 없어 휴대폰 푸시 알림이 안 가요")
+    if get("TELEGRAM_BOT_TOKEN") and get("SHOW_DETAIL_IN_TELEGRAM").lower() not in ("false", "0", "off", "no"):
+        out.append("SHOW_DETAIL_IN_TELEGRAM 이 켜져 있어 신고 상세(주소·현관 비밀번호·의료 정보)가 텔레그램으로 갈 수 있어요")
+    if get("REPORT_PAGE_ACCESS").lower() != "local":
+        out.append("REPORT_PAGE_ACCESS 가 local 이 아니라 신고 기록 페이지가 이 PC 밖에서도 열려요")
+    for key in ("FD_DEV_TOOLS", "FD_DEV_DEVICES"):
+        if get(key) == "1":
+            out.append(f"{key} 가 켜져 있어요 (개발·시험 서버에서만 켜세요)")
+    return [f"[설정 확인] {line}" for line in out]
+
+
+for _line in config_warnings(os.environ):
+    print(_line)
 
 
 # ---- API ----

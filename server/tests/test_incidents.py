@@ -11,6 +11,7 @@ import alerts
 import db
 import incidents
 import legacy_devices
+from tests.test_accounts import IP, PW
 from tests.test_people import PeopleTestBase
 
 T = 1_800_000_000_000          # 감지 시각 (ms)
@@ -218,6 +219,25 @@ class ActionTest(IncidentTestBase):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM notifications WHERE user_id = ?", (self.d,)).fetchone()[0], 0)
         self.assertEqual(self.state(self.d)["incidents"], [])
         self.assertEqual(self.view(self.b, iid)["status"], "no_response")   # 사고 기록은 그룹에 남음
+
+
+class WithdrawTextTest(IncidentTestBase):
+    """After a member withdraws, the sentences already sent to the others (SMS, Telegram) do not keep their name."""
+
+    def bodies(self):
+        return [r[0] for r in self.conn.execute("SELECT body FROM notification_deliveries ORDER BY id")]
+
+    def test_withdrawn_name_is_removed_from_sent_sentences(self):
+        iid = self.fall()
+        incidents.tick(self.conn, T + 60 * S)                                    # 가족(비·디)에게 문자 (모의)
+        alerts.process_due(self.conn, alerts.MockSmsSender(), T + 61 * S)
+        self.assertTrue(all("가족에이" in b for b in self.bodies()), self.bodies())   # 에이 = 감지 대상 (집 이름)
+        accounts.withdraw(self.conn, self.a, PW, IP, self.now)
+        self.assertTrue(self.bodies())
+        for body in self.bodies():
+            self.assertNotIn("가족에이", body)
+            self.assertIn("탈퇴한 가족", body)
+        self.assertIsNotNone(self.inc(iid))                                       # 사고 기록은 그대로
 
 
 class CheckingTest(IncidentTestBase):

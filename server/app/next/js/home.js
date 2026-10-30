@@ -290,19 +290,25 @@
         : `<div class="notice">${ic('lock')}<span>이 집에 연결된 가족만 설정을 바꿀 수 있어요. 상태는 그룹 가족 모두 볼 수 있어요.</span></div>`}`;
   }
 
-  /* 실제 기기: 서버가 받은 신호 그대로 (마지막 신호, 시험 신호, 연결 안 됨 이유와 확인할 것) */
+  /* 실제 기기: 서버가 받은 신호 그대로 (마지막 신호, 연결 확인 신호, 연결 안 됨 이유와 확인할 것) */
+  const PHONE_TIPS = {
+    never: ['감지할 휴대폰에서 이 앱을 열어 연결 코드를 입력했는지 확인해 주세요.', '휴대폰이 와이파이나 데이터에 연결돼 있는지 확인해 주세요.'],
+    offline: ['감지 휴대폰이 켜져 있고 충전기가 꽂혀 있는지 확인해 주세요.', "감지 휴대폰에서 이 앱의 감지 화면을 열어 '감지 중'인지 확인해 주세요.", '와이파이나 데이터 연결을 확인해 주세요.'],
+    camera: ['감지 휴대폰에서 이 앱의 카메라 권한이 허용돼 있는지 확인해 주세요.', '다른 앱이 카메라를 쓰고 있지 않은지 확인해 주세요.']
+  };
+  const PC_TIPS = {
+    never: ['감지 기기에서 연결 코드를 입력한 뒤 감지 프로그램이 켜져 있는지 확인해 주세요.', '기기가 와이파이에 연결돼 있는지 확인해 주세요.'],
+    offline: ['기기 전원과 감지 프로그램이 켜져 있는지 확인해 주세요.', '와이파이 연결 상태를 확인해 주세요.'],
+    camera: ['카메라가 기기에 제대로 연결돼 있는지 확인해 주세요.', '다른 프로그램이 카메라를 쓰고 있지 않은지 확인해 주세요.']
+  };
   function liveDeviceInfo(d, t) {
-    const tips = {
-      never: ['감지 기기에서 연결 코드를 입력한 뒤 감지 프로그램이 켜져 있는지 확인해 주세요.', '기기가 와이파이에 연결돼 있는지 확인해 주세요.'],
-      offline: ['기기 전원과 감지 프로그램이 켜져 있는지 확인해 주세요.', '와이파이 연결 상태를 확인해 주세요.'],
-      camera: ['카메라가 기기에 제대로 연결돼 있는지 확인해 주세요.', '다른 프로그램이 카메라를 쓰고 있지 않은지 확인해 주세요.']
-    }[d.problem];
+    const tips = (d.type === 'pc' ? PC_TIPS : PHONE_TIPS)[d.problem];
     const row = (k, v) => `<div class="kv__row"><span class="kv__k">${k}</span><span class="kv__v">${v}</span></div>`;
     return `${d.status === 'off' ? `<p class="row__sub" style="margin-bottom:12px"><span data-ago="${d.since}">${UI.ago(t - d.since)}</span>부터 감지를 쉬고 있어요. 그 기기에서 감지를 켜기 전에는 이 기기의 낙상으로 알림이 가지 않아요.</p>` : ''}
       ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>${esc(UI.DEVICE_PROBLEM[d.problem] || '연결되지 않았어요')}</b>${(tips || []).map((x, i) => `<br>${i + 1}. ${esc(x)}`).join('')}</div></div>` : ''}
       <div class="kv" style="margin-bottom:14px">
         ${row('마지막 신호', d.lastSeenAt ? `<span data-ago="${d.lastSeenAt}">${UI.ago(t - d.lastSeenAt)}</span>` : '아직 없음')}
-        ${row('시험 신호', d.lastTestAt ? `${esc(UI.dateTime(d.lastTestAt))} 받음` : '받은 적 없음')}
+        ${d.lastTestAt ? row('연결 확인 신호', `${esc(UI.dateTime(d.lastTestAt))} 받음`) : ''}
         ${row('연결한 날', esc(UI.dateTime(d.createdAt)))}
       </div>`;
   }

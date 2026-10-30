@@ -19,7 +19,7 @@ import org.json.JSONObject;
 /**
  * This phone's connection to the server as a detection device (same rules as the PC's dashboard/device_link.py).
  *
- * The family member gets a 6-character pairing code in the app ('기기 추가' → 감지용 휴대폰); it is entered once on
+ * The family member gets a 6-character pairing code in the app ('기기 추가' → 안 쓰는 휴대폰); it is entered once on
  * this phone and the server gives it its own device token, kept only in the app's private storage (never in Git,
  * never shown). With the token: a status signal every minute (camera working or not), falls with the silhouette
  * photo, and turning detection on/off. Detection is turned on/off only on this phone: the family app can not change

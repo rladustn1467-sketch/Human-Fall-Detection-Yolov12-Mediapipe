@@ -12,7 +12,9 @@
     render(container) {
       container.innerHTML =
         '<header class="tab-head"><div><h1 class="page-title">예방</h1></div></header>' +
-        '<section id="prevent-module" aria-label="예방"></section>';
+        '<section id="prevent-module" aria-label="예방"><div class="empty" style="margin-top:48px">'
+        + '<p><b>예방 기능을 준비하고 있어요</b></p><p style="margin-top:6px">낙상을 미리 막는 운동·생활 안내가 여기에 생길 예정이에요.</p>'
+        + '</div></section>';
     },
     destroy() { }
   };

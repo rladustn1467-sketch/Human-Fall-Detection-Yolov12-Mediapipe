@@ -41,18 +41,21 @@ import java.util.concurrent.Executors;
  *  - self ('이 휴대폰으로 감지하기', the app's settings): the logged-in web app got a pairing code from the server and
  *    passes it here; this screen pairs at once, no code is shown or typed.
  *  - dedicated ('감지용 휴대전화 연결하기', below the login (first) screen, no login): the person types the code shown on
- *    their own phone (home → '기기 추가' → '감지용 휴대폰').
+ *    their own phone (home → '기기 추가' → '안 쓰는 휴대폰').
  * Both end up as the same kind of device on the server (type "phone": same status signal, on/off, falls, delete).
- * Then: the real state (connection, detection on/off, camera, last signal), detection on/off (same switch as in the
- * app's device list), and disconnecting this phone. Every state shown comes from the server's answers or the camera.
+ * Then: the real state (connection, detection on/off, camera, last signal), detection on/off (only here: the family
+ * app shows it but can not change it; after logout only when opened from the logged-in app), and disconnecting this phone. Every state shown comes from the server's answers or the camera.
  */
 public class DetectorActivity extends AppCompatActivity {
     public static final String EXTRA_SERVER = "server";
     public static final String EXTRA_MODE = "mode";
     public static final String EXTRA_CODE = "code";
+    /** Opened from the web app while someone is logged in (DetectorPlugin.open signedIn). Needed to turn back on a
+     *  detection that logout stopped: otherwise anyone holding the phone could restart it without logging in. */
+    public static final String EXTRA_SIGNED_IN = "signedIn";
     public static final String MODE_SELF = "self", MODE_DEDICATED = "dedicated";
     static final int REQ_CAMERA = 7;
-    static final String HOW_TO_GET_CODE = "평소 쓰는 휴대폰에서 이 앱에 로그인한 뒤 홈 화면의 집에서 '기기 추가' → '감지용 휴대폰'을 고르면 6자리 연결 코드가 나와요. 그 코드를 아래에 입력해 주세요.";
+    static final String HOW_TO_GET_CODE = "평소 쓰는 휴대폰에서 이 앱에 로그인한 뒤 홈 화면의 집에서 '기기 추가' → '안 쓰는 휴대폰'을 고르면 6자리 연결 코드가 나와요. 그 코드를 아래에 입력해 주세요.";
     // 웹앱(server/app/next/css/main.css)과 같은 색
     static final int BG = 0xFFF4F1EA, INK = 0xFF1B2A30, PRIMARY = 0xFF1B6A72, OK = 0xFF2B8553, STOP = 0xFFC42F2A, MUTED = 0xFF5B6B70;
 
@@ -67,6 +70,7 @@ public class DetectorActivity extends AppCompatActivity {
     private boolean busy;
     private String mode;          // self | dedicated (연결된 뒤에는 연결할 때의 방식)
     private String autoCode;      // self: 앱이 서버에서 받아 넘겨 준 연결 코드 (한 번만 씀, 화면에 보이지 않음)
+    private boolean signedIn;   // 로그인한 앱에서 열었음 (EXTRA_SIGNED_IN)
     private Intent debugExtras;   // debug 빌드: 에뮬레이터 시험용 (시험용 사진 입력, 짧은 신호 간격)
 
     private final Runnable tick = new Runnable() {
@@ -86,6 +90,7 @@ public class DetectorActivity extends AppCompatActivity {
         mode = link.isPaired() ? null : getIntent().getStringExtra(EXTRA_MODE);   // 연결된 뒤에는 연결할 때의 방식
         if (mode == null) mode = savedMode(this);
         autoCode = link.isPaired() ? null : getIntent().getStringExtra(EXTRA_CODE);
+        signedIn = getIntent().getBooleanExtra(EXTRA_SIGNED_IN, false);
         if (BuildConfig.DEBUG && (getIntent().hasExtra(DetectionService.EXTRA_MOCK_FRAMES_DIR)
                 || getIntent().hasExtra(DetectionService.EXTRA_HEARTBEAT_SECONDS))) {
             debugExtras = new Intent();
@@ -301,7 +306,8 @@ public class DetectorActivity extends AppCompatActivity {
         } else if (!on && link.isHeld()) {
             title = "감지를 멈췄어요" + place;
             color = MUTED;
-            body = "로그아웃해서 이 휴대폰의 감지를 멈췄어요. 다시 감지하려면 아래 '감지 켜기'를 눌러 주세요.";
+            body = signedIn ? "로그아웃해서 이 휴대폰의 감지를 멈췄어요. 다시 감지하려면 아래 '감지 켜기'를 눌러 주세요."
+                    : "로그아웃해서 이 휴대폰의 감지를 멈췄어요. 다시 감지하려면 앱에 로그인한 뒤 홈 화면의 '이 휴대폰' 카드에서 켜 주세요.";
         } else if (!on) {
             title = "감지를 꺼 두었어요" + place;
             color = MUTED;
@@ -329,7 +335,12 @@ public class DetectorActivity extends AppCompatActivity {
         stateTitle.setTextColor(color);
         stateBody.setText(body);
         permissionButton.setVisibility(hasCamera() ? View.GONE : View.VISIBLE);
-        toggleButton.setText(on ? "감지 끄기" : "감지 켜기");
+        toggleButton.setText(on ? "감지 끄기" : canTurnOnHere(link.isHeld(), signedIn) ? "감지 켜기" : "앱에 로그인하기");
+    }
+
+    /** Detection stopped by logout (held) can be turned on again only from the logged-in app. */
+    static boolean canTurnOnHere(boolean held, boolean signedIn) {
+        return !held || signedIn;
     }
 
     // ---- 동작 ----
@@ -360,6 +371,12 @@ public class DetectorActivity extends AppCompatActivity {
 
     private void toggle() {
         boolean turnOn = !link.enabled;
+        if (turnOn && !canTurnOnHere(link.isHeld(), signedIn)) {
+            // 로그인 화면으로 (앱): 로그인한 뒤 홈의 '이 휴대폰' 카드에서 다시 켬
+            startActivity(new Intent(this, com.humanfall.app.MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            finish();
+            return;
+        }
         if (turnOn && !hasCamera()) {
             askCamera();
             return;

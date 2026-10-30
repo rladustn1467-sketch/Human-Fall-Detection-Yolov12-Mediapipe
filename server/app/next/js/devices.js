@@ -77,7 +77,7 @@
       try {
         p = await UI.busy(el, () => Act.startDevicePairing(hid, { type: self ? 'phone' : key, location }));
       } catch (e) { UI.showError(e, { location: 'dc-loc' }); return; }
-      if (self) { closeSheet(); await Self.open({ mode: 'self', code: p.code }); return; }
+      if (self) { closeSheet(); await Self.open({ mode: 'self', code: p.code, signedIn: true }); return; }
       codeSheet(hid, p);
     });
   }
@@ -147,7 +147,7 @@
     /* 이미 연결돼 있으면 감지 상태 화면만, 아니면 위치(와 집)를 고른 뒤 연결 */
     async start(homeId) {
       const r = await Self.status();
-      if (r && r.s && r.s.paired) { await Self.open({}); return; }
+      if (r && r.s && r.s.paired) { await Self.open({ signedIn: !!Sel.me() }); return; }   // 로그인한 앱에서 엶 (로그아웃으로 멈춘 감지를 다시 켤 수 있음)
       const me = Sel.me();
       const ids = homeId ? [homeId] : me.homeIds.slice();
       if (!ids.length) {
