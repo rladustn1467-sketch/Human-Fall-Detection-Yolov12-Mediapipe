@@ -144,6 +144,21 @@ class PeopleApiTest(unittest.TestCase):
         # 기존 공용 토큰으로는 새 기능을 쓸 수 없음
         self.assertEqual(self.server.request("POST", "/api/v2/me/withdraw", {"password": PW}, token=self.server.token)[0], 401)
 
+    def test_remove_member_over_http(self):
+        a = self.member("가족에이")
+        b = self.member("가족비", self.code(a))
+        other = self.member("다른씨")
+        path = f"/api/v2/groups/members/{b.id}/remove"
+        self.assertEqual(Browser(self.server).call("POST", path)[0], 401)                    # 로그인 필요
+        self.assertEqual(other.call("POST", path)[0], 404)                                   # 다른 그룹
+        status, _, _ = self.server.request("POST", path, {}, headers={"Origin": "http://evil.example",
+                                                                       "Cookie": f"fd_session={a.cookie}"})
+        self.assertEqual(status, 403)                                                         # 다른 사이트
+        status, _, data = a.call("POST", path)
+        self.assertEqual(status, 200, data)
+        self.assertNotIn(b.id, [p["id"] for p in data["state"]["people"]])
+        self.assertEqual(b.state()["state"]["groups"], [])                                    # 내보내진 사람은 그룹 없음
+
     def test_withdraw(self):
         a = self.member("가족에이")
         b = self.member("가족비", self.code(a))

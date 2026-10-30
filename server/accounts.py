@@ -276,8 +276,12 @@ def join_group(conn, user_id, code, now=None):
             message = "만료된 초대 코드예요. 새 코드를 요청해 주세요." if invite else "초대 코드를 확인해 주세요."
             error = AccountError(400, message, "code")
         else:
+            others = [r["id"] for r in conn.execute("SELECT id FROM users WHERE group_id = ?", (invite["group_id"],))]
             conn.execute("UPDATE users SET group_id = ?, onboarded = 0 WHERE id = ?", (invite["group_id"], user_id))
             _clear_failures(conn, key)
+            # 기존 가족에게 '○○님이 그룹에 들어왔어요' (참여는 바로, 사용자 결정 2026-10-30)
+            import alerts
+            alerts.record_group(conn, invite["group_id"], others, "member_joined", user_id, int(now * 1000))
             error = None
     if error:
         raise error
@@ -295,17 +299,41 @@ def leave_group(conn, user_id):
     flag, health information and home links. If nobody is left, the group and its homes are deleted."""
     with _transaction(conn):
         me = _user(conn, user_id)
+        if me["group_id"]:
+            _leave(conn, user_id, me["group_id"])
+
+
+def remove_member(conn, user_id, member_id, now=None):
+    """Remove another member from my group (any member may; user decision 2026-10-30). The removed person leaves
+    like with leave_group, the invite code is replaced (the old one may be known to them), and the others are told."""
+    now = time.time() if now is None else now
+    with _transaction(conn):
+        me = _user(conn, user_id)
         group_id = me["group_id"]
         if not group_id:
-            return
-        conn.execute("DELETE FROM home_members WHERE user_id = ?", (user_id,))
-        # 이 그룹에서 받은 알림(대기 중인 문자 포함)과 사고 화면 닫음 기록도 지움 (사고 기록 자체는 그룹에 남음)
-        conn.execute("DELETE FROM notifications WHERE user_id = ? AND group_id = ?", (user_id, group_id))
-        conn.execute("""DELETE FROM incident_dismissals WHERE user_id = ?
-                        AND incident_id IN (SELECT id FROM incidents WHERE group_id = ?)""", (user_id, group_id))
-        conn.execute("""UPDATE users SET group_id = NULL, onboarded = 0, is_target = 0,
-                        birth = NULL, conditions = NULL, medications = NULL WHERE id = ?""", (user_id,))
-        _delete_group_if_empty(conn, group_id)
+            raise AccountError(409, "먼저 가족 그룹을 만들거나 참여해 주세요.")
+        if member_id == user_id:
+            raise AccountError(400, "본인은 '그룹 나가기'로 나갈 수 있어요.")
+        member = conn.execute("SELECT id FROM users WHERE id = ? AND group_id = ?", (member_id, group_id)).fetchone()
+        if not member:
+            raise AccountError(404, "구성원을 찾을 수 없어요.")
+        _leave(conn, member_id, group_id)
+        _issue_invite(conn, group_id, user_id, now)
+        others = [r["id"] for r in conn.execute("SELECT id FROM users WHERE group_id = ? AND id != ?", (group_id, user_id))]
+        import alerts
+        alerts.record_group(conn, group_id, others, "member_removed", user_id, int(now * 1000))
+
+
+def _leave(conn, user_id, group_id):
+    """Inside a transaction: take the person out of the group (shared profile and home links go with it)."""
+    conn.execute("DELETE FROM home_members WHERE user_id = ?", (user_id,))
+    # 이 그룹에서 받은 알림(대기 중인 문자 포함)과 사고 화면 닫음 기록도 지움 (사고 기록 자체는 그룹에 남음)
+    conn.execute("DELETE FROM notifications WHERE user_id = ? AND group_id = ?", (user_id, group_id))
+    conn.execute("""DELETE FROM incident_dismissals WHERE user_id = ?
+                    AND incident_id IN (SELECT id FROM incidents WHERE group_id = ?)""", (user_id, group_id))
+    conn.execute("""UPDATE users SET group_id = NULL, onboarded = 0, is_target = 0,
+                    birth = NULL, conditions = NULL, medications = NULL WHERE id = ?""", (user_id,))
+    _delete_group_if_empty(conn, group_id)
 
 
 def withdraw(conn, user_id, password, ip, now=None):

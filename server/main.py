@@ -139,9 +139,16 @@ dispatcher = NotificationDispatcher(build_notifiers(os.environ))
 
 def _expire_photos():
     """Delete the photos of incidents that ended PHOTO_RETENTION_DAYS ago (incidents.expire_photos). For a photo of
-    an old /api/events event, its event record also forgets the photo, so the old screens show none."""
+    an old /api/events event, its event record also forgets the photo, so the old screens show none.
+    Old events that never became an incident keep their photo PHOTO_RETENTION_DAYS from the event time."""
+    keep_s = PHOTO_RETENTION_DAYS * 24 * 3600
     with db.session(DB_PATH) as conn:
-        ids = incidents.expire_photos(conn, keep_ms=int(PHOTO_RETENTION_DAYS * 24 * 3600 * 1000))
+        ids = incidents.expire_photos(conn, keep_ms=int(keep_s * 1000))
+        linked = {r["photo_id"] for r in conn.execute("SELECT photo_id FROM incident_photos")}
+    now = time.time()
+    with _lock:
+        ids += [eid for eid, ev in events.items()
+                if ev.get("image") and eid not in linked and _detected_ts(ev) + keep_s <= now]
     changed = False
     for photo_id in ids:
         if not EVENT_ID_RE.match(photo_id):
@@ -926,6 +933,16 @@ def _remove_unlinked_photos(conn, photo_ids):
             (IMAGE_DIR / f"{photo_id}.jpg").unlink(missing_ok=True)
         except OSError as e:
             print(f"[photo] 사진 파일을 지우지 못함: {type(e).__name__}: {e}")
+
+
+@app.post("/api/v2/groups/members/{member_id}/remove")
+def api_v2_remove_member(member_id: str, request: Request):
+    # 다른 구성원을 그룹에서 내보내기 (구성원 누구나, 초대 코드도 새로 바뀜)
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.remove_member(conn, user_id, member_id)
+        return _state_response(conn, user_id)
 
 
 @app.post("/api/v2/groups/leave")

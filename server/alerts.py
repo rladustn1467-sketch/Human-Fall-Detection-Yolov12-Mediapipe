@@ -32,6 +32,9 @@ NOTIF_TEXT = {
     "auto_reported": "{home} · {loc}: 자동 119 신고가 기록됐어요 (모의 신고)",
     "redetected": "{home} · {loc}: 확인 중인 사고에서 다시 넘어짐이 감지됐어요",
     "checking_reminder": "{home} · {loc}: 아직 확인 중인 사고예요. 확인을 마치면 종료해 주세요",
+    # 사고와 관계없는 그룹 알림 (사용자 결정 2026-10-30)
+    "member_joined": "{name}님이 그룹에 들어왔어요",
+    "member_removed": "{name}님이 가족 한 명을 그룹에서 내보냈어요",
 }
 # 문자 문장 (이름·건강 정보·주소는 넣지 않음)
 SMS_TEXT = {
@@ -118,6 +121,13 @@ def record(conn, group_id, incident_id, user_ids, kind, actor_id, now, n=0, sms=
             conn.execute("""INSERT INTO notification_deliveries (notification_id, channel, status, body, next_attempt_at,
                                                                  created_at, updated_at)
                             VALUES (?, 'sms', 'pending', ?, ?, ?, ?)""", (nid, body, now, now, now))
+
+
+def record_group(conn, group_id, user_ids, kind, actor_id, now):
+    """A notification about the group itself (no incident): once per person. now in ms."""
+    for uid in dict.fromkeys(user_ids):
+        conn.execute("""INSERT INTO notifications (id, group_id, user_id, incident_id, kind, actor_id, n, created_at)
+                        VALUES (?, ?, ?, NULL, ?, ?, 0, ?)""", (f"n_{secrets.token_hex(8)}", group_id, uid, kind, actor_id, now))
 
 
 def for_user(conn, user_id, group_id, names, limit):

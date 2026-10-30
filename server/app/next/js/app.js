@@ -43,10 +43,31 @@
       });
     };
     stopIfSignedOut();   // 앱이 꺼져 있는 동안 로그인이 풀린 경우
+    /* 다른 가족이 나를 그룹에서 내보냈으면(그룹이 없어짐) 이 휴대폰의 '이 휴대폰으로 감지하기'도 멈추고 연결 해제
+       (직접 그룹 나가기와 같은 방법, family.js). 안 그러면 예전 그룹 집으로 계속 낙상을 보냄 */
+    let removing = false;
+    const stopIfNoGroup = async () => {
+      const me = Sel.me();
+      if (removing || !me || me.groupId || !FD.DeviceConnect || !UI.nativeDetector()) return;
+      const S = FD.DeviceConnect.self;
+      const st = ((await S.status()) || {}).s;
+      if (!(st && st.paired && st.mode === 'self')) return;
+      removing = true;
+      try {
+        const r = await S.stopForLogout();
+        if (r && r.self && r.stopped) {
+          const u = await S.unpairAfterWithdraw();
+          UI.toast(u && u.removed ? '그룹에서 나가게 되어 이 휴대폰의 감지를 멈추고 기기 연결을 해제했어요.'
+            : '그룹에서 나가게 되어 이 휴대폰의 감지를 멈췄어요.');
+        }
+      } finally { removing = false; }
+    };
+    stopIfNoGroup();
     Store.subscribe(kind => {
       if (kind === 'tick') { UI.tick(document); Emergency.render(false); return; }
       Emergency.render(false);
       if (kind === 'session') { stopIfSignedOut(); Emergency.reset(); R.go(R.path() === '' ? '/' : R.path(), { replace: false }); }
+      if (kind === 'remote') stopIfNoGroup();
       else {
         R.refresh();
         UI.refreshSheet();

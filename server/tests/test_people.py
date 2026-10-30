@@ -186,6 +186,56 @@ class HomeTest(PeopleTestBase):
         self.assertEqual(self.state(self.c)["homes"], [])       # 다른 그룹의 집은 상태에도 없음
 
 
+class MemberTest(PeopleTestBase):
+    """User decision 2026-10-30: joining stays immediate but the family is told; any member can remove another
+    member, which also makes a new invite code."""
+
+    def notifs(self, user, kind):
+        return [n for n in self.state(user)["notifs"] if n["kind"] == kind]
+
+    def code(self, group):
+        return self.conn.execute("SELECT code FROM invites WHERE group_id = ?", (group,)).fetchone()[0]
+
+    def test_joining_tells_the_family(self):
+        d = self.signup(name="새가족디", phone="010-1000-0004")
+        accounts.join_group(self.conn, d, self.code(self.g1), now=self.now + 5)
+        self.assertEqual([n["text"] for n in self.notifs(self.a, "member_joined")],
+                         ["가족비님이 그룹에 들어왔어요", "새가족디님이 그룹에 들어왔어요"])   # 비는 setUp 에서 참여
+        for user in (self.a, self.b):
+            got = [n for n in self.notifs(user, "member_joined") if n["text"].startswith("새가족디")]
+            self.assertEqual(len(got), 1)
+            self.assertIsNone(got[0]["incidentId"])
+        self.assertEqual(self.notifs(d, "member_joined"), [])                    # 들어온 본인에게는 없음
+        self.assertEqual(self.notifs(self.c, "member_joined"), [])               # 다른 그룹 없음
+
+    def test_remove_member(self):
+        d = self.signup(name="가족디", phone="010-1000-0004")
+        accounts.join_group(self.conn, d, self.code(self.g1), now=self.now)
+        home_id = self.setup(self.a)
+        self.setup(self.b, {"birth": "1950-01-02", "conditions": ["당뇨"]}, {"mode": "existing", "id": home_id})
+        old = self.code(self.g1)
+        accounts.remove_member(self.conn, self.a, self.b, now=self.now + 10)
+        row = self.conn.execute("SELECT * FROM users WHERE id = ?", (self.b,)).fetchone()
+        self.assertEqual((row["group_id"], row["is_target"], row["birth"], row["conditions"]), (None, 0, None, None))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM home_members WHERE user_id = ?", (self.b,)).fetchone()[0], 0)
+        self.assertNotIn(self.b, [p["id"] for p in self.state(self.a)["people"]])
+        self.assertNotEqual(self.code(self.g1), old)                              # 초대 코드도 새로
+        e = self.signup(name="새이", phone="010-1000-0005")
+        self.assertAccountError(400, accounts.join_group, self.conn, e, old, now=self.now + 11)   # 예전 코드는 못 씀
+        got = self.notifs(d, "member_removed")
+        self.assertEqual([n["text"] for n in got], ["가족에이님이 가족 한 명을 그룹에서 내보냈어요"])
+        self.assertEqual(self.notifs(self.a, "member_removed"), [])              # 내보낸 본인에게는 없음
+        self.assertEqual(len(self.state(self.a)["homes"]), 1)                     # 집은 그대로
+
+    def test_remove_rules(self):
+        self.assertAccountError(400, accounts.remove_member, self.conn, self.a, self.a, now=self.now)   # 본인은 '나가기'
+        self.assertAccountError(404, accounts.remove_member, self.conn, self.a, self.c, now=self.now)   # 다른 그룹
+        self.assertAccountError(404, accounts.remove_member, self.conn, self.a, "u_none", now=self.now)
+        accounts.remove_member(self.conn, self.a, self.b, now=self.now)
+        self.assertAccountError(404, accounts.remove_member, self.conn, self.a, self.b, now=self.now)   # 이미 나감
+        self.assertAccountError(409, accounts.remove_member, self.conn, self.b, self.a, now=self.now)   # 그룹 없는 사람
+
+
 class LeaveAndWithdrawTest(PeopleTestBase):
     def test_leave_clears_shared_profile_but_keeps_group_for_others(self):
         home_id = self.setup(self.a, {"birth": "1951-07-08", "conditions": ["당뇨"]})

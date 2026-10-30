@@ -80,6 +80,22 @@ class PhotoRetentionApiTest(unittest.TestCase):
         status, _, text = self.server.request("GET", f"/api/events/{event_id}", headers=token)
         self.assertEqual((status, json.loads(text).get("image")), (200, None))         # 옛 기록에서도 사진 없음
 
+    def test_old_event_photo_without_incident(self):
+        # 사고와 연결되지 않은 옛 방식 기록 (등록되지 않은 기기): 기록 시각부터 같은 보관 기간 (사용자 결정 2026-10-30)
+        event_id = uuid.uuid4().hex
+        body = {"event_id": event_id, "device_id": "pc-not-registered", "fall_type": "slip_and_fall", "is_test": False,
+                "image_jpeg_base64": base64.b64encode(JPEG).decode()}
+        token = {"X-Access-Token": self.server.token}
+        status, _, text = self.server.request("POST", "/api/events", body, headers=token)
+        self.assertEqual(status, 200, text)
+        self.assertIsNone(json.loads(text).get("incident_id"))
+        path = self.server.dir / "images" / f"{event_id}.jpg"
+        self.assertTrue(path.is_file())
+        self.assertTrue(self.wait_until(lambda: not path.exists()), "옛 기록의 사진도 보관 기간이 지나면 지워져야 함")
+        status, _, text = self.server.request("GET", f"/api/events/{event_id}", headers=token)
+        self.assertEqual((status, json.loads(text).get("image")), (200, None))         # 기록은 남고 사진만 없음
+        self.assertEqual(self.server.request("GET", f"/images/{event_id}.jpg", headers=token)[0], 404)
+
     def test_device_photo_stays_while_open_and_goes_after_close(self):
         status, _, text = self.server.request(
             "POST", "/api/v2/device/events",

@@ -17,6 +17,9 @@
   // 실제 모드의 119 신고는 서버가 모의 신고로 기록만 함 (실제 119 연락 없음). 화면에 분명히 표시
   const SIM = FD.MODE === 'live';
   const SIM_NOTE = '실제 119에는 연락되지 않아요.';
+  // 실제 모드: 모의 신고 기록과 별도로 119에 직접 전화 (사용자 결정 2026-10-30). tel: 은 전화 앱을 번호가 입력된
+  // 상태로 열 뿐이고 통화 버튼은 사람이 누름. 앱이 자동으로 연락하는 기능은 없음. 테스트 모드에는 넣지 않음
+  const call119 = cls => SIM ? `<a class="btn ${cls}" href="tel:119" data-call119="1">${ic('phone')} 119에 직접 전화</a>` : '';
 
   const mem = {};        // 사고별 사용자 화면 상태 { min, help, lvl }
   let flow = null;       // { id, step: 'pick'|'confirm', selected: [], unknown, from }
@@ -79,21 +82,21 @@
         <p class="ov__lead">${esc(inc.location)}에서 낙상이 감지됐어요. 본인이거나 지금 괜찮은 상황이라면 눌러주세요</p>
         ${ring(inc.detectedAt, inc.detectedAt + 60 * S, `data-secs="${inc.detectedAt + 60 * S}"`, '초 안에 응답해 주세요')}
         <p class="ov-peek">응답이 없으면 가족에게 알려요</p>`;
-      foot = `${btnOk}${btnHelp}${btn119}`;
+      foot = `${btnOk}${btnHelp}${btn119}${call119('btn--outline')}`;
     } else if (inc.status === 'checking') {
       const who = Sel.person(inc.checkedBy);
       cls = 'ov--calm';
       body = `<h1 class="ov__title"><small>${esc(inc.location)} · 낙상 감지</small>${esc(who ? who.name : '가족')}님이<br>확인하고 있어요</h1>
         <p class="ov__lead">가족이 상황을 확인 중이에요. 괜찮다면 아래 버튼을 눌러주세요.</p>
         <span class="ov-state">${ic('user-check')} 감지 후 <span data-el="${inc.detectedAt}">--</span> 경과</span>`;
-      foot = `${btnOk}${btn119}`;
+      foot = `${btnOk}${btn119}${call119('btn--outline')}`;
     } else {
       body = `<h1 class="ov__title">${inc.status === 'help' ? '가족에게 도움을<br>요청했어요' : '가족에게 알렸어요'}</h1>
         <p class="ov__lead">${esc(inc.location)}에서 낙상이 감지됐어요. ${inc.status === 'help' ? '가족이 곧 확인할 거예요.' : '60초 동안 응답이 없어 가족에게 알렸어요.'} 괜찮으시면 아래 버튼을 눌러주세요.</p>
         <span class="ov-state">${ic('bell')} ${inc.status === 'help' ? `도움 요청 ${helpN}번째 · ` : ''}감지 후 <span data-el="${inc.detectedAt}">--</span></span>
         <div class="big-count"><p class="big-count__label">자동 119 신고까지</p><div class="big-count__num" data-cd="${inc.autoReportAt}">--:--</div><div class="big-count__bar"><b data-bar="${inc.familyNotifiedAt},${inc.autoReportAt}"></b></div></div>
         <p class="ov__small" style="text-align:center">${SIM ? `아무도 확인하지 않으면 자동 119 신고가 모의 신고로 기록돼요. ${SIM_NOTE}` : '아무도 확인하지 않으면 자동으로 119에 신고돼요.'}</p>`;
-      foot = inc.status === 'help' ? `${btnOk}${btnHelp}${btn119}` : `${btnOk}${btn119}`;
+      foot = (inc.status === 'help' ? `${btnOk}${btnHelp}${btn119}` : `${btnOk}${btn119}`) + call119('btn--outline');
     }
     void h; void nowT;
     return wrap(cls, `${top('긴급 · 낙상 감지', { icon: 'triangle-exclamation' })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
@@ -124,7 +127,7 @@
         <p class="ov__lead">${mine ? '직접 상황을 확인하고 있어요. ' : ''}감지 후 <b data-el="${inc.detectedAt}">--</b> 경과</p>
         <p class="ov__small">자동 신고는 멈췄어요. 낙상 감지 ${UI.clock(inc.detectedAt)}</p>
         ${alertBox}${photo}`;
-      const foot = `${mine ? `<button class="btn btn--white-calm btn--lg" style="background:#fff;color:var(--primary-d)" data-action="em.close" data-id="${inc.id}">${ic('circle-check')} 괜찮은 걸 확인했어요 (종료)</button>` : ''}${btn119}${contact}`;
+      const foot = `${mine ? `<button class="btn btn--white-calm btn--lg" style="background:#fff;color:var(--primary-d)" data-action="em.close" data-id="${inc.id}">${ic('circle-check')} 괜찮은 걸 확인했어요 (종료)</button>` : ''}${btn119}${call119('btn--call')}${contact}`;
       return wrap('ov--calm', `${top('낙상 알림 · 확인 중', { icon: 'user-check', close: true })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
     }
 
@@ -139,7 +142,7 @@
       <div class="big-count"><p class="big-count__label">자동 신고까지</p><div class="big-count__num" data-cd="${inc.autoReportAt}">--:--</div><div class="big-count__bar"><b data-bar="${inc.familyNotifiedAt},${inc.autoReportAt}"></b></div></div>
       ${detected}
       <p class="ov-note">${ic('clock')}<span>${SIM ? `180초 동안 아무도 누르지 않으면 자동 119 신고가 모의 신고로 기록돼요. ${SIM_NOTE}` : '180초 동안 아무도 누르지 않으면 자동으로 119 신고를 해요.'}</span></p>`;
-    const foot = `<button class="btn btn--white btn--lg" data-action="em.take" data-id="${inc.id}">${ic('hand-holding-heart')} 확인했어요, 제가 처리할게요</button>${btn119}${contact}`;
+    const foot = `<button class="btn btn--white btn--lg" data-action="em.take" data-id="${inc.id}">${ic('hand-holding-heart')} 확인했어요, 제가 처리할게요</button>${btn119}${call119('btn--call')}${contact}`;
     return wrap('', `${top(isHelp ? '긴급 · 도움 요청' : '긴급 · 낙상 알림', { close: true })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
   }
   on('em.min', () => { const me = Sel.me(); const inc = choose(me); if (inc) { (mem[inc.id] = mem[inc.id] || {}).min = true; mem[inc.id].lvl = alertLevel(inc, me); } sync(true); });

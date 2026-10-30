@@ -77,7 +77,7 @@ class IncidentApiTest(unittest.TestCase):
         self.assertEqual(inc["status"], "no_response")
         self.assertIn("serverNow", self.b.state()["state"])
         seen_b = self.b.state()["state"]
-        self.assertEqual([n["kind"] for n in seen_b["notifs"]], ["family_alert"])
+        self.assertEqual([n["kind"] for n in seen_b["notifs"] if n["incidentId"]], ["family_alert"])   # 사고 알림만
         self.assertFalse(seen_b["notifs"][0]["read"])
         self.assertEqual(self.act(self.a, inc["id"], "take-over")[0], 403)      # 낙상 대상자
         status, _, data = self.act(self.b, inc["id"], "take-over")

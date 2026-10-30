@@ -287,6 +287,17 @@
       });
       return res;
     },
+    removeMember(actorId, personId) {
+      let gid = null;
+      commit(st => {
+        const p = person(st, personId), actor = person(st, actorId);
+        gid = p.groupId;
+        p.groupId = null; p.onboarded = false; p.isTarget = false; p.homeIds = []; p.phoneCamera = false;
+        p.birth = null; p.conditions = null; p.medications = null;
+        if (gid) pushNotif(st, { groupId: gid, actorId, pref: 'member', text: `${actor ? actor.name : '가족'}님이 가족 한 명을 그룹에서 내보냈어요` });
+      });
+      if (gid) Act.regenInvite(gid, actorId);   // 예전 초대 코드는 더 이상 쓸 수 없음
+    },
     leaveGroup(personId) {
       commit(st => {
         const p = person(st, personId);
@@ -573,6 +584,7 @@
         }
       },
       async leaveGroup() { applyServer(await API.leaveGroup()); },
+      async removeMember(actorId, personId) { applyServer(await API.removeMember(personId)); },
       /* C단계: 내 정보 (항상 로그인한 본인 것만 바뀜. personId 는 화면 계약상 받기만 함) */
       async updateProfile(personId, patch) {
         patch = patch || {};

@@ -78,6 +78,7 @@
     async regenInvite() { return remember(await call('POST', '/api/v2/groups/invite')); },
     async joinGroup(code) { return remember(await call('POST', '/api/v2/groups/join', { code })); },
     async leaveGroup() { return remember(await call('POST', '/api/v2/groups/leave')); },
+    async removeMember(personId) { return remember(await call('POST', `/api/v2/groups/members/${encodeURIComponent(personId)}/remove`)); },
     async setOnboarded(onboarded) { return remember(await call('POST', '/api/v2/me/onboarded', { onboarded })); },
 
     /* ---- 내 정보 · 집 · 탈퇴 (C단계) ---- 사람·집 id 는 서버가 로그인한 사람의 그룹 안에서만 찾음 */

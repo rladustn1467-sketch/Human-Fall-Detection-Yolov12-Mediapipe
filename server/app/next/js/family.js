@@ -84,9 +84,24 @@
           ${self ? `<button class="btn btn--soft btn--block" data-action="member.edit">${ic('pen')} 내 정보 수정</button>` : ''}
         </div>
         ${self ? '' : `<p class="field__hint" style="text-align:center;margin-top:12px">개인정보는 본인만 수정할 수 있어요.</p>`}
+        ${self ? '' : `<div class="card" style="margin-top:20px"><button class="row row--danger" data-action="member.remove" data-id="${m.id}"><span class="row__main"><span class="row__title">그룹에서 내보내기</span></span>${ic('chevron-right', 'chev')}</button></div>`}
       </div>`;
   }, { parent: '/family' });
   on('member.edit', () => R.go('/settings/profile'));
+  /* 다른 구성원 내보내기 (구성원 누구나, 사용자 결정 2026-10-30). 내보내면 초대 코드도 새로 바뀜 */
+  on('member.remove', async el => {
+    const m = Sel.person(el.dataset.id);
+    if (!m) return;
+    const ok = await UI.confirm({ title: `${m.name}님을 그룹에서 내보낼까요?`,
+      body: '내보내면 이 그룹의 알림과 정보를 볼 수 없어요. 예전 초대 코드는 쓸 수 없게 되고 새 코드가 만들어져요. 다른 가족에게도 알려요.',
+      ok: '내보내기', cancel: '취소', danger: true });
+    if (!ok) return;
+    try {
+      await Act.removeMember(Sel.meId(), m.id);
+    } catch (e) { UI.showError(e); return; }
+    toast(`${m.name}님을 그룹에서 내보냈어요`);
+    R.go('/family', { replace: true });
+  });
 
   /* ---------------- S-06 초대 화면 ---------------- */
   R.register('/family/invite', () => {

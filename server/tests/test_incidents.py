@@ -42,7 +42,8 @@ class IncidentTestBase(PeopleTestBase):
         return [(n["kind"], n["to"]) for n in self.state(user)["notifs"]]
 
     def kinds(self, user):
-        return [n["kind"] for n in self.state(user)["notifs"]]
+        """Kinds of the person's incident notifications (group notifications like member_joined: MemberTest)."""
+        return [n["kind"] for n in self.state(user)["notifs"] if n["incidentId"]]
 
     def deliveries(self):
         return [dict(r) for r in self.conn.execute(
@@ -130,7 +131,7 @@ class TimeTest(IncidentTestBase):
         self.assertEqual((inc["status"], inc["family_notified_at"], inc["auto_report_at"], inc["response"]),
                          ("help", T + 10 * S, T + 190 * S, "within60"))
         self.assertEqual([(k, n["text"].endswith(f"({i + 1}번째)")) for i, (k, n) in enumerate(
-            (n["kind"], n) for n in self.state(self.b)["notifs"])], [("help", True), ("help", True)])
+            (n["kind"], n) for n in self.state(self.b)["notifs"] if n["incidentId"])], [("help", True), ("help", True)])
         # 문자는 처음 가족에게 알릴 때만
         self.assertEqual([d["kind"] for d in self.deliveries()], ["help", "help"])
         self.assertEqual({d["user_id"] for d in self.deliveries()}, {self.b, self.d})
