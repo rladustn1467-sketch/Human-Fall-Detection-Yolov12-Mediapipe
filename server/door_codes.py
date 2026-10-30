@@ -124,12 +124,9 @@ def decrypt(key, home_id, kind, nonce, ciphertext):
 
 # ---- 권한 (people.py 의 집 주소 수정과 같은 규칙) ----
 def _linked_home(conn, user_id, home_id):
+    """The home if the user is its administrator (현관 출입 방식·비밀번호는 집 관리자만, 사용자 결정 2026-10-30)."""
     import people   # people.finish_setup 이 이 모듈을 쓰므로 서로 불러올 때 순서 문제를 피함
-    me = people._my_group(conn, user_id)
-    home = people._group_home(conn, me, home_id)
-    if not people._is_linked(conn, home["id"], user_id):
-        raise AccountError(403, "이 집에 연결된 가족만 현관 비밀번호를 등록·변경·삭제할 수 있어요.", "home")
-    return home
+    return people.admin_home(conn, user_id, home_id, "이 집의 관리자만 현관 정보를 바꿀 수 있어요.")
 
 
 def _record(conn, home_id, actor_id, action, kind, now):

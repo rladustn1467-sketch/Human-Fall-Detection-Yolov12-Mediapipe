@@ -69,7 +69,7 @@
     const incident = activeIncs.find(i => i.homeId === h.id);
     const isOpen = openState[h.id] !== undefined ? openState[h.id] : (abnormal || !!incident);
     const devs = Sel.devices(h.id).slice().sort((a, b) => (a.status === 'ok') - (b.status === 'ok'));
-    const canEdit = Sel.canEditHome(h.id, me);
+    const canEdit = Sel.isHomeAdmin(h.id, me);   // 기기 추가·수정은 그 집의 관리자만
     const icon = sum.kind === 'ok' ? 'shield-halved' : sum.kind === 'warn' ? 'triangle-exclamation' : 'circle-pause';
     const summary = sum.kind === 'ok' ? `${sum.title} · ${sum.detail}` : sum.kind === 'warn' ? `${sum.title} · ${sum.detail}` : `${sum.title} · ${sum.detail}`;
     return `<section class="det-home det-home--${incident ? 'incident' : sum.kind}${isOpen ? ' is-open' : ''}" aria-label="${esc(Sel.homeName(h, me))} 감지 현황">
@@ -259,7 +259,7 @@
    * ---------------------------------------------------------- */
   function deviceHtml(d, editing) {
     const me = Sel.me();
-    const canEdit = Sel.canEditHome(d.homeId, me);
+    const canEdit = Sel.isHomeAdmin(d.homeId, me);   // 기기 이름·삭제는 그 집의 관리자만
     const h = Sel.home(d.homeId);
     const t = FD.Store.now();
     const tagCls = d.status === 'ok' ? 'tag--ok' : d.status === 'off' ? '' : 'tag--stop';
@@ -287,7 +287,7 @@
           ${d.status === 'off' ? `<button class="btn btn--primary btn--lg btn--block" data-action="devs.on" data-id="${d.id}">감지 켜기</button>` : ''}`}
           <div class="btn-pair"><button class="btn btn--soft" data-action="devs.edit">${ic('pen')} ${LIVE ? '위치 이름 수정' : '이름·위치 수정'}</button><button class="btn btn--danger-ghost" data-action="devs.remove" data-id="${d.id}">${ic('trash')} 기기 삭제</button></div>
         </div>`
-        : `<div class="notice">${ic('lock')}<span>이 집에 연결된 가족만 설정을 바꿀 수 있어요. 상태는 그룹 가족 모두 볼 수 있어요.</span></div>`}`;
+        : `<div class="notice">${ic('lock')}<span>이 집의 관리자만 설정을 바꿀 수 있어요. 상태는 그룹 가족 모두 볼 수 있어요.</span></div>`}`;
   }
 
   /* 실제 기기: 서버가 받은 신호 그대로 (마지막 신호, 연결 확인 신호, 연결 안 됨 이유와 확인할 것) */

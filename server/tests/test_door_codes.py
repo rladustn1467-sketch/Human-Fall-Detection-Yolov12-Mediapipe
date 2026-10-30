@@ -97,7 +97,10 @@ class DoorCodeTest(PeopleTestBase):
         self.assertAccountError(404, door_codes.delete, self.conn, self.c, self.home, "door")
         self.assertTrue(door_codes.registered(self.conn, [self.home])[self.home]["door"])
         self.setup(self.b)                                                          # 비도 감지를 켜고 (다른 집)
-        people.link_home(self.conn, self.b, self.home, self.now)                   # 이 집에 연결하면 가능
+        people.link_home(self.conn, self.b, self.home, self.now)                   # 이 집에 연결해도 구성원은 안 됨
+        err = self.assertAccountError(403, self.put, self.b, code="2468")
+        self.assertIn("관리자", err.message)
+        people.set_admin(self.conn, self.a, self.home, self.b, True)               # 관리자(에이)가 관리자로 정하면 가능
         self.put(self.b, code="2468")
         self.assertEqual(self.state(self.c)["homes"], [])                         # 다른 그룹 상태에는 집도 없음
 

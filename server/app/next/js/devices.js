@@ -41,6 +41,7 @@
       <span class="choice__ic">${ic(k.icon)}</span><span><span class="choice__t">${esc(k.t)}</span><span class="choice__s" style="display:block">${esc(k.s)}</span></span></button>`).join('');
   }
   function openChooser(homeId) {
+    if (homeId && !Sel.isHomeAdmin(homeId)) { UI.toast('이 집의 관리자만 기기를 추가할 수 있어요. 관리자에게 부탁해 주세요.'); return; }   // 기기 추가는 그 집의 관리자만
     openSheet({ title: '감지 기기 추가', html: `<div class="stack">${choicesHtml(homeId)}</div>` });
   }
   on('dc.pick', el => start(el.dataset.kind, el.dataset.home));
@@ -48,6 +49,7 @@
   function start(key, homeId) {
     if (!kindOf(key)) return;
     if (key === 'self') { Self.start(homeId); return; }
+    if (homeId && !Sel.isHomeAdmin(homeId)) { UI.toast('이 집의 관리자만 기기를 추가할 수 있어요. 관리자에게 부탁해 주세요.'); return; }
     locationSheet(key, [homeId]);
   }
 
@@ -149,12 +151,14 @@
       const r = await Self.status();
       if (r && r.s && r.s.paired) { await Self.open({ signedIn: !!Sel.me() }); return; }   // 로그인한 앱에서 엶 (로그아웃으로 멈춘 감지를 다시 켤 수 있음)
       const me = Sel.me();
-      const ids = homeId ? [homeId] : me.homeIds.slice();
-      if (!ids.length) {
+      const linked = homeId ? [homeId] : me.homeIds.slice();
+      if (!linked.length) {
         UI.toast(me.isTarget ? '먼저 감지할 집에 연결해 주세요. 가족 탭에서 집을 열면 연결할 수 있어요.'
           : "이 휴대폰으로 감지하려면 먼저 홈 화면에서 '낙상 감지 켜기'를 눌러 집을 등록해 주세요.");
         return;
       }
+      const ids = linked.filter(id => Sel.isHomeAdmin(id, me));   // '이 휴대폰'도 기기 추가: 그 집의 관리자만
+      if (!ids.length) { UI.toast('이 휴대폰으로 감지하려면 이 집의 관리자에게 부탁해 주세요. 관리자만 기기를 추가할 수 있어요.'); return; }
       locationSheet('self', ids);
     }
   };

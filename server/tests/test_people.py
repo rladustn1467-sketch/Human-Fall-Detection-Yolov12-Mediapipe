@@ -118,7 +118,8 @@ class SetupTest(PeopleTestBase):
         self.assertEqual(me["homeIds"], [home_id])
         home = self.state(self.b)["homes"][0]
         self.assertEqual(home, {"id": home_id, "groupId": self.g1, "address": "서울 마포구 월드컵로 100 101동 1203호",
-                                "centralPw": False, "doorPw": False, "centralAccess": None, "doorAccess": None})
+                                "centralPw": False, "doorPw": False, "centralAccess": None, "doorAccess": None,
+                                "adminIds": [self.a]})                       # 집을 등록한 사람이 관리자
 
     def test_existing_home_of_own_group(self):
         home_id = self.setup(self.a)

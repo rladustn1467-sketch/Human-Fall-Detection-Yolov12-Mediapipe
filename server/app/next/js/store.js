@@ -151,6 +151,14 @@
     targets: homeId => targetsOf(state, homeId),
     linked: homeId => state.people.filter(p => p.homeIds.includes(homeId)),
     canEditHome(homeId, p) { p = p || Sel.me(); return !!p && p.homeIds.includes(homeId); },
+    /* 집 관리자: 현관·기기 수정은 관리자만 (사용자 결정 2026-10-30). 테스트 모드 예시 데이터에는 관리자 정보가 없어 연결된 가족 = 관리자 */
+    isHomeAdmin(homeId, p) {
+      p = p || Sel.me();
+      const h = state.homes.find(x => x.id === homeId);
+      if (!p || !h || !p.homeIds.includes(homeId)) return false;
+      return Array.isArray(h.adminIds) ? h.adminIds.includes(p.id) : true;
+    },
+    homeAdmins: homeId => { const h = state.homes.find(x => x.id === homeId); return h && Array.isArray(h.adminIds) ? h.adminIds : []; },
     isMine: (homeId, p) => { p = p || Sel.me(); return !!p && p.homeIds.includes(homeId); },
 
     /* 집 이름: 내 집 = 우리 집 / 그 외 = OO·OO님 댁 */
@@ -346,6 +354,14 @@
     },
     unlinkHome(personId, homeId) {
       commit(st => { const p = person(st, personId); p.homeIds = p.homeIds.filter(x => x !== homeId); });
+    },
+    setHomeAdmin(homeId, memberId, admin) {
+      commit(st => {
+        const h = st.homes.find(x => x.id === homeId);
+        if (!h) return;
+        const now = Array.isArray(h.adminIds) ? h.adminIds : targetsOf(st, homeId).map(p => p.id);
+        h.adminIds = admin ? Array.from(new Set(now.concat(memberId))) : now.filter(x => x !== memberId);
+      });
     },
     updateHome(homeId, patch, actorId, note) {
       commit(st => {
@@ -608,6 +624,7 @@
       async finishSetup({ info, home, entrances }) { applyServer(await API.finishSetup(info, home, entrances)); },
       async linkHome(personId, homeId) { applyServer(await API.linkHome(homeId)); },
       async unlinkHome(personId, homeId) { applyServer(await API.unlinkHome(homeId)); },
+      async setHomeAdmin(homeId, memberId, admin) { applyServer(await API.setHomeAdmin(homeId, memberId, admin)); },
       /* 집: 주소. 현관 비밀번호는 아래 setDoorCode / deleteDoorCode 로 */
       async updateHome(homeId, patch) {
         const keys = Object.keys(patch || {});

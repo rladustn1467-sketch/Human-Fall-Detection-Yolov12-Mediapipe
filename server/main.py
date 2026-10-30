@@ -219,9 +219,58 @@ app = FastAPI(title="Fall Detection Server", lifespan=lifespan)
 SECURITY_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin"}
 
 
+# ---- 옛 경로 사용 기록 (새 방식으로 옮긴 뒤 없앨 경로들; 사용자 요청 2026-10-30) ----
+# 경로 모양만 남김 (토큰·이벤트 id·주소 뒤 ?값은 남기지 않음). 같은 (방법, 경로, 보낸 곳)은 10분에 한 줄, 그 사이 횟수는 다음 줄에
+LEGACY_LOG = BASE_DIR / "logs" / "legacy_calls.log"
+LEGACY_LOG_EVERY_S = 600
+_legacy_seen = {}
+_legacy_lock = threading.Lock()
+
+
+def _legacy_route(path):
+    if path == "/api/events" or path in ("/", "/confirm", "/login"):
+        return path
+    if path.startswith("/api/events/"):
+        return "/api/events/{id}/response" if path.endswith("/response") else "/api/events/{id}"
+    if path.startswith("/images/"):
+        return "/images/{id}.jpg"
+    if path.startswith("/events/"):
+        return "/events/{id}/fallen/{rid}"
+    if path.startswith("/reports/"):
+        return "/reports/{id}"
+    if path == "/app" or (path.startswith("/app/") and not path.startswith(("/app/next/", "/app/icons/"))
+                          and path != "/app/manifest.webmanifest"):
+        return "/app/*"
+    return None
+
+
+def _note_legacy(method, route, client, status):
+    now = time.time()
+    with _legacy_lock:
+        key = (method, route, client)
+        seen = _legacy_seen.get(key)
+        if seen and now - seen[0] < LEGACY_LOG_EVERY_S:
+            seen[1] += 1
+            return
+        skipped = seen[1] if seen else 0
+        _legacy_seen[key] = [now, 0]
+        line = {"at": datetime.now().isoformat(timespec="seconds"), "method": method, "route": route, "client": client,
+                "status": status, "more_calls_before": skipped}
+        try:
+            LEGACY_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with open(LEGACY_LOG, "a", encoding="utf-8") as fp:
+                fp.write(json.dumps(line, ensure_ascii=False) + "\n")
+        except OSError as e:
+            print(f"[옛 경로] 기록 파일에 쓰지 못함: {type(e).__name__}")
+    print(f"[옛 경로] {method} {route} ({client}) - 새 방식으로 옮긴 뒤 없앨 경로예요 (logs/legacy_calls.log)")
+
+
 @app.middleware("http")
 async def _security_headers(request, call_next):
     response = await call_next(request)
+    route = _legacy_route(request.url.path)
+    if route:
+        _note_legacy(request.method, route, request.client.host if request.client else "", response.status_code)
     # 쓰는 동안 로그인 연장: 서버가 만료일을 늦췄으면 같은 쿠키를 새 유지 기간으로 다시 보냄. 응답이 이미 로그인 쿠키를
     # 정했으면(로그인·로그아웃) 그대로 둠
     token = getattr(request.state, "renew_session", None)
@@ -1085,6 +1134,20 @@ def api_v2_link_home(home_id: str, request: Request):
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
         people_mod.link_home(conn, user_id, home_id)
+        return _state_response(conn, user_id)
+
+
+class AdminBody(BaseModel):
+    admin: bool
+
+
+@app.post("/api/v2/homes/{home_id}/members/{member_id}/admin")
+def api_v2_set_admin(home_id: str, member_id: str, body: AdminBody, request: Request):
+    # 집 관리자 지정·해제 (그 집의 관리자만, 관리자는 한 명 이상)
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        people_mod.set_admin(conn, user_id, home_id, member_id, body.admin)
         return _state_response(conn, user_id)
 
 

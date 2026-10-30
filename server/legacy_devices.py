@@ -14,6 +14,7 @@ Administrator commands (from the server folder, with the server venv; the databa
 server/fall.db):
   venv\\Scripts\\python.exe legacy_devices.py list
   venv\\Scripts\\python.exe legacy_devices.py add <device_id> <home_id> <location> [incident|both]   (기본 incident)
+  venv\\Scripts\\python.exe legacy_devices.py pc-code <device_id>     (옛 PC 프로그램을 새 방식으로 옮길 연결 코드)
   venv\\Scripts\\python.exe legacy_devices.py remove <device_id>
   venv\\Scripts\\python.exe legacy_devices.py telegram list
   venv\\Scripts\\python.exe legacy_devices.py telegram add <group_id> <chat_id>
@@ -58,6 +59,17 @@ def add(conn, device_id, home_id, location, mode="incident", now=None):
 def remove(conn, device_id):
     with db.transaction(conn):
         return conn.execute("DELETE FROM legacy_device_homes WHERE device_id = ?", (device_id,)).rowcount
+
+
+def pc_code(conn, device_id, now=None):
+    """Move a registered old device (the PC detection program sending to /api/events) to the device API: a one-time
+    pairing code for the same home and location, to type into the program ('연결 코드 입력')."""
+    import devices
+    row = conn.execute("SELECT home_id, location FROM legacy_device_homes WHERE device_id = ?",
+                       (str(device_id or ""),)).fetchone()
+    if not row:
+        raise AccountError(404, "등록되지 않은 기기예요.", "device")
+    return {**devices.admin_pairing(conn, row["home_id"], "pc", row["location"], now=now), "homeId": row["home_id"]}
 
 
 def mode_for(conn, device_id):
@@ -129,6 +141,11 @@ def _main(argv):
                 mode = argv[4] if len(argv) == 5 else "incident"
                 add(conn, argv[1], argv[2], argv[3], mode)
                 print(f"등록했어요: {argv[1]} → {argv[2]} ({argv[3]}, {mode})")
+            elif argv[:1] == ["pc-code"] and len(argv) == 2:
+                p = pc_code(conn, argv[1])
+                print(f"연결 코드: {p['code']}  (10분 동안 한 번만 쓸 수 있어요)")
+                print(f"  → {argv[1]} 의 감지 프로그램(대시보드)에서 '연결 코드 입력'을 누르고 이 코드를 넣어 주세요.")
+                print(f"  → 연결되면 새 방식으로 보내요. 확인한 뒤 'remove {argv[1]}' 로 옛 등록을 지워 주세요.")
             elif argv[:1] == ["remove"] and len(argv) == 2:
                 print("삭제했어요" if remove(conn, argv[1]) else "등록되지 않은 기기예요")
             elif argv[:2] == ["telegram", "list"] and len(argv) == 2:

@@ -595,9 +595,22 @@
         ['central', 'door'].forEach(k => { d[k + 'Method'] = h ? UI.entrance(h, k).method : null; });
       }
     }
+    /* 가족이 이미 등록한 집을 고르면 그 집의 관리자가 있으므로 나는 구성원: 현관은 관리자만 바꿀 수 있어 보기만 함 */
+    const memberOfExisting = (d, h) => !!(h && Sel.homeAdmins(h.id).length && !Sel.homeAdmins(h.id).includes(Sel.meId()));
     R.register(base + '/password', () => {
       const d = D();
       const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
+      if (memberOfExisting(d, h)) {
+        d.entSkipped = true;
+        const line = kind => { const e = UI.entrance(h, kind); return `<div class="kv__row"><span class="kv__k">${e.name}</span><span class="kv__v">${e.label}</span></div>`; };
+        return page(`
+          ${top(2, 4)}
+          <p class="tag tag--primary">${STEP_NAMES[2]} · 3/4</p>
+          <h1 class="ob__title" style="margin-top:10px">현관 출입 방식은<br>이 집의 관리자가 정해요</h1>
+          <div class="card card--pad" style="margin-top:16px"><div class="kv">${line('central')}${line('door')}</div></div>
+          <div class="notice" style="margin-top:12px">${ic('circle-info')}<span>가족이 이미 등록한 집이라 관리자만 현관 정보를 바꿀 수 있어요. 바꿀 것이 있으면 관리자에게 부탁해 주세요.</span></div>`,
+          `<button class="btn btn--primary btn--lg btn--block" data-action="pw.member-next">다음</button>`);
+      }
       entranceDraft(d, h);
       const block = kind => {
         const now = UI.entrance(h, kind), m = d[kind + 'Method'];
@@ -655,6 +668,11 @@
         if (!yes) return;
       }
       d.entSkipped = false;
+      if (LIVE && !(await saveSetup(el))) return;
+      R.go(curBase() + '/device');
+    });
+    on('pw.member-next', async el => {   // 구성원: 현관은 그대로 두고 다음 단계로
+      const d = D(); d.central = ''; d.door = ''; d.entSkipped = true;
       if (LIVE && !(await saveSetup(el))) return;
       R.go(curBase() + '/device');
     });
@@ -774,6 +792,10 @@
   /* 처음 설정에서 바뀐 현관 정보만 보냄: 고른 방식이 지금과 다르거나 비밀번호를 입력한 현관 (건너뛰기·'그대로 사용'은 보내지 않음) */
   function entrancesToSend(d) {
     if (d.entSkipped || d.entFor === undefined) return null;
+    if (d.homeMode === 'existing') {   // 이미 등록된 집의 구성원은 현관을 바꿀 수 없음 (관리자만)
+      const admins = Sel.homeAdmins(d.homeId);
+      if (admins.length && !admins.includes(Sel.meId())) return null;
+    }
     const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
     const out = {};
     ['central', 'door'].forEach(k => {

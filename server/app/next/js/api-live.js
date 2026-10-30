@@ -87,6 +87,9 @@
     async finishSetup(info, home, entrances) { return remember(await call('POST', '/api/v2/me/setup', entrances ? { info, home, entrances } : { info, home })); },
     async linkHome(homeId) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/link`)); },
     async unlinkHome(homeId) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/unlink`)); },
+    async setHomeAdmin(homeId, memberId, admin) {
+      return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/members/${encodeURIComponent(memberId)}/admin`, { admin: !!admin }));
+    },
     async updateHomeAddress(homeId, address) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/address`, { address })); },
     async withdraw(password) { return remember(await call('POST', '/api/v2/me/withdraw', { password })); },
 

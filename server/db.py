@@ -370,6 +370,16 @@ MIGRATIONS = [
                at          INTEGER NOT NULL
            )""",
     ]),
+    (12, "집 관리자와 구성원: 현관·기기 수정은 관리자만 (people.py, 사용자 결정 2026-10-30)", [
+        "ALTER TABLE home_members ADD COLUMN role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member'))",
+        # 처음 관리자: 집을 등록한 사람 (아직 연결돼 있으면), 아니면 가장 먼저 연결된 사람
+        """UPDATE home_members SET role = 'admin'
+           WHERE EXISTS (SELECT 1 FROM homes h WHERE h.id = home_members.home_id AND h.created_by = home_members.user_id)""",
+        """UPDATE home_members SET role = 'admin'
+           WHERE NOT EXISTS (SELECT 1 FROM home_members a WHERE a.home_id = home_members.home_id AND a.role = 'admin')
+             AND user_id = (SELECT m.user_id FROM home_members m WHERE m.home_id = home_members.home_id
+                            ORDER BY m.linked_at, m.user_id LIMIT 1)""",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

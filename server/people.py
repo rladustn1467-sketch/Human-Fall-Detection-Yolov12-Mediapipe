@@ -106,9 +106,58 @@ def _is_linked(conn, home_id, user_id):
                         (home_id, user_id)).fetchone() is not None
 
 
+def is_admin(conn, home_id, user_id):
+    """Administrator of that home (사용자 결정 2026-10-30: 현관·기기 수정은 관리자만)."""
+    return conn.execute("SELECT 1 FROM home_members WHERE home_id = ? AND user_id = ? AND role = 'admin'",
+                        (home_id, user_id)).fetchone() is not None
+
+
+def _has_admin(conn, home_id):
+    return conn.execute("SELECT 1 FROM home_members WHERE home_id = ? AND role = 'admin'", (home_id,)).fetchone() is not None
+
+
 def _link(conn, home_id, user_id, now):
-    conn.execute("INSERT OR IGNORE INTO home_members (home_id, user_id, linked_at) VALUES (?, ?, ?)",
-                 (home_id, user_id, now))
+    # 관리자가 없는 집(새 집 포함)에 처음 연결하는 사람이 관리자, 그 뒤로는 구성원
+    role = "member" if _has_admin(conn, home_id) else "admin"
+    conn.execute("INSERT OR IGNORE INTO home_members (home_id, user_id, linked_at, role) VALUES (?, ?, ?, ?)",
+                 (home_id, user_id, now, role))
+
+
+def ensure_admin(conn, home_id):
+    """Inside a transaction, after someone left the home: if linked members remain but no administrator, the
+    longest-linked member becomes one."""
+    if _has_admin(conn, home_id):
+        return
+    row = conn.execute("SELECT user_id FROM home_members WHERE home_id = ? ORDER BY linked_at, user_id LIMIT 1",
+                       (home_id,)).fetchone()
+    if row:
+        conn.execute("UPDATE home_members SET role = 'admin' WHERE home_id = ? AND user_id = ?", (home_id, row["user_id"]))
+
+
+def admin_home(conn, user_id, home_id, message):
+    """The home (of the user's group) if the user is its administrator, else 403 with the message."""
+    me = _my_group(conn, user_id)
+    home = _group_home(conn, me, home_id)
+    if not is_admin(conn, home["id"], user_id):
+        raise AccountError(403, message, "home")
+    return home
+
+
+def set_admin(conn, user_id, home_id, member_id, admin):
+    """An administrator makes another linked member an administrator or takes it back (one must stay)."""
+    with db.transaction(conn):
+        home = admin_home(conn, user_id, home_id, "이 집의 관리자만 관리자를 정할 수 있어요.")
+        if not conn.execute("SELECT 1 FROM users WHERE id = ? AND group_id = ?", (member_id, home["group_id"])).fetchone():
+            raise AccountError(404, "구성원을 찾을 수 없어요.")
+        if not _is_linked(conn, home["id"], member_id):
+            raise AccountError(409, "이 집에 연결된 가족만 관리자가 될 수 있어요.")
+        if not admin and is_admin(conn, home["id"], member_id):
+            admins = conn.execute("SELECT COUNT(*) FROM home_members WHERE home_id = ? AND role = 'admin'",
+                                  (home["id"],)).fetchone()[0]
+            if admins <= 1:
+                raise AccountError(409, "관리자는 한 명 이상 있어야 해요. 다른 가족을 먼저 관리자로 정해 주세요.")
+        conn.execute("UPDATE home_members SET role = ? WHERE home_id = ? AND user_id = ?",
+                     ("admin" if admin else "member", home["id"], member_id))
 
 
 def _create_home(conn, me, address, now):
@@ -172,6 +221,7 @@ def unlink_home(conn, user_id, home_id):
         if not _is_linked(conn, home["id"], user_id):
             raise AccountError(409, "이 집에 연결되어 있지 않아요.", "home")
         conn.execute("DELETE FROM home_members WHERE home_id = ? AND user_id = ?", (home["id"], user_id))
+        ensure_admin(conn, home["id"])
 
 
 def update_home_address(conn, user_id, home_id, address, now=None):
@@ -223,6 +273,8 @@ def finish_setup(conn, user_id, info, home, now=None, today=None, doors=None, ke
                         WHERE id = ?""", (birth, conditions, medications, user_id))
         if mode == "existing":
             home_id = _group_home(conn, me, home.get("id"))["id"]
+            if checked and _has_admin(conn, home_id) and not is_admin(conn, home_id, user_id):
+                raise AccountError(403, "현관 정보는 이 집의 관리자만 바꿀 수 있어요.", "home")
         else:
             home_id = _create_home(conn, me, address, now)
         _link(conn, home_id, user_id, now)

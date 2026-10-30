@@ -141,12 +141,15 @@
   R.register('/family/home/:id', p => {
     const h = Sel.home(p.id), me = Sel.me();
     if (!h) return `${UI.subHeader('집 상세')}<div class="empty" style="margin-top:60px">집을 찾을 수 없어요</div>`;
-    const can = Sel.canEditHome(h.id, me);
+    const can = Sel.canEditHome(h.id, me);          // 주소: 그 집에 연결된 가족
+    const admin = Sel.isHomeAdmin(h.id, me);         // 현관·기기: 그 집의 관리자만 (사용자 결정 2026-10-30)
     const people = Sel.linked(h.id);
+    const admins = Sel.homeAdmins(h.id);
     const devs = Sel.devices(h.id);
-    // 현관: 실제 출입 방식과 비밀번호 등록 여부만 표시 (값은 없음). 수정·삭제는 그 집에 연결된 가족만
+    // 현관: 실제 출입 방식과 비밀번호 등록 여부만 표시 (값은 없음). 수정·삭제는 그 집의 관리자만
     const entRow = kind => { const e = UI.entrance(h, kind);
-      return `<div class="kv__row" style="align-items:center"><span class="kv__k">${e.name}</span><span class="kv__v" style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px 10px"><span class="tag ${e.needsInput ? 'tag--warn' : 'tag--ok'}" data-entrance="${kind}">${ic(e.icon)} ${e.label}</span>${can ? `<button class="link-btn" data-action="ent.edit" data-id="${h.id}" data-kind="${kind}">${e.method ? '변경' : '설정'}</button>` : ''}${can && e.registered ? `<button class="link-btn" style="color:var(--stop)" data-action="pw.delete" data-id="${h.id}" data-key="${e.pwKey}">삭제</button>` : ''}</span></div>`; };
+      return `<div class="kv__row" style="align-items:center"><span class="kv__k">${e.name}</span><span class="kv__v" style="display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px 10px"><span class="tag ${e.needsInput ? 'tag--warn' : 'tag--ok'}" data-entrance="${kind}">${ic(e.icon)} ${e.label}</span>${admin ? `<button class="link-btn" data-action="ent.edit" data-id="${h.id}" data-kind="${kind}">${e.method ? '변경' : '설정'}</button>` : ''}${admin && e.registered ? `<button class="link-btn" style="color:var(--stop)" data-action="pw.delete" data-id="${h.id}" data-key="${e.pwKey}">삭제</button>` : ''}</span></div>`; };
+    const adminNames = people.filter(q => admins.includes(q.id)).map(q => q.name).join(', ');
     return `${UI.subHeader('집 상세')}
       <div class="page page--tight">
         <div class="card card--pad"><div class="kv">
@@ -156,15 +159,30 @@
         </div>
         <div class="notice notice--lock" style="margin-top:8px">${ic('lock')}<span>비밀번호는 가족에게도 보이지 않고, 119 신고가 접수될 때만 구급대에 전달돼요.</span></div></div>
         <section class="section"><div class="section__head"><h2 class="section__title">연결된 사람</h2></div>
-          <div class="card">${people.length ? people.map(q => `<button class="row" data-action="member.open" data-id="${q.id}">${UI.avatar(q, 'sm')}<span class="row__main"><span class="row__title">${esc(q.name)}${q.id === me.id ? ' <span class="tag tag--primary">나</span>' : ''}</span></span>${ic('chevron-right', 'chev')}</button>`).join('') : `<div class="empty">연결된 사람이 없어요</div>`}</div></section>
-        <section class="section"><div class="section__head"><h2 class="section__title">감지 기기</h2>${can ? `<button class="link-btn" data-action="dev.add-home" data-id="${h.id}">${ic('plus')} 기기 추가</button>` : ''}</div>
+          <div class="card">${people.length ? people.map(q => `<button class="row" data-action="member.open" data-id="${q.id}">${UI.avatar(q, 'sm')}<span class="row__main"><span class="row__title">${esc(q.name)}${q.id === me.id ? ' <span class="tag tag--primary">나</span>' : ''}${admins.includes(q.id) ? ' <span class="tag tag--ok" data-role="admin">관리자</span>' : ''}</span></span>${ic('chevron-right', 'chev')}</button>`).join('') : `<div class="empty">연결된 사람이 없어요</div>`}</div>
+          ${admin && people.some(q => q.id !== me.id) ? `<div class="card" style="margin-top:8px">${people.filter(q => q.id !== me.id).map(q => `<div class="row" style="cursor:default"><span class="row__main"><span class="row__title">${esc(q.name)}</span><span class="row__sub">${admins.includes(q.id) ? '관리자' : '구성원'}</span></span><button class="btn btn--soft btn--sm" data-action="home.admin" data-id="${h.id}" data-member="${q.id}" data-on="${admins.includes(q.id) ? 0 : 1}">${admins.includes(q.id) ? '관리자 해제' : '관리자로 정하기'}</button></div>`).join('')}</div>` : ''}</section>
+        <section class="section"><div class="section__head"><h2 class="section__title">감지 기기</h2>${admin ? `<button class="link-btn" data-action="dev.add-home" data-id="${h.id}">${ic('plus')} 기기 추가</button>` : ''}</div>
           <div class="card">${devs.length ? devs.map(d => `<button class="row" data-action="dev.open" data-id="${d.id}"><span class="det-dev__ic" style="${d.status === 'disconnected' ? 'background:var(--stop-soft);color:var(--stop)' : ''}">${ic(UI.DEVICE_ICON[d.type])}</span>
             <span class="row__main"><span class="row__title">${esc(UI.deviceName(d))}</span></span><span class="tag ${d.status === 'ok' ? 'tag--ok' : d.status === 'off' ? '' : 'tag--stop'}">${UI.STATUS_LABEL[d.status]}</span></button>`).join('') : `<div class="empty">${ic('video-slash')}연결된 기기가 없어요</div>`}</div></section>
         ${can ? '' : `<div class="notice" style="margin-top:20px">${ic('circle-info')}<span>이 집에 연결된 가족만 정보를 수정할 수 있어요.</span></div>`}
+        ${can && !admin ? `<div class="notice" style="margin-top:20px" data-role-notice="1">${ic('circle-info')}<span>현관 정보와 감지 기기는 이 집의 관리자${adminNames ? `(${esc(adminNames)})` : ''}만 바꿀 수 있어요. 주소는 연결된 가족 모두 수정할 수 있어요.</span></div>` : ''}
         ${can ? `<button class="btn btn--ghost btn--block" style="margin-top:20px" data-action="home.unlink" data-id="${h.id}">이 집에서 나를 연결 해제</button>`
           : me.isTarget ? `<button class="btn btn--soft btn--block" style="margin-top:20px" data-action="home.link" data-id="${h.id}">${ic('link')} 이 집에 나도 연결하기</button>` : ''}
       </div>`;
   }, { parent: '/family', live: true });
+  /* 집 관리자 지정·해제 (그 집의 관리자만, 관리자는 한 명 이상: 서버가 확인) */
+  on('home.admin', async el => {
+    const on = el.dataset.on === '1', m = Sel.person(el.dataset.member);
+    if (!m) return;
+    const ok = await UI.confirm({ title: on ? `${m.name}님을 이 집의 관리자로 정할까요?` : `${m.name}님의 관리자를 해제할까요?`,
+      body: on ? '관리자는 현관 정보와 감지 기기를 바꿀 수 있어요.' : '해제하면 현관 정보와 감지 기기를 바꿀 수 없어요.', ok: on ? '정하기' : '해제', cancel: '취소' });
+    if (!ok) return;
+    try {
+      await Act.setHomeAdmin(el.dataset.id, m.id, on);
+    } catch (e) { UI.showError(e); return; }
+    toast(on ? `${m.name}님을 관리자로 정했어요` : `${m.name}님의 관리자를 해제했어요`);
+    R.go(R.path(), { replace: true });
+  });
   on('pw.edit', el => FD.Sheets.password(el.dataset.id, el.dataset.key));
   on('ent.edit', el => FD.Sheets.entrance(el.dataset.id, el.dataset.kind));
   /* 현관 비밀번호 삭제: 확인한 뒤 (서버도 그 집에 연결된 가족인지 다시 확인) */

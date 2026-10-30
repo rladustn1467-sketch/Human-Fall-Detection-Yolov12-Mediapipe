@@ -64,12 +64,9 @@ def _clean_type(value):
 
 
 def _linked_home(conn, user_id, home_id, what):
+    """The home if the user is its administrator (기기 추가·이름 변경·삭제는 집 관리자만, 사용자 결정 2026-10-30)."""
     import people   # people 이 accounts 를 쓰므로 함수 안에서 불러옴 (door_codes.py 와 같은 방식)
-    me = people._my_group(conn, user_id)
-    home = people._group_home(conn, me, home_id)
-    if not people._is_linked(conn, home["id"], user_id):
-        raise AccountError(403, f"이 집에 연결된 가족만 기기를 {what}할 수 있어요.", "home")
-    return home
+    return people.admin_home(conn, user_id, home_id, f"이 집의 관리자만 기기를 {what}할 수 있어요.")
 
 
 def _my_device(conn, user_id, device_id, what):
@@ -92,15 +89,34 @@ def start_pairing(conn, user_id, home_id, type_, location, now=None):
     location = incidents.clean_location(location)
     with db.transaction(conn):
         home = _linked_home(conn, user_id, home_id, "추가")
-        conn.execute("DELETE FROM device_pairings WHERE expires_at <= ? OR used_at IS NOT NULL", (now,))
-        while True:
-            code = "".join(secrets.choice(accounts.INVITE_ALPHABET) for _ in range(PAIR_CODE_LENGTH))
-            if not conn.execute("SELECT 1 FROM device_pairings WHERE code = ?", (code,)).fetchone():
-                break
-        expires = now + PAIR_MINUTES * 60 * 1000
-        conn.execute("""INSERT INTO device_pairings (code, home_id, type, location, created_by, created_at, expires_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""", (code, home["id"], type_, location, user_id, now, expires))
+        return _new_code(conn, home["id"], type_, location, user_id, now)
+
+
+def _new_code(conn, home_id, type_, location, created_by, now):
+    """Inside a transaction: a new one-time pairing code (PAIR_MINUTES) for a home."""
+    conn.execute("DELETE FROM device_pairings WHERE expires_at <= ? OR used_at IS NOT NULL", (now,))
+    while True:
+        code = "".join(secrets.choice(accounts.INVITE_ALPHABET) for _ in range(PAIR_CODE_LENGTH))
+        if not conn.execute("SELECT 1 FROM device_pairings WHERE code = ?", (code,)).fetchone():
+            break
+    expires = now + PAIR_MINUTES * 60 * 1000
+    conn.execute("""INSERT INTO device_pairings (code, home_id, type, location, created_by, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""", (code, home_id, type_, location, created_by, now, expires))
     return {"code": code, "expiresAt": expires, "type": type_, "location": location}
+
+
+def admin_pairing(conn, home_id, type_, location, now=None):
+    """The server's administrator (command line on the server PC, legacy_devices.py pc-code): a pairing code for a
+    home without the app. Used to move the old PC detection program (developer tool) to the device API on a server
+    where the app does not offer PC devices (FD_DEV_DEVICES off)."""
+    now = now_ms() if now is None else now
+    if type_ not in PRODUCT_TYPES + DEV_TYPES:
+        raise AccountError(400, "기기 종류를 골라 주세요.", "type")
+    location = incidents.clean_location(location)
+    with db.transaction(conn):
+        if not conn.execute("SELECT 1 FROM homes WHERE id = ?", (home_id,)).fetchone():
+            raise AccountError(404, "집을 찾을 수 없어요.", "home")
+        return _new_code(conn, home_id, type_, location, None, now)
 
 
 def update(conn, user_id, device_id, location=None, enabled=None, now=None):

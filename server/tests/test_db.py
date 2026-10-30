@@ -32,7 +32,7 @@ class DbInitTest(unittest.TestCase):
                             VALUES ('i', 'g', 'h', 'dev', '거실', 0, 'detected', 0)""")
             conn.execute("""INSERT INTO push_deliveries (incident_id, group_id, user_id, status, attempts, sent_count,
                                                          created_at, updated_at) VALUES ('i', 'g', 'u', 'sent', 1, 1, 5, 6)""")
-        self.assertEqual(db.init(self.path), 11)
+        self.assertEqual(db.init(self.path, [m for m in db.MIGRATIONS if m[0] <= 11]), 11)
         with db.session(self.path) as conn:
             row = conn.execute("SELECT * FROM push_deliveries").fetchone()
             self.assertEqual((row["incident_id"], row["user_id"], row["kind"], row["n"], row["status"], row["sent_count"]),

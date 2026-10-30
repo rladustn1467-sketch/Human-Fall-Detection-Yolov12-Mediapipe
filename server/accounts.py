@@ -341,7 +341,9 @@ def remove_member(conn, user_id, member_id, now=None):
 
 def _leave(conn, user_id, group_id):
     """Inside a transaction: take the person out of the group (shared profile and home links go with it)."""
+    homes = [r["home_id"] for r in conn.execute("SELECT home_id FROM home_members WHERE user_id = ?", (user_id,))]
     conn.execute("DELETE FROM home_members WHERE user_id = ?", (user_id,))
+    _pass_admin_on(conn, homes)
     # 이 그룹에서 받은 알림(대기 중인 문자 포함)과 사고 화면 닫음 기록도 지움 (사고 기록 자체는 그룹에 남음)
     conn.execute("DELETE FROM notifications WHERE user_id = ? AND group_id = ?", (user_id, group_id))
     conn.execute("""DELETE FROM incident_dismissals WHERE user_id = ?
@@ -349,6 +351,12 @@ def _leave(conn, user_id, group_id):
     conn.execute("""UPDATE users SET group_id = NULL, onboarded = 0, is_target = 0,
                     birth = NULL, conditions = NULL, medications = NULL WHERE id = ?""", (user_id,))
     _delete_group_if_empty(conn, group_id)
+
+
+def _pass_admin_on(conn, home_ids):
+    import people   # people 이 이 모듈을 쓰므로 함수 안에서 불러옴
+    for home_id in home_ids:
+        people.ensure_admin(conn, home_id)
 
 
 WITHDRAWN_NAME = "탈퇴한 가족"
@@ -390,7 +398,9 @@ def withdraw(conn, user_id, password, ip, now=None):
         conn.execute("DELETE FROM auth_failures WHERE key IN (?, ?, ?)",
                      (phone_key, f"join-user:{user_id}", f"address-user:{user_id}"))
         _forget_name_in_sent_texts(conn, group_id, me["name"])
+        homes = [r["home_id"] for r in conn.execute("SELECT home_id FROM home_members WHERE user_id = ?", (user_id,))]
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        _pass_admin_on(conn, homes)
         _delete_group_if_empty(conn, group_id)
 
 
@@ -437,13 +447,14 @@ def _person(row, home_ids=()):
     }
 
 
-def _home(row, codes=None, access=None):
+def _home(row, codes=None, access=None, admins=None):
     # centralPw/doorPw: 현관 비밀번호 '등록 여부'만 (값은 화면에 보내지 않음, door_codes.py)
     # centralAccess/doorAccess: 출입 방식 (code/key/absent, code/key/unlocked, None = 미설정)
+    # adminIds: 이 집의 관리자 (현관·기기 수정은 관리자만)
     codes, access = codes or {}, access or {}
     return {"id": row["id"], "groupId": row["group_id"], "address": row["address"],
             "centralPw": bool(codes.get("central")), "doorPw": bool(codes.get("door")),
-            "centralAccess": access.get("central"), "doorAccess": access.get("door")}
+            "centralAccess": access.get("central"), "doorAccess": access.get("door"), "adminIds": list(admins or [])}
 
 
 def _dev_devices():
@@ -492,10 +503,12 @@ def state_for(conn, user_id, now=None):
         },
     }]
     homes = conn.execute("SELECT * FROM homes WHERE group_id = ? ORDER BY created_at", (me["group_id"],)).fetchall()
-    links = {}
-    for row in conn.execute("""SELECT hm.user_id, hm.home_id FROM home_members hm JOIN homes h ON h.id = hm.home_id
+    links, admins = {}, {}
+    for row in conn.execute("""SELECT hm.user_id, hm.home_id, hm.role FROM home_members hm JOIN homes h ON h.id = hm.home_id
                                WHERE h.group_id = ? ORDER BY hm.linked_at""", (me["group_id"],)):
         links.setdefault(row["user_id"], []).append(row["home_id"])
+        if row["role"] == "admin":
+            admins.setdefault(row["home_id"], []).append(row["user_id"])
     state["people"] = [_person(m, links.get(m["id"], ())) for m in members]
     codes = {}
     if homes:
@@ -508,7 +521,7 @@ def state_for(conn, user_id, now=None):
         for row in conn.execute(f"SELECT home_id, kind, method FROM home_entrances WHERE home_id IN ({marks})",
                                 [h["id"] for h in homes]):
             access.setdefault(row["home_id"], {})[row["kind"]] = row["method"]
-    state["homes"] = [_home(h, codes.get(h["id"]), access.get(h["id"])) for h in homes]
+    state["homes"] = [_home(h, codes.get(h["id"]), access.get(h["id"]), admins.get(h["id"])) for h in homes]
     # 낙상 사고와 내 알림 (incidents.py, alerts.py). incidents 가 이 모듈을 쓰므로 함수 안에서 불러옴
     import incidents
     state["incidents"], state["notifs"] = incidents.state_part(conn, user_id, me["group_id"])

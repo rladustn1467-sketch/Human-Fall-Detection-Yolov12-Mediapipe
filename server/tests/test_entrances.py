@@ -151,10 +151,16 @@ class SetupEntranceTest(PeopleTestBase):
     def test_combinations_in_first_setup(self):
         home = self.finish(self.a, {"central": {"method": "absent"}, "door": {"method": "code", "code": DOOR}})
         self.assertEqual(self.view(home), ("absent", False, "code", True))
-        # 같은 집을 고른 가족: 보내지 않은 현관은 그대로, '비밀번호' + 빈 값이면 등록된 비밀번호 유지
-        self.finish(self.b, {"door": {"method": "code", "code": ""}}, home={"mode": "existing", "id": home})
+        # 같은 집 관리자가 다시 설정: 보내지 않은 현관은 그대로, '비밀번호' + 빈 값이면 등록된 비밀번호 유지
+        self.finish(self.a, {"door": {"method": "code", "code": ""}}, home={"mode": "existing", "id": home})
         self.assertEqual(self.view(home), ("absent", False, "code", True))
         self.assertEqual(door_codes.reveal(self.conn, home, "door", key=KEY), DOOR)
+        # 같은 집을 고른 가족(구성원)은 현관을 바꿀 수 없음: 처음 설정 전체가 취소됨 (관리자만, 사용자 결정 2026-10-30)
+        self.assertAccountError(403, self.finish, self.b, {"door": {"method": "key"}}, home={"mode": "existing", "id": home})
+        self.assertEqual(self.view(home), ("absent", False, "code", True))
+        self.assertEqual(self.me(self.b)["homeIds"], [])
+        self.finish(self.b, {}, home={"mode": "existing", "id": home})            # 현관을 보내지 않으면 연결됨
+        self.assertEqual(self.me(self.b)["homeIds"], [home])
 
     def test_9_failure_rolls_back_everything(self):
         self.fail_on("home_door_codes", "INSERT")

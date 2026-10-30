@@ -1436,6 +1436,9 @@ class FallDetectionDashboard(QMainWindow):
                 print(f"[device] 전송 완료 (event {event_id[:8]}, 사고 {result.get('incident_id')}"
                       f"{', 사진 연결' if result.get('image_saved') else ''})")
             return
+        # 옛 방식: 서버가 '[옛 경로]'로 기록함. 이 경로는 없앨 예정이라 '연결 코드 입력'으로 새 방식에 연결해 주세요
+        print("[옛 경로] 앱과 연결되지 않아 예전 방식(/api/events, 공용 토큰)으로 보내요. "
+              "'연결 코드 입력'으로 새 방식에 연결해 주세요 (서버 PC: legacy_devices.py pc-code laptop)")
         event = {
             "event_id": event_id,
             "device_id": DEVICE_ID,
