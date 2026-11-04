@@ -10,6 +10,7 @@ import http.cookiejar
 import json
 import os
 import random
+import re
 import sqlite3
 import subprocess
 import sys
@@ -176,6 +177,34 @@ def device_flow(server, args, target, family, home):
     check("삭제되면 감지 서비스 종료", wait(lambda: not service_running(), 30))
 
 
+def phone_checks_flow(target, home):
+    """The detector screen asks for what can silently stop detection, and only while it is needed."""
+    code = target.call("POST", f"/api/v2/homes/{home}/devices/pairing", {"type": "phone", "location": "안방"})[1]["pairing"]["code"]
+    adb("shell", "dumpsys", "deviceidle", "whitelist", f"-{PKG}")
+    reset_app()
+    adb("shell", "pm", "revoke", PKG, "android.permission.POST_NOTIFICATIONS")
+    start("--es", "server", f"http://localhost:{PORT}", "--es", "mode", "dedicated", "--es", "code", code)
+    check("절전 제한이면 안내와 버튼", wait(lambda: "배터리 제한 해제하기" in screen(), 40), screen()[-120:])
+    check("알림이 꺼져 있으면 안내와 버튼", "알림 허용하기" in screen())
+    adb("shell", "dumpsys", "deviceidle", "whitelist", f"+{PKG}")
+    check("절전 제외되면 버튼이 사라짐", wait(lambda: "배터리 제한 해제하기" not in screen(), 10))
+    adb("shell", "dumpsys", "deviceidle", "whitelist", f"-{PKG}")
+    check("절전 제한이 다시 걸리면 버튼이 돌아옴", wait(lambda: "배터리 제한 해제하기" in screen(), 10))
+    adb("shell", "input", "tap", *button_center("배터리 제한 해제하기"))
+    shown = wait(lambda: "RequestIgnoreBatteryOptimizations" in adb("shell", "dumpsys", "activity", "activities"), 10)
+    check("버튼을 누르면 시스템 확인 창", shown)
+    adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    adb("shell", "am", "force-stop", PKG)
+
+
+def button_center(label):
+    adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
+    xml = adb("shell", "cat", "/sdcard/ui.xml")
+    node = next(n for n in ET.fromstring(xml[xml.index("<"):]).iter("node") if n.get("text") == label)
+    x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds")))
+    return str((x1 + x2) // 2), str((y1 + y2) // 2)
+
+
 def start_own_phone(person):
     reset_app()
     adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1")
@@ -237,6 +266,7 @@ def main():
         family.call("POST", "/api/v2/me/onboarded", {"onboarded": True})
         try:
             device_flow(server, args, target, family, home)
+            phone_checks_flow(target, home)
             logout_flow(target)
             removal_flow(server, target, family)
         finally:

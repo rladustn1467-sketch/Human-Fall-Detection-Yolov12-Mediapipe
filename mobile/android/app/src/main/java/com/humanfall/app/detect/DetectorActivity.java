@@ -1,7 +1,9 @@
 package com.humanfall.app.detect;
 
 import android.Manifest;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -12,6 +14,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.LocaleList;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -27,6 +30,7 @@ import android.widget.TextView;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -55,6 +59,7 @@ public class DetectorActivity extends AppCompatActivity {
     public static final String EXTRA_SIGNED_IN = "signedIn";
     public static final String MODE_SELF = "self", MODE_DEDICATED = "dedicated";
     static final int REQ_CAMERA = 7;
+    private static final int REQ_NOTICE = 2;
     static final String HOW_TO_GET_CODE = "평소 쓰는 휴대폰에서 이 앱에 로그인한 뒤 홈 화면의 집에서 '기기 추가' → '안 쓰는 휴대폰'을 고르면 6자리 연결 코드가 나와요. 그 코드를 아래에 입력해 주세요.";
     // 웹앱(server/app/next/css/main.css)과 같은 색
     static final int BG = 0xFFF4F1EA, INK = 0xFF1B2A30, PRIMARY = 0xFF1B6A72, OK = 0xFF2B8553, STOP = 0xFFC42F2A, MUTED = 0xFF5B6B70;
@@ -65,7 +70,8 @@ public class DetectorActivity extends AppCompatActivity {
     private String server;
     private TextView stateTitle, stateBody, errorText;
     private EditText codeInput;
-    private Button pairButton, toggleButton, forgetButton, permissionButton;
+    private Button pairButton, toggleButton, forgetButton, permissionButton, batteryButton, noticeButton;
+    private TextView phoneNotice;
     private LinearLayout pairBox, pairedBox;
     private boolean busy;
     private String mode;          // self | dedicated (연결된 뒤에는 연결할 때의 방식)
@@ -239,6 +245,15 @@ public class DetectorActivity extends AppCompatActivity {
         permissionButton = button("카메라 권한 허용하기", true);
         permissionButton.setOnClickListener(v -> askCamera());
         pairedBox.addView(permissionButton);
+        phoneNotice = text(15, STOP, false);
+        phoneNotice.setPadding(0, dp(10), 0, 0);
+        pairedBox.addView(phoneNotice);
+        batteryButton = button("배터리 제한 해제하기", true);
+        batteryButton.setOnClickListener(v -> askBatteryExemption());
+        pairedBox.addView(batteryButton);
+        noticeButton = button("알림 허용하기", true);
+        noticeButton.setOnClickListener(v -> askNotifications());
+        pairedBox.addView(noticeButton);
         toggleButton = button("", true);
         toggleButton.setOnClickListener(v -> toggle());
         pairedBox.addView(toggleButton);
@@ -343,6 +358,13 @@ public class DetectorActivity extends AppCompatActivity {
         stateTitle.setTextColor(color);
         stateBody.setText(body);
         permissionButton.setVisibility(hasCamera() ? View.GONE : View.VISIBLE);
+        boolean detecting = on && hasCamera();
+        boolean exempt = batteryExempt(), notices = NotificationManagerCompat.from(this).areNotificationsEnabled();
+        String advice = PhoneChecks.message(detecting, exempt, notices);
+        phoneNotice.setText(advice);
+        phoneNotice.setVisibility(advice.isEmpty() ? View.GONE : View.VISIBLE);
+        batteryButton.setVisibility(PhoneChecks.showBattery(detecting, exempt) ? View.VISIBLE : View.GONE);
+        noticeButton.setVisibility(PhoneChecks.showNotifications(detecting, notices) ? View.VISIBLE : View.GONE);
         toggleButton.setText(on ? "감지 끄기" : canTurnOnHere(link.isHeld(), signedIn) ? "감지 켜기" : "앱에 로그인하기");
     }
 
@@ -418,6 +440,30 @@ public class DetectorActivity extends AppCompatActivity {
 
     private void startService() {
         if (!DetectionService.start(this, debugExtras)) render();
+    }
+
+    private boolean batteryExempt() {
+        return getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    private void askBatteryExemption() {
+        Intent ask = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.fromParts("package", getPackageName(), null));
+        try {
+            startActivity(ask);
+        } catch (ActivityNotFoundException e) {   // 이 화면이 없는 휴대폰: 배터리 설정 목록을 열어 줌
+            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        }
+    }
+
+    private void askNotifications() {
+        SharedPreferences ui = getSharedPreferences("fd_detect_ui", MODE_PRIVATE);
+        if (Build.VERSION.SDK_INT >= 33 && !ui.getBoolean("asked_notice", false)) {
+            ui.edit().putBoolean("asked_notice", true).apply();
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTICE);
+            return;
+        }
+        // 한 번 거절했으면 설정 화면에서만 허용할 수 있음
+        startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
     }
 
     private void askCamera() {
