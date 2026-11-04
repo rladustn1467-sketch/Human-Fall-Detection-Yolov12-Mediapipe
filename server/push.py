@@ -52,6 +52,7 @@ PUSH_TEXT = {
     "checking_reminder": "아직 확인 중인 낙상 사고가 있어요. 확인을 마치면 종료해 주세요.",
     "device_problem": "감지 기기가 멈췄어요. 기기를 확인해 주세요.",
     "device_back": "감지 기기가 다시 연결됐어요.",
+    "device_low_battery": "감지 기기의 배터리가 얼마 남지 않았어요. 충전기를 꽂아 주세요.",
 }
 CHANNEL_ID = "fall_alert"                  # 앱(mobile/)의 긴급 알림 채널과 같은 이름
 MAX_ATTEMPTS = 3

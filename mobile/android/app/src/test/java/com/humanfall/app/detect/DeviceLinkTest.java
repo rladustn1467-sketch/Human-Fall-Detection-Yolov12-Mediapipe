@@ -44,6 +44,7 @@ public class DeviceLinkTest {
     volatile boolean down = false;        // 서버가 응답하지 못함 (503)
     volatile boolean unpaired = false;
     volatile String pairMode;
+    volatile JSONObject lastBeat;
     volatile boolean revokedEnabledOnly = false;   // 켜짐/꺼짐 알림만 500
     volatile String rejectEvent = null;            // 이 event id 는 400 (잘못된 요청)
     final List<String> eventIds = Collections.synchronizedList(new ArrayList<>());
@@ -66,6 +67,7 @@ public class DeviceLinkTest {
                 return new Object[]{400, "{\"message\":\"연결 코드를 확인해 주세요.\",\"field\":\"code\"}"};
             case "/api/v2/device/heartbeat":
                 if (!authorized(headers)) return new Object[]{401, "{\"message\":\"기기 인증에 실패했어요.\"}"};
+                lastBeat = b;
                 return new Object[]{200, String.format(answer, enabled, location)};
             case "/api/v2/device/enabled":
                 if (!authorized(headers)) return new Object[]{401, "{}"};
@@ -108,6 +110,21 @@ public class DeviceLinkTest {
         assertEquals("self", pairMode);
         assertNull(new DeviceLink(new MemStore()).pair(base, "GOOD12", false));
         assertEquals("", pairMode);
+    }
+
+    @Test
+    public void statusSignalCarriesBatteryAndHeat() throws Exception {
+        DeviceLink link = paired(new MemStore(), new ArrayList<>());
+        DeviceLink.Health h = new DeviceLink.Health();
+        h.battery = 57;
+        h.charging = true;
+        h.hot = true;
+        link.heartbeat(true, h);
+        assertEquals(57, lastBeat.getInt("batteryPercent"));
+        assertTrue(lastBeat.getBoolean("charging"));
+        assertTrue(lastBeat.getBoolean("hot"));
+        link.heartbeat(true, null);                                  // PC 등 알 수 없는 기기
+        assertFalse(lastBeat.has("batteryPercent"));
     }
 
     private DeviceLink paired(MemStore store, List<Long> waits) {

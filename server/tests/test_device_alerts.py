@@ -212,6 +212,75 @@ class SettingsTest(DeviceTestBase):
         self.assertEqual(self.kinds(self.a), ["home_changed"] * 2)
 
 
+class BatteryTest(DeviceTestBase):
+    def beat(self, at, battery=80, charging=False, hot=False):
+        devices.heartbeat(self.conn, self.row(), True, now=at, health={"battery": battery, "charging": charging, "hot": hot})
+
+    def test_the_family_sees_the_battery(self):
+        self.beat(T, battery=57, charging=True, hot=True)
+        d = self.state(self.b)["devices"][0]
+        self.assertEqual((d["battery"], d["charging"], d["hot"]), (57, True, True))
+
+    def test_a_device_that_sends_no_battery_stays_unknown(self):
+        devices.heartbeat(self.conn, self.row(), True, now=T)
+        d = self.state(self.b)["devices"][0]
+        self.assertEqual((d["battery"], d["charging"], d["hot"]), (None, None, None))
+        self.watch(T + 1000)
+        self.assertEqual(self.kinds(self.b), [])
+
+    def test_wrong_values_are_ignored(self):
+        for bad in (-1, 101, "50", True, None):
+            devices.heartbeat(self.conn, self.row(), True, now=T, health={"battery": bad, "charging": "yes", "hot": 1})
+            d = self.state(self.b)["devices"][0]
+            self.assertEqual((d["battery"], d["charging"], d["hot"]), (None, None, None), bad)
+
+    def test_family_hears_once_when_the_battery_runs_out(self):
+        self.beat(T, battery=16)
+        self.watch(T + 1000)
+        self.assertEqual(self.kinds(self.b), [])
+        self.beat(T + 2000, battery=15)
+        self.watch(T + 3000)
+        self.beat(T + 4000, battery=12)
+        self.watch(T + 5000)
+        self.assertEqual(self.kinds(self.b), ["device_low_battery"])
+        self.assertEqual(self.pushes("device_low_battery"), sorted([self.a, self.b, self.d]))
+
+    def test_charging_phone_with_low_battery_is_fine(self):
+        self.beat(T, battery=5, charging=True)
+        self.watch(T + 1000)
+        self.assertEqual(self.kinds(self.b), [])
+
+    def test_it_can_warn_again_after_charging(self):
+        self.beat(T, battery=10)
+        self.watch(T + 1000)
+        self.beat(T + 2000, battery=11, charging=True)
+        self.watch(T + 3000)
+        self.beat(T + 4000, battery=14)
+        self.watch(T + 5000)
+        self.assertEqual(self.kinds(self.b).count("device_low_battery"), 2)
+
+    def test_a_small_rise_does_not_warn_again(self):
+        self.beat(T, battery=14)
+        self.watch(T + 1000)
+        self.beat(T + 2000, battery=16)
+        self.watch(T + 3000)
+        self.beat(T + 4000, battery=14)
+        self.watch(T + 5000)
+        self.assertEqual(self.kinds(self.b).count("device_low_battery"), 1)
+
+    def test_the_setting_applies(self):
+        self.set_pref(self.b, "device", False)
+        self.beat(T, battery=10)
+        self.watch(T + 1000)
+        self.assertEqual(self.kinds(self.b), [])
+
+    def test_a_device_turned_off_is_not_reported(self):
+        self.beat(T, battery=10)
+        devices.set_enabled_by_device(self.conn, self.row(), False, now=T + 500)
+        self.watch(T + 1000)
+        self.assertEqual(self.kinds(self.b), [])
+
+
 class RemovedPersonDeviceTest(DeviceTestBase):
     """A person removed from the group stops at once (감사 2026-11-04 N-7): their 'this phone' device is deleted on the
     server, so its token stops working even if the app is closed. A spare phone they set up stays with the home."""

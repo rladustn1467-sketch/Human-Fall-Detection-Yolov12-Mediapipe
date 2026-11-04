@@ -323,8 +323,18 @@ public final class DeviceLink {
     }
 
     // ---- 상태 신호 · 켜기/끄기 ----
-    /** One status signal; never throws. Returns seconds until the next one. */
+    /** Battery and heat sent with the status signal. battery -1 = unknown. */
+    public static final class Health {
+        public int battery = -1;
+        public boolean charging, hot;
+    }
+
     public int heartbeat(boolean cameraOk) {
+        return heartbeat(cameraOk, null);
+    }
+
+    /** One status signal; never throws. Returns seconds until the next one. */
+    public int heartbeat(boolean cameraOk, Health health) {
         String token = token();
         if (token == null) return DEFAULT_HEARTBEAT_SECONDS;
         Response r;
@@ -332,6 +342,11 @@ public final class DeviceLink {
             JSONObject body = new JSONObject();
             body.put("cameraOk", cameraOk);
             body.put("appVersion", APP_VERSION);
+            if (health != null) {
+                if (health.battery >= 0) body.put("batteryPercent", health.battery);
+                body.put("charging", health.charging);
+                body.put("hot", health.hot);
+            }
             r = post(base(), "/api/v2/device/heartbeat", body, token);
         } catch (IOException | JSONException e) {
             logFailure("상태 신호", e);

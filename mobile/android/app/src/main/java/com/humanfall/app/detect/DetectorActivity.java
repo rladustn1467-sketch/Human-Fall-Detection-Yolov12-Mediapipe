@@ -379,7 +379,10 @@ public class DetectorActivity extends AppCompatActivity {
         boolean detecting = on && hasCamera();
         renderSetup(detecting && DetectorRuntime.cameraOk(), st);
         boolean exempt = batteryExempt(), notices = NotificationManagerCompat.from(this).areNotificationsEnabled();
-        String advice = PhoneChecks.message(detecting, exempt, notices);
+        DeviceLink.Health health = DeviceHealth.read(this);
+        String power = PhoneChecks.power(detecting, self(), health.battery, health.charging, health.hot);
+        String checks = PhoneChecks.message(detecting, exempt, notices);
+        String advice = power.isEmpty() || checks.isEmpty() ? power + checks : power + "\n\n" + checks;
         phoneNotice.setText(advice);
         phoneNotice.setVisibility(advice.isEmpty() ? View.GONE : View.VISIBLE);
         batteryButton.setVisibility(PhoneChecks.showBattery(detecting, exempt) ? View.VISIBLE : View.GONE);

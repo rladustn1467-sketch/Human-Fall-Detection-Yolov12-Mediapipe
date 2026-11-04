@@ -231,7 +231,7 @@
    * ---------------------------------------------------------- */
   const NOTIF_ICON = { family_alert: 'triangle-exclamation', help: 'hand', self_ok: 'user-check', checked: 'user-check',
     closed: 'circle-check', reported: 'truck-medical', auto_reported: 'truck-medical', redetected: 'person-falling',
-    checking_reminder: 'clock', checker_left: 'triangle-exclamation', device_problem: 'triangle-exclamation', device_back: 'circle-check', home_changed: 'house', member_joined: 'user-plus', member_removed: 'user-minus' };
+    checking_reminder: 'clock', checker_left: 'triangle-exclamation', device_problem: 'triangle-exclamation', device_back: 'circle-check', device_low_battery: 'battery-quarter', home_changed: 'house', member_joined: 'user-plus', member_removed: 'user-minus' };
   on('notif.open', () => R.go('/notifications'));
   on('notif.item', el => {
     const inc = Sel.incident(el.dataset.inc);
@@ -309,6 +309,8 @@
       ${d.status === 'disconnected' ? `<div class="notice notice--warn" style="margin-bottom:14px">${ic('wrench')}<div><b>${esc(UI.DEVICE_PROBLEM[d.problem] || '연결되지 않았어요')}</b>${(tips || []).map((x, i) => `<br>${i + 1}. ${esc(x)}`).join('')}</div></div>` : ''}
       <div class="kv" style="margin-bottom:14px">
         ${row('마지막 신호', d.lastSeenAt ? `<span data-ago="${d.lastSeenAt}">${UI.ago(t - d.lastSeenAt)}</span>` : '아직 없음')}
+        ${d.battery != null ? row('배터리', `${esc(d.battery)}%${d.charging ? ' · 충전 중' : ''}`) : ''}
+        ${d.hot ? row('휴대폰 온도', '뜨거워요. 그늘진 곳으로 옮겨 주세요') : ''}
         ${d.lastTestAt ? row('연결 확인 신호', `${esc(UI.dateTime(d.lastTestAt))} 받음`) : ''}
         ${row('연결한 날', esc(UI.dateTime(d.createdAt)))}
       </div>`;

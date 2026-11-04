@@ -127,6 +127,23 @@ def copy_frames(folder):
     return f"{mock}/video"
 
 
+def power_flow(device):
+    """Virtual battery and heat: the phone says what is wrong and the family sees the battery."""
+    adb("shell", "dumpsys", "battery", "set", "ac", "1")
+    check("충전 중이면 충전 안내 없음", wait(lambda: "충전기가 빠져 있어요" not in screen(), 10))
+    adb("shell", "dumpsys", "battery", "unplug")
+    adb("shell", "dumpsys", "battery", "set", "level", "12")
+    check("충전기가 빠지면 감지 화면 안내", wait(lambda: "충전기가 빠져 있어요" in screen(), 10))
+    check("가족 화면에 배터리 표시", wait(lambda: device().get("battery") == 12 and device().get("charging") is False, 15), device().get("battery"))
+    adb("shell", "cmd", "thermalservice", "override-status", "3")
+    check("과열되면 감지 화면 안내", wait(lambda: "뜨거워요" in screen(), 10))
+    check("가족 화면에 과열 표시", wait(lambda: device().get("hot") is True, 15), device().get("hot"))
+    adb("shell", "cmd", "thermalservice", "reset")
+    adb("shell", "dumpsys", "battery", "set", "ac", "1")
+    check("원래대로 돌아오면 안내가 사라짐", wait(lambda: "충전기가 빠져 있어요" not in screen() and "뜨거워요" not in screen(), 15))
+    adb("shell", "dumpsys", "battery", "reset")
+
+
 def rotation_flow():
     """The virtual accelerometer turns the phone on its side: frames follow it, with the screen's rotation locked."""
     adb("shell", "settings", "put", "system", "accelerometer_rotation", "0")
@@ -183,6 +200,7 @@ def device_flow(server, args, target, family, home):
     check("서버에 정상으로 표시", wait(lambda: device()["status"] == "ok", 25), device()["status"])
     check("카메라 화면에 설치 확인 표시", wait(lambda: "설치 확인" in screen(), 15), screen()[-110:])
     rotation_flow()
+    power_flow(device)
 
     start("--ei", "test_block_frames_seconds", "45")
     check("영상 멈춤: 자동 재시작", wait(lambda: "카메라 영상이 없어 다시 시작" in log(), 30))

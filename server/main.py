@@ -1284,6 +1284,9 @@ class DevicePairBody(BaseModel):
 class DeviceHeartbeatBody(BaseModel):
     cameraOk: Any = None
     appVersion: Any = None
+    batteryPercent: Any = None
+    charging: Any = None
+    hot: Any = None
 
 
 class DeviceFallBody(BaseModel):
@@ -1333,7 +1336,8 @@ def api_v2_device_pair(body: DevicePairBody, request: Request):
 def api_v2_device_heartbeat(body: DeviceHeartbeatBody, request: Request):
     with db.session(DB_PATH) as conn:
         device = devices.authenticate(conn, request.headers.get("authorization"))
-        return JSONResponse(devices.heartbeat(conn, device, body.cameraOk, body.appVersion), headers=NO_STORE)
+        health = {"battery": body.batteryPercent, "charging": body.charging, "hot": body.hot}
+        return JSONResponse(devices.heartbeat(conn, device, body.cameraOk, body.appVersion, health=health), headers=NO_STORE)
 
 
 class DeviceEnabledBody(BaseModel):

@@ -46,8 +46,10 @@ class VirtualDevice:
             self.token, self.device_id = data["deviceToken"], data["deviceId"]
         return status, {k: v for k, v in data.items() if k != "deviceToken"}
 
-    def heartbeat(self, camera_ok=True):
-        return self.call("/api/v2/device/heartbeat", {"cameraOk": camera_ok, "appVersion": "virtual-device"})
+    def heartbeat(self, camera_ok=True, battery=None, charging=None, hot=None):
+        body = {"cameraOk": camera_ok, "appVersion": "virtual-device"}
+        body.update({k: v for k, v in (("batteryPercent", battery), ("charging", charging), ("hot", hot)) if v is not None})
+        return self.call("/api/v2/device/heartbeat", body)
 
     def enabled(self, on):
         return self.call("/api/v2/device/enabled", {"enabled": on})

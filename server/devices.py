@@ -38,6 +38,8 @@ PAIR_LIMIT_PER_IP = (10, 15 * 60)       # 틀린 연결 코드 (같은 주소에
 HEARTBEAT_SECONDS = 60                  # 기기가 상태 신호를 보내는 간격 (기기에 알려 줌)
 OFFLINE_AFTER_MS = 3 * 60 * 1000        # 이보다 오래 신호가 없으면 '연결 끊김'
 ALERT_AFTER_MS = 5 * 60 * 1000          # 문제가 이만큼 이어지면 가족에게 알림 (기기의 자동 복구 시간을 줌)
+LOW_BATTERY_PERCENT = 15                # 충전 중이 아니고 이 이하면 가족에게 알림
+BATTERY_OK_PERCENT = 25                 # 이만큼 회복하면 다시 알릴 수 있음 (경계에서 알림이 반복되지 않게)
 TOKEN_MAX = 200
 APP_VERSION_MAX = 40
 
@@ -189,17 +191,29 @@ def authenticate(conn, authorization):
     return row
 
 
-def heartbeat(conn, device, camera_ok, app_version=None, now=None):
+def _clean_health(health):
+    """Battery and heat as sent by the device. Unknown or wrong values are None: they must not stop the signal."""
+    health = health or {}
+    battery = health.get("battery")
+    if not isinstance(battery, int) or isinstance(battery, bool) or not 0 <= battery <= 100:
+        battery = None
+    flag = lambda value: int(value) if isinstance(value, bool) else None
+    return battery, flag(health.get("charging")), flag(health.get("hot"))
+
+
+def heartbeat(conn, device, camera_ok, app_version=None, now=None, health=None):
     """Status signal. Returns what the device must follow: detection on/off, location, signal interval."""
     now = now_ms() if now is None else now
     if not isinstance(camera_ok, bool):
         raise AccountError(400, "카메라 상태 값을 확인해 주세요.", "cameraOk")
+    battery, charging, hot = _clean_health(health)
     with db.transaction(conn):
         changed = device["camera_ok"] is None or bool(device["camera_ok"]) != camera_ok
         conn.execute("""UPDATE devices SET last_seen_at = ?, camera_ok = ?, camera_changed_at = ?,
-                                           app_version = COALESCE(?, app_version) WHERE id = ?""",
+                                           app_version = COALESCE(?, app_version),
+                                           battery_percent = ?, charging = ?, hot = ? WHERE id = ?""",
                      (now, int(camera_ok), now if changed else device["camera_changed_at"],
-                      _clean_version(app_version), device["id"]))
+                      _clean_version(app_version), battery, charging, hot, device["id"]))
     return {"enabled": bool(device["enabled"]), "location": device["location"], "heartbeatSeconds": HEARTBEAT_SECONDS}
 
 
@@ -264,7 +278,10 @@ def _view(row, now):
         status, problem, since = "ok", None, row["last_seen_at"]
     return {"id": row["id"], "homeId": row["home_id"], "type": row["type"], "location": row["location"],
             "status": status, "problem": problem, "since": since, "createdAt": row["created_at"],
-            "lastSeenAt": row["last_seen_at"], "lastTestAt": row["last_test_at"], "live": True}
+            "lastSeenAt": row["last_seen_at"], "lastTestAt": row["last_test_at"], "live": True,
+            "battery": row["battery_percent"],
+            "charging": None if row["charging"] is None else bool(row["charging"]),
+            "hot": None if row["hot"] is None else bool(row["hot"])}
 
 
 def watch(conn, server_started_at, now=None):
@@ -291,6 +308,18 @@ def _watch_one(conn, row, server_started_at, now):
         conn.execute("UPDATE devices SET alerted_at = NULL WHERE id = ?", (row["id"],))
         if view["status"] == "ok":   # 일부러 끈 것이면 더 알리지 않음
             _tell_family(conn, row, "device_back", now)
+    _watch_battery(conn, row, view, now)
+
+
+def _watch_battery(conn, row, view, now):
+    if view["status"] != "ok" or row["battery_percent"] is None or row["charging"] is None:
+        return
+    if row["low_battery_alerted_at"] is None:
+        if row["battery_percent"] <= LOW_BATTERY_PERCENT and not row["charging"]:
+            conn.execute("UPDATE devices SET low_battery_alerted_at = ? WHERE id = ?", (now, row["id"]))
+            _tell_family(conn, row, "device_low_battery", now)
+    elif row["charging"] or row["battery_percent"] >= BATTERY_OK_PERCENT:
+        conn.execute("UPDATE devices SET low_battery_alerted_at = NULL WHERE id = ?", (row["id"],))
 
 
 def _tell_family(conn, row, kind, now):

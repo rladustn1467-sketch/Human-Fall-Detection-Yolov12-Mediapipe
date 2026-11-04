@@ -39,6 +39,7 @@ NOTIF_TEXT = {
     # 감지 기기·집 알림 (사고 없음, 알림 설정을 따름). {loc} = notifications.detail
     "device_problem": "{home} · {loc}: 감지 기기가 멈췄어요. 기기를 확인해 주세요",
     "device_back": "{home} · {loc}: 감지 기기가 다시 연결됐어요",
+    "device_low_battery": "{home} · {loc}: 감지 기기의 배터리가 얼마 남지 않았어요. 충전기를 꽂아 주세요",
     "home_changed": "{home}: {name}님이 {loc} 바꿨어요",
 }
 # 문자 문장 (이름·건강 정보·주소는 넣지 않음)

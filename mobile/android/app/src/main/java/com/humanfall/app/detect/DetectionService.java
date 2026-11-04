@@ -183,7 +183,7 @@ public class DetectionService extends LifecycleService {
     private void beat() {
         int next = FALLBACK_BEAT_SECONDS;
         try {
-            next = link.heartbeat(DetectorRuntime.cameraOk());
+            next = link.heartbeat(DetectorRuntime.cameraOk(), DeviceHealth.read(this));
             if (heartbeatOverride > 0) next = heartbeatOverride;
             main.post(this::followServer);
         } catch (RuntimeException e) {

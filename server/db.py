@@ -415,6 +415,39 @@ MIGRATIONS = [
     (14, "'이 휴대폰으로 감지' 기기의 주인: 그룹에서 내보내면 그 기기만 바로 지움 (accounts.py, 감사 2026-11-04 N-7)", [
         "ALTER TABLE devices ADD COLUMN self_user_id TEXT",
     ]),
+    (15, "감지 기기의 배터리·충전·발열 상태, 배터리 부족 알림 (devices.py, 감사 2026-11-04 F16)", [
+        "ALTER TABLE devices ADD COLUMN battery_percent INTEGER",
+        "ALTER TABLE devices ADD COLUMN charging INTEGER CHECK (charging IS NULL OR charging IN (0, 1))",
+        "ALTER TABLE devices ADD COLUMN hot INTEGER CHECK (hot IS NULL OR hot IN (0, 1))",
+        "ALTER TABLE devices ADD COLUMN low_battery_alerted_at INTEGER",
+        "ALTER TABLE push_deliveries RENAME TO push_deliveries_v14",
+        """CREATE TABLE push_deliveries (
+               id              INTEGER PRIMARY KEY AUTOINCREMENT,
+               incident_id     TEXT REFERENCES incidents(id) ON DELETE CASCADE,
+               group_id        TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               kind            TEXT NOT NULL DEFAULT 'detected'
+                               CHECK (kind IN ('detected', 'family_alert', 'help', 'redetected', 'checking_reminder',
+                                               'device_problem', 'device_back', 'device_low_battery')),
+               n               INTEGER NOT NULL DEFAULT 0,
+               status          TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'sent', 'simulated', 'no_token',
+                                                               'skipped', 'failed')),
+               provider        TEXT,
+               attempts        INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at INTEGER,
+               sent_count      INTEGER NOT NULL DEFAULT 0,
+               last_error      TEXT,
+               created_at      INTEGER NOT NULL,
+               updated_at      INTEGER NOT NULL,
+               UNIQUE (incident_id, user_id, kind, n)
+           )""",
+        """INSERT INTO push_deliveries (id, incident_id, group_id, user_id, kind, n, status, provider, attempts,
+                                       next_attempt_at, sent_count, last_error, created_at, updated_at)
+           SELECT id, incident_id, group_id, user_id, kind, n, status, provider, attempts,
+                  next_attempt_at, sent_count, last_error, created_at, updated_at FROM push_deliveries_v14""",
+        "DROP TABLE push_deliveries_v14",
+        "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림
