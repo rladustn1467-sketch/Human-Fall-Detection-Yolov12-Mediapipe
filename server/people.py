@@ -16,6 +16,7 @@ import time
 from datetime import date, datetime
 
 import accounts
+import alerts
 import db
 from accounts import AccountError
 
@@ -233,6 +234,7 @@ def update_home_address(conn, user_id, home_id, address, now=None):
         if not _is_linked(conn, home["id"], user_id):
             raise AccountError(403, "이 집에 연결된 가족만 정보를 수정할 수 있어요.", "home")
         conn.execute("UPDATE homes SET address = ?, updated_at = ? WHERE id = ?", (address, now, home["id"]))
+        alerts.tell_home(conn, home["id"], user_id, "주소를", int(now * 1000))
 
 
 # ---- 처음 설정 완료 (감지 대상 켜기) ----

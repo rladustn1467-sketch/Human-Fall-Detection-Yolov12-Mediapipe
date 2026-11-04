@@ -23,6 +23,7 @@ import time
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+import alerts
 import db
 from accounts import AccountError
 
@@ -187,6 +188,7 @@ def put(conn, user_id, home_id, kind, code, key=None, now=None):
     with db.transaction(conn):
         home = _linked_home(conn, user_id, home_id)
         store_in_transaction(conn, user_id, home["id"], kind, code, key, now)
+        alerts.tell_home(conn, home["id"], user_id, "현관 비밀번호를", int(now * 1000))
 
 
 def set_entrance(conn, user_id, home_id, kind, method, code=None, key=None, now=None):
@@ -208,6 +210,7 @@ def set_entrance(conn, user_id, home_id, kind, method, code=None, key=None, now=
         set_method_in_transaction(conn, user_id, home["id"], kind, method, now)
         if code is not None:
             store_in_transaction(conn, user_id, home["id"], kind, code, key, now)
+        alerts.tell_home(conn, home["id"], user_id, "현관 출입 방식을", int(now * 1000))
 
 
 def clean_entrances(value, key):
@@ -257,6 +260,7 @@ def delete(conn, user_id, home_id, kind, now=None):
         if not gone:
             raise AccountError(404, "등록된 현관 비밀번호가 없어요.")
         _record(conn, home["id"], user_id, "door_code_deleted", kind, now)
+        alerts.tell_home(conn, home["id"], user_id, "현관 비밀번호를", int(now * 1000))
 
 
 def registered(conn, home_ids):

@@ -36,6 +36,10 @@ NOTIF_TEXT = {
     # 사고와 관계없는 그룹 알림 (사용자 결정 2026-10-30)
     "member_joined": "{name}님이 그룹에 들어왔어요",
     "member_removed": "{name}님이 가족 한 명을 그룹에서 내보냈어요",
+    # 감지 기기·집 알림 (사고 없음, 알림 설정을 따름). {loc} = notifications.detail
+    "device_problem": "{home} · {loc}: 감지 기기가 멈췄어요. 기기를 확인해 주세요",
+    "device_back": "{home} · {loc}: 감지 기기가 다시 연결됐어요",
+    "home_changed": "{home}: {name}님이 {loc} 바꿨어요",
 }
 # 문자 문장 (이름·건강 정보·주소는 넣지 않음)
 SMS_TEXT = {
@@ -132,14 +136,45 @@ def record_group(conn, group_id, user_ids, kind, actor_id, now):
                         VALUES (?, ?, ?, NULL, ?, ?, 0, ?)""", (f"n_{secrets.token_hex(8)}", group_id, uid, kind, actor_id, now))
 
 
+def wanting(conn, user_ids, pref):
+    """The people whose notification setting (accounts.DEFAULT_PREFS) is on."""
+    import accounts   # accounts 가 이 모듈을 함수 안에서 쓰므로 여기서도 함수 안에서 불러옴
+    out = []
+    for uid in dict.fromkeys(user_ids):
+        row = conn.execute("SELECT prefs FROM users WHERE id = ?", (uid,)).fetchone()
+        if row and accounts._prefs(row["prefs"]).get(pref, True):
+            out.append(uid)
+    return out
+
+
+def record_place(conn, group_id, user_ids, kind, home_id, detail, actor_id, now):
+    """A notification about a home (no incident). now in ms."""
+    for uid in dict.fromkeys(user_ids):
+        conn.execute("""INSERT INTO notifications (id, group_id, user_id, incident_id, kind, actor_id, n, created_at,
+                                                   home_id, detail)
+                        VALUES (?, ?, ?, NULL, ?, ?, 0, ?, ?, ?)""",
+                     (f"n_{secrets.token_hex(8)}", group_id, uid, kind, actor_id, now, home_id, detail))
+
+
+def tell_home(conn, home_id, actor_id, what, now):
+    """Inside the change's transaction: tell the others linked to the home what was changed (setting 'home'). The
+    value itself is never in the text. now in ms."""
+    home = conn.execute("SELECT group_id FROM homes WHERE id = ?", (home_id,)).fetchone()
+    others = [r["user_id"] for r in conn.execute("SELECT user_id FROM home_members WHERE home_id = ?", (home_id,))
+              if r["user_id"] != actor_id]
+    record_place(conn, home["group_id"], wanting(conn, others, "home"), "home_changed", home_id, what, actor_id, now)
+
+
 def for_user(conn, user_id, group_id, names, limit):
-    rows = conn.execute("""SELECT n.*, i.home_id, i.location FROM notifications n LEFT JOIN incidents i ON i.id = n.incident_id
+    rows = conn.execute("""SELECT n.*, i.home_id AS incident_home, i.location FROM notifications n
+                           LEFT JOIN incidents i ON i.id = n.incident_id
                            WHERE n.user_id = ? AND n.group_id = ? ORDER BY n.created_at DESC LIMIT ?""",
                         (user_id, group_id, limit)).fetchall()
     out = []
     for r in reversed(rows):
-        home = _home_name(conn, r["home_id"], user_id, names) if r["home_id"] else "집"
-        text = NOTIF_TEXT.get(r["kind"], r["kind"]).format(home=home, loc=r["location"] or "",
+        home_id = r["incident_home"] or r["home_id"]
+        home = _home_name(conn, home_id, user_id, names) if home_id else "집"
+        text = NOTIF_TEXT.get(r["kind"], r["kind"]).format(home=home, loc=r["location"] or r["detail"] or "",
                                                             name=names.get(r["actor_id"], "가족"), n=r["n"] or 1)
         out.append({"id": r["id"], "groupId": r["group_id"], "to": [user_id], "text": text, "at": r["created_at"],
                     "kind": r["kind"], "incidentId": r["incident_id"], "read": r["read_at"] is not None})

@@ -49,6 +49,8 @@ PUSH_TEXT = {
     "help": "낙상 후 도움을 요청했어요. 확인해 주세요.",
     "redetected": "확인 중인 사고에서 다시 넘어짐이 감지됐어요. 확인해 주세요.",
     "checking_reminder": "아직 확인 중인 낙상 사고가 있어요. 확인을 마치면 종료해 주세요.",
+    "device_problem": "감지 기기가 멈췄어요. 기기를 확인해 주세요.",
+    "device_back": "감지 기기가 다시 연결됐어요.",
 }
 CHANNEL_ID = "fall_alert"                  # 앱(mobile/)의 긴급 알림 채널과 같은 이름
 MAX_ATTEMPTS = 3
@@ -119,17 +121,20 @@ def message(token, incident_id, dev=False, kind="detected"):
     """FCM HTTP v1 message: shown by Android itself when the app is in the background or closed (channel
     fall_alert, high priority), data incidentId opens the incident when tapped. No personal data."""
     title = ("[개발 시험] " if dev else "") + TITLE
+    notification = {"channel_id": CHANNEL_ID, "visibility": "PUBLIC", "notification_priority": "PRIORITY_MAX",
+                    "default_sound": True, "default_vibrate_timings": True}
+    data = {"kind": "fall", "step": kind}
+    if incident_id:   # 감지 기기 알림에는 사고가 없음 (누르면 앱만 열림)
+        notification["tag"] = incident_id
+        data["incidentId"] = incident_id
+    else:
+        notification["tag"] = "device"
+        data["kind"] = "device"
     return {"message": {
         "token": token,
         "notification": {"title": title, "body": PUSH_TEXT.get(kind, BODY)},
-        "data": {"incidentId": incident_id, "kind": "fall", "step": kind},
-        "android": {
-            "priority": "high",
-            "ttl": "3600s",
-            "notification": {"channel_id": CHANNEL_ID, "tag": incident_id, "visibility": "PUBLIC",
-                             "notification_priority": "PRIORITY_MAX", "default_sound": True,
-                             "default_vibrate_timings": True},
-        },
+        "data": data,
+        "android": {"priority": "high", "ttl": "3600s", "notification": notification},
     }}
 
 
@@ -275,7 +280,7 @@ def process_due(conn, sender, now=None):
     """Send the pushes that are due. Returns the number of deliveries processed."""
     now = now_ms() if now is None else now
     with db.transaction(conn):
-        rows = conn.execute("""SELECT d.*, i.source FROM push_deliveries d JOIN incidents i ON i.id = d.incident_id
+        rows = conn.execute("""SELECT d.*, i.source FROM push_deliveries d LEFT JOIN incidents i ON i.id = d.incident_id
                                WHERE d.status IN ('pending', 'retry') AND d.next_attempt_at <= ?
                                ORDER BY d.id LIMIT ?""", (now, BATCH)).fetchall()
         for r in rows:

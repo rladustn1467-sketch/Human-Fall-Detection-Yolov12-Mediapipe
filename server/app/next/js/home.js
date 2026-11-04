@@ -231,7 +231,7 @@
    * ---------------------------------------------------------- */
   const NOTIF_ICON = { family_alert: 'triangle-exclamation', help: 'hand', self_ok: 'user-check', checked: 'user-check',
     closed: 'circle-check', reported: 'truck-medical', auto_reported: 'truck-medical', redetected: 'person-falling',
-    checking_reminder: 'clock', checker_left: 'triangle-exclamation', member_joined: 'user-plus', member_removed: 'user-minus' };
+    checking_reminder: 'clock', checker_left: 'triangle-exclamation', device_problem: 'triangle-exclamation', device_back: 'circle-check', home_changed: 'house', member_joined: 'user-plus', member_removed: 'user-minus' };
   on('notif.open', () => R.go('/notifications'));
   on('notif.item', el => {
     const inc = Sel.incident(el.dataset.inc);

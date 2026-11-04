@@ -296,7 +296,8 @@ def join_group(conn, user_id, code, now=None):
             _clear_failures(conn, key)
             # 기존 가족에게 '○○님이 그룹에 들어왔어요' (참여는 바로, 사용자 결정 2026-10-30)
             import alerts
-            alerts.record_group(conn, invite["group_id"], others, "member_joined", user_id, int(now * 1000))
+            alerts.record_group(conn, invite["group_id"], alerts.wanting(conn, others, "member"), "member_joined",
+                                user_id, int(now * 1000))
             error = None
     if error:
         raise error
@@ -336,7 +337,8 @@ def remove_member(conn, user_id, member_id, now=None):
         _issue_invite(conn, group_id, user_id, now)
         others = [r["id"] for r in conn.execute("SELECT id FROM users WHERE group_id = ? AND id != ?", (group_id, user_id))]
         import alerts
-        alerts.record_group(conn, group_id, others, "member_removed", user_id, int(now * 1000))
+        alerts.record_group(conn, group_id, alerts.wanting(conn, others, "member"), "member_removed", user_id,
+                            int(now * 1000))
 
 
 def _leave(conn, user_id, group_id):

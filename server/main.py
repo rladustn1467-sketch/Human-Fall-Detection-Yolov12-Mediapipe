@@ -174,6 +174,7 @@ def _timeout_watcher(stop):
     """Every second: mark overdue events as timed out and run due auto reports, even when nobody is viewing a page.
     Every PHOTO_CLEANUP_SECONDS (and once at start): delete the photos of incidents that ended long enough ago."""
     next_cleanup = 0.0
+    started = incidents.now_ms()
     while not stop.wait(TIMEOUT_CHECK_INTERVAL):
         if time.time() >= next_cleanup:
             next_cleanup = time.time() + PHOTO_CLEANUP_SECONDS
@@ -192,6 +193,7 @@ def _timeout_watcher(stop):
             with db.session(DB_PATH) as conn:
                 background.run_each([
                     ("사고 시간", lambda: incidents.tick(conn)),
+                    ("기기 상태", lambda: devices.watch(conn, started)),
                     ("문자", lambda: alerts.process_due(conn, SMS_SENDER, incidents.now_ms())),
                     ("텔레그램", lambda: alerts.process_telegram_due(conn, TELEGRAM_CHANNEL, incidents.now_ms())),
                     ("푸시", lambda: push.process_due(conn, PUSH_SENDER, incidents.now_ms())),

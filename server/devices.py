@@ -24,6 +24,7 @@ import secrets
 import time
 
 import accounts
+import alerts
 import db
 import incidents
 from accounts import AccountError
@@ -36,6 +37,7 @@ PAIR_CODE_LENGTH = 6
 PAIR_LIMIT_PER_IP = (10, 15 * 60)       # 틀린 연결 코드 (같은 주소에서 15분에 10번)
 HEARTBEAT_SECONDS = 60                  # 기기가 상태 신호를 보내는 간격 (기기에 알려 줌)
 OFFLINE_AFTER_MS = 3 * 60 * 1000        # 이보다 오래 신호가 없으면 '연결 끊김'
+ALERT_AFTER_MS = 5 * 60 * 1000          # 문제가 이만큼 이어지면 가족에게 알림 (기기의 자동 복구 시간을 줌)
 TOKEN_MAX = 200
 APP_VERSION_MAX = 40
 
@@ -135,6 +137,7 @@ def remove(conn, user_id, device_id):
     with db.transaction(conn):
         row = _my_device(conn, user_id, device_id, "삭제")
         conn.execute("DELETE FROM devices WHERE id = ?", (row["id"],))
+        alerts.tell_home(conn, row["home_id"], user_id, "감지 기기를", now_ms())
 
 
 # ---- 기기: 연결 · 인증 · 상태 신호 · 낙상 ----
@@ -161,6 +164,7 @@ def pair(conn, code, ip, app_version=None, now=None):
                          (device_id, row["group_id"], row["home_id"], row["type"], row["location"], now,
                           _token_hash(token), row["created_by"], now, _clean_version(app_version)))
             conn.execute("UPDATE device_pairings SET used_at = ?, device_id = ? WHERE code = ?", (now, device_id, code))
+            alerts.tell_home(conn, row["home_id"], row["created_by"], "감지 기기를", now)
     if error:
         raise error
     return {"deviceId": device_id, "deviceToken": token, "type": row["type"], "location": row["location"],
@@ -259,6 +263,40 @@ def _view(row, now):
     return {"id": row["id"], "homeId": row["home_id"], "type": row["type"], "location": row["location"],
             "status": status, "problem": problem, "since": since, "createdAt": row["created_at"],
             "lastSeenAt": row["last_seen_at"], "lastTestAt": row["last_test_at"], "live": True}
+
+
+def watch(conn, server_started_at, now=None):
+    """Background step: tell the family when a device that was working stops, and when it is back (setting 'device').
+    A device turned off on purpose or never connected is no problem. The time counts from the server's start too:
+    while the server was off no device could send signals, so it must not look as if they all stopped."""
+    now = now_ms() if now is None else now
+    for row in conn.execute("SELECT * FROM devices WHERE last_seen_at IS NOT NULL").fetchall():
+        try:
+            with db.transaction(conn):
+                _watch_one(conn, row, server_started_at, now)
+        except Exception as e:   # 기기 하나의 오류가 다른 기기를 막지 않게
+            print(f"[device] 기기 {row['id']} 상태 확인 오류: {type(e).__name__}: {e}")
+
+
+def _watch_one(conn, row, server_started_at, now):
+    view = _view(row, now)
+    problem = view["problem"] in ("offline", "camera")
+    if problem and row["alerted_at"] is None:
+        if now - max(view["since"], server_started_at) >= ALERT_AFTER_MS:
+            conn.execute("UPDATE devices SET alerted_at = ? WHERE id = ?", (now, row["id"]))
+            _tell_family(conn, row, "device_problem", now)
+    elif not problem and row["alerted_at"] is not None:
+        conn.execute("UPDATE devices SET alerted_at = NULL WHERE id = ?", (row["id"],))
+        if view["status"] == "ok":   # 일부러 끈 것이면 더 알리지 않음
+            _tell_family(conn, row, "device_back", now)
+
+
+def _tell_family(conn, row, kind, now):
+    import push   # 보내기는 서버의 백그라운드 작업이 따로 (push.py)
+    members = [r["id"] for r in conn.execute("SELECT id FROM users WHERE group_id = ?", (row["group_id"],))]
+    users = alerts.wanting(conn, members, "device")
+    alerts.record_place(conn, row["group_id"], users, kind, row["home_id"], row["location"], None, now)
+    push.queue(conn, None, row["group_id"], users, kind, now)
 
 
 def state_part(conn, group_id, now=None):
