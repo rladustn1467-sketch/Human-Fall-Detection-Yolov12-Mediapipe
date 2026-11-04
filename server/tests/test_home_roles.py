@@ -15,6 +15,7 @@ from pathlib import Path
 
 import accounts
 import db
+import devices
 import door_codes
 import people
 from tests.test_api_v2 import ServerCopy
@@ -120,6 +121,44 @@ class RoleApiTest(unittest.TestCase):
         self.assertEqual(sorted(data["state"]["homes"][0]["adminIds"]), sorted([a.id, b.id]))
         self.assertEqual(b.call("PATCH", f"/api/v2/devices/{device_id}", {"location": "안방"})[0], 200)
         self.assertEqual(b.call("PUT", door, {"code": "5678"})[0], 200)
+
+
+class OwnPhoneTest(RoleRulesTest):
+    """A linked member connects their own phone without an administrator (사용자 결정 2026-11-04). Spare phones and
+    changes to other devices stay with administrators."""
+
+    def code(self, user, **kw):
+        return devices.start_pairing(self.conn, user, self.home, "phone", "안방", now=self.now_ms, **kw)["code"]
+
+    now_ms = 1_800_000_000_000
+
+    def test_a_member_connects_their_own_phone(self):
+        device = devices.pair(self.conn, self.code(self.b, own_phone=True), "10.0.0.1", now=self.now_ms, mode="self")
+        row = self.conn.execute("SELECT self_user_id, created_by FROM devices WHERE id = ?", (device["deviceId"],)).fetchone()
+        self.assertEqual(tuple(row), (self.b, self.b))
+
+    def test_their_code_does_not_work_for_a_spare_phone(self):
+        code = self.code(self.b, own_phone=True)
+        err = self.assertAccountError(400, devices.pair, self.conn, code, "10.0.0.1", now=self.now_ms)
+        self.assertIn("이 휴대폰으로 감지하기", err.message)
+        self.assertEqual(self.count("devices"), 0)
+        devices.pair(self.conn, code, "10.0.0.1", now=self.now_ms, mode="self")    # 코드가 소진되지는 않음
+
+    def test_a_member_still_cannot_add_a_spare_phone(self):
+        self.assertAccountError(403, self.code, self.b)
+
+    def test_someone_not_linked_to_the_home_cannot(self):
+        self.assertAccountError(404, self.code, self.c, own_phone=True)            # 다른 그룹
+        e = self.signup(name="연결안된이", phone="010-1000-0005")
+        code = self.conn.execute("SELECT code FROM invites WHERE group_id = ?", (self.g1,)).fetchone()[0]
+        accounts.join_group(self.conn, e, code, now=self.now)
+        self.assertAccountError(403, self.code, e, own_phone=True)                 # 그룹에는 있지만 이 집에 연결 안 됨
+
+    def test_a_member_still_cannot_change_devices(self):
+        device = devices.pair(self.conn, self.code(self.b, own_phone=True), "10.0.0.1", now=self.now_ms, mode="self")
+        other = devices.pair(self.conn, self.code(self.a), "10.0.0.1", now=self.now_ms)
+        self.assertAccountError(403, devices.remove, self.conn, self.b, other["deviceId"])
+        self.assertAccountError(403, devices.update, self.conn, self.d, device["deviceId"], location="거실")
 
 
 class RoleMigrationTest(unittest.TestCase):

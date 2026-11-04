@@ -650,8 +650,8 @@
       async markNotifsRead() { applyServer(await API.readNotifs()); },
       /* 감지 기기 (devices.py): 연결 코드 → 기기가 코드를 보내 연결. 상태(정상·연결 안 됨·꺼짐)는 서버가 기기 신호로 계산.
          켜기/끄기·위치만 바꿀 수 있음 (기기 종류는 연결할 때 정해짐). 그 집에 연결된 가족만 (서버가 다시 확인) */
-      async startDevicePairing(homeId, { type, location }) {
-        const data = await API.startDevicePairing(homeId, type, location);
+      async startDevicePairing(homeId, { type, location, own }) {
+        const data = await API.startDevicePairing(homeId, type, location, own);
         applyServer(data);
         return data.pairing;
       },

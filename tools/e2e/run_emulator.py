@@ -270,6 +270,15 @@ def logout_flow(person):
     check("로그아웃하면 감지 서비스 종료", wait(lambda: not service_running(), 8))
 
 
+def member_phone_flow(server, member):
+    """A member who is not an administrator connects their own phone."""
+    start_own_phone(member)
+    c = sqlite3.connect(server.db_path, timeout=10)
+    own = c.execute("SELECT COUNT(*) FROM devices WHERE self_user_id = ?", (member.id,)).fetchone()[0]
+    c.close()
+    check("구성원 자기 폰 연결", own == 1, own)
+
+
 def removal_flow(server, person, family):
     """A person removed from the group: their own phone stops by itself, without opening the app."""
     start_own_phone(person)
@@ -304,9 +313,13 @@ def main():
         family = Person(server.base, "가족비")
         family.call("POST", "/api/v2/groups/join", {"code": invite})
         family.call("POST", "/api/v2/me/onboarded", {"onboarded": True})
+        member = Person(server.base, "구성원미")
+        member.call("POST", "/api/v2/groups/join", {"code": invite})
+        member.call("POST", "/api/v2/me/setup", {"info": {}, "home": {"mode": "existing", "id": home}})
         try:
             device_flow(server, args, target, family, home)
             phone_checks_flow(target, home)
+            member_phone_flow(server, member)
             logout_flow(target)
             removal_flow(server, target, family)
         finally:

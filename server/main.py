@@ -1285,6 +1285,7 @@ def api_v2_incident_photo(incident_id: str, photo_id: str, request: Request):
 class PairingBody(BaseModel):
     type: Any = None
     location: Any = None
+    own: Any = None         # 지금 쓰는 이 휴대폰을 연결 (그 집에 연결된 구성원도 가능)
 
 
 class DeviceUpdateBody(BaseModel):
@@ -1320,7 +1321,7 @@ def api_v2_device_pairing(home_id: str, body: PairingBody, request: Request):
     _check_origin(request)
     with db.session(DB_PATH) as conn:
         user_id = _require_user(conn, request)
-        pairing = devices.start_pairing(conn, user_id, home_id, body.type, body.location)
+        pairing = devices.start_pairing(conn, user_id, home_id, body.type, body.location, own_phone=body.own is True)
         return JSONResponse({"authenticated": True, "me_id": user_id, "pairing": pairing,
                              "state": accounts.state_for(conn, user_id)}, headers=NO_STORE)
 

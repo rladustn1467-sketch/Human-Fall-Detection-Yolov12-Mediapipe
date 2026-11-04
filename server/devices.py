@@ -86,17 +86,27 @@ def _my_device(conn, user_id, device_id, what):
 
 
 # ---- 앱: 연결 코드 · 이름/위치 · 켜기/끄기 · 삭제 ----
-def start_pairing(conn, user_id, home_id, type_, location, now=None):
-    """New pairing code for a home. Returns {code, expiresAt, type, location}."""
+def start_pairing(conn, user_id, home_id, type_, location, now=None, own_phone=False):
+    """New pairing code for a home. Returns {code, expiresAt, type, location}. Administrators add any device. own_phone:
+    a linked member connects the phone in their hand (사용자 결정 2026-11-04); that code only works for 'this phone'."""
     now = now_ms() if now is None else now
     type_ = _clean_type(type_)
     location = incidents.clean_location(location)
     with db.transaction(conn):
-        home = _linked_home(conn, user_id, home_id, "추가")
-        return _new_code(conn, home["id"], type_, location, user_id, now)
+        home = _linked_member_home(conn, user_id, home_id) if own_phone else _linked_home(conn, user_id, home_id, "추가")
+        return _new_code(conn, home["id"], type_, location, user_id, now, own_phone=own_phone)
 
 
-def _new_code(conn, home_id, type_, location, created_by, now):
+def _linked_member_home(conn, user_id, home_id):
+    import people   # people 이 accounts 를 쓰므로 함수 안에서 불러옴
+    me = people._my_group(conn, user_id)
+    home = people._group_home(conn, me, home_id)
+    if not people._is_linked(conn, home["id"], user_id):
+        raise AccountError(403, "이 집에 연결한 뒤 감지를 켤 수 있어요.", "home")
+    return home
+
+
+def _new_code(conn, home_id, type_, location, created_by, now, own_phone=False):
     """Inside a transaction: a new one-time pairing code (PAIR_MINUTES) for a home."""
     conn.execute("DELETE FROM device_pairings WHERE expires_at <= ? OR used_at IS NOT NULL", (now,))
     while True:
@@ -104,8 +114,8 @@ def _new_code(conn, home_id, type_, location, created_by, now):
         if not conn.execute("SELECT 1 FROM device_pairings WHERE code = ?", (code,)).fetchone():
             break
     expires = now + PAIR_MINUTES * 60 * 1000
-    conn.execute("""INSERT INTO device_pairings (code, home_id, type, location, created_by, created_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""", (code, home_id, type_, location, created_by, now, expires))
+    conn.execute("""INSERT INTO device_pairings (code, home_id, type, location, created_by, created_at, expires_at, own_phone)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (code, home_id, type_, location, created_by, now, expires, int(own_phone)))
     return {"code": code, "expiresAt": expires, "type": type_, "location": location}
 
 
@@ -157,6 +167,8 @@ def pair(conn, code, ip, app_version=None, now=None, mode=None):
         if not row or row["used_at"] is not None or row["expires_at"] <= now:
             accounts._record_failure(conn, key, now / 1000)
             error = AccountError(400, "만료된 연결 코드예요. 앱에서 새 코드를 받아 주세요." if row else "연결 코드를 확인해 주세요.", "code")
+        elif row["own_phone"] and mode != "self":
+            error = AccountError(400, "이 코드는 앱의 '이 휴대폰으로 감지하기'에서만 쓸 수 있어요.", "code")
         else:
             error = None
             device_id = f"d_{secrets.token_hex(8)}"

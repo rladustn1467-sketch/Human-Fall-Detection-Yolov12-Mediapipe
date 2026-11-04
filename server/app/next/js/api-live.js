@@ -106,7 +106,7 @@
     async readNotifs() { return remember(await call('POST', '/api/v2/notifications/read')); },
 
     /* ---- 감지 기기 ---- 연결 코드 응답은 { pairing: {code, expiresAt, type, location}, state, ... } */
-    async startDevicePairing(homeId, type, location) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/devices/pairing`, { type, location })); },
+    async startDevicePairing(homeId, type, location, own) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/devices/pairing`, { type, location, own: !!own })); },
     async updateDevice(id, body) { return remember(await call('PATCH', `/api/v2/devices/${encodeURIComponent(id)}`, body)); },
     async removeDevice(id) { return remember(await call('DELETE', `/api/v2/devices/${encodeURIComponent(id)}`)); }
   };

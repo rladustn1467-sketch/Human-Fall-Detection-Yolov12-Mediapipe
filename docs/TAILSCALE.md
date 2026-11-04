@@ -30,7 +30,9 @@
 
 `Tailscale-In` 규칙은 Tailscale 주소로 들어오는 **모든 포트**를 허용합니다. 이 규칙은 Tailscale 이 직접 관리하므로 고치지 않습니다. 대신 **Tailscale 접근 정책**으로 8000번만 통과시킵니다. 정책에서 막힌 패킷은 방화벽까지 오지 않습니다.
 
-Access Controls 에 넣을 내용입니다. `<운영 PC 주소>` 는 `tailscale ip -4` 로 나오는 값입니다.
+2026-11-04 적용 완료. 이 PC 의 패킷 필터가 TCP 8000번 하나뿐임을 확인했습니다.
+
+Access Controls 의 JSON editor 에 넣는 내용입니다. `<운영 PC 주소>` 는 `tailscale ip -4` 로 나오는 값입니다.
 
 ```json
 {

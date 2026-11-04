@@ -448,8 +448,10 @@ MIGRATIONS = [
         "DROP TABLE push_deliveries_v14",
         "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
     ]),
-    (16, "약관 동의 시각, 신고 결과 푸시 (accounts.py, incidents.py, push.py)", [
+    (16, "약관 동의 시각, 신고 결과 푸시, 자기 휴대폰용 연결 코드 (accounts.py, incidents.py, push.py, devices.py)", [
         "ALTER TABLE users ADD COLUMN agreed_at REAL",
+        # 구성원이 자기 휴대폰용으로 받은 연결 코드: '이 휴대폰으로 감지하기' 로만 쓸 수 있음 (devices.py)
+        "ALTER TABLE device_pairings ADD COLUMN own_phone INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE push_deliveries RENAME TO push_deliveries_v15",
         """CREATE TABLE push_deliveries (
                id              INTEGER PRIMARY KEY AUTOINCREMENT,

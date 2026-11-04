@@ -77,7 +77,7 @@
       if (DEMO.includes(key)) { api.replace(demoHtml(key, location)); return; }   // 시연용: 서버에 연결하지 않음
       let p;
       try {
-        p = await UI.busy(el, () => Act.startDevicePairing(hid, { type: self ? 'phone' : key, location }));
+        p = await UI.busy(el, () => Act.startDevicePairing(hid, { type: self ? 'phone' : key, location, own: self }));
       } catch (e) { UI.showError(e, { location: 'dc-loc' }); return; }
       if (self) { closeSheet(); await Self.open({ mode: 'self', code: p.code, signedIn: true }); return; }
       codeSheet(hid, p);
@@ -157,9 +157,7 @@
           : "이 휴대폰으로 감지하려면 먼저 홈 화면에서 '낙상 감지 켜기'를 눌러 집을 등록해 주세요.");
         return;
       }
-      const ids = linked.filter(id => Sel.isHomeAdmin(id, me));   // '이 휴대폰'도 기기 추가: 그 집의 관리자만
-      if (!ids.length) { UI.toast('이 휴대폰으로 감지하려면 이 집의 관리자에게 부탁해 주세요. 관리자만 기기를 추가할 수 있어요.'); return; }
-      locationSheet('self', ids);
+      locationSheet('self', linked);   // 자기 휴대폰은 그 집에 연결된 구성원도 연결 (공기계 추가는 관리자만)
     }
   };
 
