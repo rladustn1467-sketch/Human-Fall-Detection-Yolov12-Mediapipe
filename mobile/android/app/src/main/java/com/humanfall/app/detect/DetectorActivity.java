@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -24,6 +25,7 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -71,7 +73,9 @@ public class DetectorActivity extends AppCompatActivity {
     private TextView stateTitle, stateBody, errorText;
     private EditText codeInput;
     private Button pairButton, toggleButton, forgetButton, permissionButton, batteryButton, noticeButton;
-    private TextView phoneNotice;
+    private TextView phoneNotice, setupText;
+    private ImageView setupPreview;
+    private byte[] shownPreview;
     private LinearLayout pairBox, pairedBox;
     private boolean busy;
     private String mode;          // self | dedicated (연결된 뒤에는 연결할 때의 방식)
@@ -120,6 +124,7 @@ public class DetectorActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        DetectorRuntime.STATE.setupCheckWanted = true;
         if (link.isPaired()) startService();   // 앱으로 돌아오면 바로 상태 신호
         handler.post(tick);
     }
@@ -128,6 +133,10 @@ public class DetectorActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
+        DetectorRuntime.State st = DetectorRuntime.STATE;   // 화면을 벗어나면 만들지 않고 미리보기도 지움
+        st.setupCheckWanted = false;
+        st.setup = null;
+        st.preview = null;
     }
 
     @Override
@@ -203,6 +212,15 @@ public class DetectorActivity extends AppCompatActivity {
         card.addView(stateTitle);
         card.addView(stateBody);
         root.addView(card);
+
+        setupText = text(15, INK, true);
+        setupText.setPadding(0, dp(14), 0, dp(6));
+        root.addView(setupText);
+        setupPreview = new ImageView(this);
+        setupPreview.setAdjustViewBounds(true);
+        setupPreview.setMaxHeight(dp(220));
+        setupPreview.setContentDescription("사람과 배경을 가린 미리보기. 이 휴대폰에서만 보여요.");
+        root.addView(setupPreview);
 
         errorText = text(14, STOP, false);
         errorText.setPadding(0, dp(10), 0, 0);
@@ -359,6 +377,7 @@ public class DetectorActivity extends AppCompatActivity {
         stateBody.setText(body);
         permissionButton.setVisibility(hasCamera() ? View.GONE : View.VISIBLE);
         boolean detecting = on && hasCamera();
+        renderSetup(detecting && DetectorRuntime.cameraOk(), st);
         boolean exempt = batteryExempt(), notices = NotificationManagerCompat.from(this).areNotificationsEnabled();
         String advice = PhoneChecks.message(detecting, exempt, notices);
         phoneNotice.setText(advice);
@@ -440,6 +459,22 @@ public class DetectorActivity extends AppCompatActivity {
 
     private void startService() {
         if (!DetectionService.start(this, debugExtras)) render();
+    }
+
+    /** Where the phone stands, only while detection really runs. The preview stays on this screen. */
+    private void renderSetup(boolean running, DetectorRuntime.State st) {
+        SetupCheck.Result r = running ? st.setup : null;
+        setupText.setVisibility(r == null ? View.GONE : View.VISIBLE);
+        if (r != null) {
+            setupText.setText("설치 확인: " + SetupCheck.text(r));
+            setupText.setTextColor(r == SetupCheck.Result.GOOD ? OK : STOP);
+        }
+        byte[] jpeg = running ? st.preview : null;
+        if (jpeg != shownPreview) {
+            shownPreview = jpeg;
+            setupPreview.setImageBitmap(jpeg == null ? null : BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length));
+        }
+        setupPreview.setVisibility(jpeg == null ? View.GONE : View.VISIBLE);
     }
 
     private boolean batteryExempt() {

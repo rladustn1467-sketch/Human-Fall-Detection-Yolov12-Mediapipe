@@ -22,6 +22,11 @@ public final class DetectorRuntime {
         public volatile long lastAnalyzedAt;
         /** 카메라나 분석이 멈춰 자동으로 다시 시작하는 중 (CameraWatchdog) */
         public volatile boolean recovering;
+        /** 감지 화면을 보고 있음: 그동안만 설치 확인을 만듦 */
+        public volatile boolean setupCheckWanted;
+        public volatile SetupCheck.Result setup;
+        /** 사람을 가린 미리보기 (메모리에만, 저장·전송 안 함) */
+        public volatile byte[] preview;
         public volatile long frames;
         public volatile int persons;
         public volatile long lastFallAt;

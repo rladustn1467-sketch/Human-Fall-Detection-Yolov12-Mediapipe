@@ -127,6 +127,18 @@ def copy_frames(folder):
     return f"{mock}/video"
 
 
+def rotation_flow():
+    """The virtual accelerometer turns the phone on its side: frames follow it, with the screen's rotation locked."""
+    adb("shell", "settings", "put", "system", "accelerometer_rotation", "0")
+    before = log().count("프레임 회전")
+    adb("emu", "sensor", "set", "acceleration", "9.8:0:0")
+    check("폰을 옆으로 놓으면 방향을 알아챔", wait(lambda: "휴대폰 방향 바뀜" in log(), 12))
+    check("프레임 방향이 따라감", wait(lambda: log().count("프레임 회전") > before, 10), [l for l in log().splitlines() if "프레임 회전" in l][-2:])
+    adb("emu", "sensor", "set", "acceleration", "0:9.8:0")
+    check("다시 세우면 원래 방향", wait(lambda: log().count("휴대폰 방향 바뀜") >= 2, 12))
+    adb("shell", "settings", "put", "system", "accelerometer_rotation", "1")
+
+
 def device_flow(server, args, target, family, home):
     code = target.call("POST", f"/api/v2/homes/{home}/devices/pairing", {"type": "phone", "location": "거실"})[1]["pairing"]["code"]
     device = lambda: target.state()["devices"][0]
@@ -135,7 +147,15 @@ def device_flow(server, args, target, family, home):
     if args.frames:
         start(*pair, "--es", "mock_frames_dir", copy_frames(args.frames), "--ef", "mock_fps", str(args.fps))
         check("연결 코드로 앱 연결", wait(lambda: bool(target.state()["devices"]), 30))
-        check("녹화 영상 재생 끝", wait(lambda: "시험용 영상 끝" in log(), 240, 5))
+        seen = set()
+
+        def watch_video():
+            text = screen()
+            seen.update(k for k in ("사람이 잘 보여요", "몸 전체가 보이지 않아요", "사람이 보이지 않아요", "너무 어두워요") if k in text)
+            return "시험용 영상 끝" in log()
+
+        check("녹화 영상 재생 끝", wait(watch_video, 240, 1))
+        check("영상을 보는 동안 설치 확인이 나옴", bool(seen), seen)
         incidents = target.state()["incidents"]
         check("낙상이 서버 사고가 됨", len(incidents) == 1 and incidents[0]["status"] in ("detected", "no_response"), [i["status"] for i in incidents])
         if incidents:
@@ -161,6 +181,8 @@ def device_flow(server, args, target, family, home):
 
     check("일반 카메라: '감지 중'", wait(lambda: "감지 중" in screen(), 40), screen()[-70:])
     check("서버에 정상으로 표시", wait(lambda: device()["status"] == "ok", 25), device()["status"])
+    check("카메라 화면에 설치 확인 표시", wait(lambda: "설치 확인" in screen(), 15), screen()[-110:])
+    rotation_flow()
 
     start("--ei", "test_block_frames_seconds", "45")
     check("영상 멈춤: 자동 재시작", wait(lambda: "카메라 영상이 없어 다시 시작" in log(), 30))

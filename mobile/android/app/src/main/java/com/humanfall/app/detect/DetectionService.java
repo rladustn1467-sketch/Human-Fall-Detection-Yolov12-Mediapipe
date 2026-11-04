@@ -17,6 +17,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
+import android.view.OrientationEventListener;
 import androidx.annotation.Nullable;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -86,6 +87,10 @@ public class DetectionService extends LifecycleService {
     private final CameraWatchdog watchdog = new CameraWatchdog();
     private boolean foreground;
     private String shownNotice;
+    private OrientationEventListener orientation;
+    private ImageAnalysis cameraAnalysis;
+    private int rotation;                    // 지금 휴대폰이 놓인 방향 (Surface.ROTATION_*)
+    private int lastFrameRotation = -1;
     private volatile long testBlockFramesUntil;
     private volatile long testFailAnalysisUntil;
 
@@ -125,6 +130,18 @@ public class DetectionService extends LifecycleService {
         DetectorRuntime.STATE.serviceRunning = true;
         BootReceiver.clear(this);   // 감지를 다시 시작함: '감지가 멈춰 있어요' 알림 지움
         linkExec.scheduleWithFixedDelay(() -> main.post(this::watch), WATCH_SECONDS, WATCH_SECONDS, TimeUnit.SECONDS);
+        // 화면 회전이 잠겨 있어도 휴대폰이 놓인 방향으로 영상을 세움 (화면 방향이 아니라 센서 기준)
+        orientation = new OrientationEventListener(this) {
+            @Override
+            public void onOrientationChanged(int degrees) {
+                int next = SetupCheck.rotation(degrees, rotation);
+                if (next == rotation) return;
+                rotation = next;
+                Log.i(TAG, "휴대폰 방향 바뀜: " + next);
+                if (cameraAnalysis != null) cameraAnalysis.setTargetRotation(next);
+            }
+        };
+        if (orientation.canDetectOrientation()) orientation.enable();
     }
 
     @Override
@@ -277,12 +294,14 @@ public class DetectionService extends LifecycleService {
                                 new ResolutionStrategy(new Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)   // 밀린 프레임은 버리고 최신만
                         .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                        .setTargetRotation(rotation)
                         .build();
                 analysis.setAnalyzer(analysisExec, this::analyze);
                 CameraSelector selector = provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
                         ? CameraSelector.DEFAULT_BACK_CAMERA : CameraSelector.DEFAULT_FRONT_CAMERA;
                 provider.unbindAll();
                 provider.bindToLifecycle(this, selector, analysis);
+                cameraAnalysis = analysis;
                 DetectorRuntime.STATE.camera = "running";
                 Log.i(TAG, "카메라 감지 시작");
             } catch (Exception e) {
@@ -298,6 +317,7 @@ public class DetectionService extends LifecycleService {
     private void stopCamera() {
         boolean was = cameraWanted;
         cameraWanted = false;
+        cameraAnalysis = null;
         if (provider != null) provider.unbindAll();
         if (mockExec != null) {
             mockExec.shutdownNow();
@@ -312,10 +332,14 @@ public class DetectionService extends LifecycleService {
             if (!cameraWanted) return;
             if (BuildConfig.DEBUG && System.currentTimeMillis() < testBlockFramesUntil) return;
             Bitmap bmp = proxy.toBitmap();
-            int rotation = proxy.getImageInfo().getRotationDegrees();
-            if (rotation != 0) {
+            int degrees = proxy.getImageInfo().getRotationDegrees();
+            if (degrees != lastFrameRotation) {
+                lastFrameRotation = degrees;
+                Log.i(TAG, "프레임 회전 " + degrees + "도");
+            }
+            if (degrees != 0) {
                 Matrix m = new Matrix();
-                m.postRotate(rotation);
+                m.postRotate(degrees);
                 Bitmap rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
                 bmp.recycle();
                 bmp = rotated;
@@ -345,6 +369,7 @@ public class DetectionService extends LifecycleService {
         long began = System.nanoTime();
         try {
             if (BuildConfig.DEBUG && System.currentTimeMillis() < testFailAnalysisUntil) throw new IllegalStateException("시험용 분석 실패");
+            pipeline.setupCheckWanted = st.setupCheckWanted;
             s = pipeline.process(bmp, nowMs);
         } catch (RuntimeException | OutOfMemoryError e) {
             // 프레임 한 장의 문제로 감지 전체가 멈추지 않게 그 프레임만 건너뜀
@@ -355,6 +380,10 @@ public class DetectionService extends LifecycleService {
         }
         st.lastAnalyzedAt = System.currentTimeMillis();
         st.persons = s.persons;
+        if (s.setup != null) {
+            st.setup = s.setup;
+            st.preview = s.preview;
+        }
         // 실제로 분석한 속도 (카메라가 밀린 프레임을 버리므로 규칙이 보는 속도는 이것)
         boolean report = rate.add(System.currentTimeMillis(), (System.nanoTime() - began) / 1_000_000);
         st.fps = rate.fps();
@@ -495,6 +524,7 @@ public class DetectionService extends LifecycleService {
 
     @Override
     public void onDestroy() {
+        if (orientation != null) orientation.disable();
         stopCamera();
         DetectorRuntime.STATE.serviceRunning = false;
         DetectorRuntime.STATE.camera = "none";
