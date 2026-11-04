@@ -15,6 +15,8 @@ from fall_logic.tracker import LegacyIouTracker
 
 # FallDetector와 대시보드 설정의 기본값
 DEFAULT_ANGLE_THRESHOLD = 45
+# 낙상 처리된 사람이 낙상 자세가 아닌 채 이만큼(초) 이어지면 일어난 것으로 보고 다시 판정 (v2 FallAlertsV2 와 같은 값)
+RECOVER_SECONDS = 2.0
 
 
 class LegacyFallLogic:
@@ -24,7 +26,8 @@ class LegacyFallLogic:
         self.angle_threshold = angle_threshold
         self.tracker = LegacyIouTracker()
         self.prev_poses = []               # 모든 사람이 같이 쓰는 자세 기록 (원본과 동일)
-        self.fallen_person_ids = set()     # 한 번 낙상 처리된 ID (추적이 끊길 때만 지워짐)
+        self.fallen_person_ids = set()     # 낙상 처리된 ID (일어나거나 추적이 끊기면 지워짐)
+        self.recovering_since = {}         # 낙상 처리된 ID -> 낙상 자세가 아닌 프레임이 이어지기 시작한 시각
         # 원본은 classify_fall_type을 부르지 않아 항상 모두 False
         self.fall_types = {fall_type: False for fall_type in FALL_TYPES}
 
@@ -46,6 +49,7 @@ class LegacyFallLogic:
         for person_id in expired_ids:
             if person_id in self.fallen_person_ids:
                 self.fallen_person_ids.remove(person_id)
+            self.recovering_since.pop(person_id, None)
 
         current_person_ids = list(box_to_id.values())
 
@@ -69,6 +73,9 @@ class LegacyFallLogic:
             pose_features = None if landmarks is None else compute_legacy_features(landmarks, self.prev_poses, now)
             pose_data.append((person_id, landmarks, pose_features))
             features.append(pose_features)
+
+        for person_id, landmarks, pose_features in pose_data:
+            self._check_recovery(now, person_id, landmarks, pose_features)
 
         for person_id, landmarks, pose_features in pose_data:
             if person_id in self.fallen_person_ids:
@@ -96,3 +103,13 @@ class LegacyFallLogic:
                 falls_detected = True
 
         return falls_detected, fall_data, features
+
+    def _check_recovery(self, now, person_id, landmarks, pose_features):
+        # 관절이 없는 프레임은 일어난 근거가 아니므로 세지도 끊지도 않음
+        if person_id not in self.fallen_person_ids or not landmarks or not pose_features:
+            return
+        if is_legacy_fall_posture(pose_features, self.angle_threshold):
+            self.recovering_since.pop(person_id, None)
+        elif now - self.recovering_since.setdefault(person_id, now) >= RECOVER_SECONDS:
+            self.fallen_person_ids.remove(person_id)
+            del self.recovering_since[person_id]

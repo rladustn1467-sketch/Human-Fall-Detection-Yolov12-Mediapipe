@@ -1,5 +1,5 @@
 """LegacyFallLogic state handling: tracking, duplicate prevention and fall_data structure,
-including the known issues that the legacy mode must keep (P4 re-fall, P5 shared history, P6 duplicate IDs)."""
+including the known issues that the legacy mode must keep (P5 shared history, P6 duplicate IDs)."""
 import math
 import unittest
 
@@ -51,12 +51,42 @@ class DuplicatePreventionTest(unittest.TestCase):
         self.assertIsNone(data["fall_type"])
 
     def test_refall_while_visible_is_missed(self):
-        # 알려진 문제 P4: 일어났다가 다시 누워도 같은 ID는 다시 판정하지 않음
+        # 잠깐(2초 미만) 일어난 것은 넘어진 상태가 이어지는 것으로 봄 (자세가 흔들리는 경우)
         logic = LegacyFallLogic()
         logic.update(0.0, [WIDE_BOX], [LYING_HEAD_LEFT])
         logic.update(0.2, [WIDE_BOX], [STANDING_FRONT])
         detected, _, _ = logic.update(0.4, [WIDE_BOX], [LYING_HEAD_LEFT])
         self.assertFalse(detected)
+        self.assertEqual(logic.fallen_person_ids, {1})
+
+    def test_getting_up_for_two_seconds_allows_a_new_fall(self):
+        logic = LegacyFallLogic()
+        logic.update(0.0, [WIDE_BOX], [LYING_HEAD_LEFT])
+        logic.update(1.0, [WIDE_BOX], [STANDING_FRONT])
+        logic.update(2.9, [WIDE_BOX], [STANDING_FRONT])
+        self.assertEqual(logic.fallen_person_ids, {1})                     # 1.9초: 아직
+        logic.update(3.0, [WIDE_BOX], [STANDING_FRONT])
+        self.assertEqual(logic.fallen_person_ids, set())                   # 2초 일어남
+        detected, data, _ = logic.update(3.1, [WIDE_BOX], [LYING_HEAD_LEFT])
+        self.assertTrue(detected)                                          # 다시 넘어짐 = 다시 알림
+        self.assertEqual(data["fallen_ids"], [1])
+
+    def test_a_fall_posture_frame_restarts_the_two_seconds(self):
+        logic = LegacyFallLogic()
+        logic.update(0.0, [WIDE_BOX], [LYING_HEAD_LEFT])
+        logic.update(1.0, [WIDE_BOX], [STANDING_FRONT])
+        logic.update(2.5, [WIDE_BOX], [LYING_HEAD_LEFT])                   # 누운 자세가 끼면 처음부터
+        logic.update(3.0, [WIDE_BOX], [STANDING_FRONT])
+        logic.update(4.5, [WIDE_BOX], [STANDING_FRONT])
+        self.assertEqual(logic.fallen_person_ids, {1})
+        logic.update(5.0, [WIDE_BOX], [STANDING_FRONT])
+        self.assertEqual(logic.fallen_person_ids, set())
+
+    def test_frames_without_a_pose_do_not_count_as_getting_up(self):
+        logic = LegacyFallLogic()
+        logic.update(0.0, [WIDE_BOX], [LYING_HEAD_LEFT])
+        logic.update(1.0, [WIDE_BOX], [None])
+        logic.update(4.0, [WIDE_BOX], [None])
         self.assertEqual(logic.fallen_person_ids, {1})
 
     def test_returning_before_expiry_keeps_the_id(self):

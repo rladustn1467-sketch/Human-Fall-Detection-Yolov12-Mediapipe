@@ -164,30 +164,62 @@ def tick(conn, now=None):
         """SELECT id FROM incidents
            WHERE (status = 'detected' AND detected_at + ? <= ?)
               OR (status IN ('no_response', 'help') AND auto_report_at IS NOT NULL AND auto_report_at <= ?)
-              OR (status = 'checking' AND checked_at + ? <= ?)""",
+              OR (status = 'checking' AND checked_at + ? <= ?)
+              OR (status = 'checking' AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = incidents.checked_by
+                                                      AND u.group_id = incidents.group_id))""",
         (SELF_WINDOW_MS, now, now, CHECKING_REMIND_MS, now)).fetchall()
     for row in due:
-        with db.transaction(conn):
-            inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (row["id"],)).fetchone()
-            if inc is None or inc["status"] in TERMINAL:
-                continue
-            if inc["status"] == "detected" and inc["detected_at"] + SELF_WINDOW_MS <= now:
-                notified = inc["detected_at"] + SELF_WINDOW_MS
-                conn.execute("""UPDATE incidents SET status = 'no_response', family_notified_at = ?, auto_report_at = ?,
-                                updated_at = ? WHERE id = ?""", (notified, notified + AUTO_REPORT_MS, now, inc["id"]))
-                _log(conn, inc["id"], notified, "no_response", late=now - notified > LATE_MS)
-                _notify_family(conn, inc, "family_alert", None, now, sms=True)
-                _push(conn, inc, _family(conn, inc), "family_alert", now)
-                changed += 1
-                inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (row["id"],)).fetchone()
-            if inc["status"] in ("no_response", "help") and inc["auto_report_at"] and inc["auto_report_at"] <= now:
-                at = inc["auto_report_at"]
-                _report(conn, inc, "auto", at, _victims(conn, inc["home_id"]), "auto_reported", late=now - at > LATE_MS)
-                _notify(conn, inc, _members(conn, inc["group_id"]), "auto_reported", None, now, sms=True)
-                changed += 1
-            if inc["status"] == "checking" and _checking_reminder(conn, inc, now):
-                changed += 1
+        try:   # 사고 하나의 오류가 다른 집의 시간 처리를 막지 않게 사고마다 따로 처리
+            changed += _tick_one(conn, row["id"], now)
+        except Exception as e:
+            print(f"[incidents] 사고 {row['id']} 시간 처리 오류 (다른 사고는 계속): {type(e).__name__}: {e}")
     return changed
+
+
+def _tick_one(conn, incident_id, now):
+    changed = 0
+    with db.transaction(conn):
+        inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+        if inc is None or inc["status"] in TERMINAL:
+            return 0
+        if inc["status"] == "checking" and _checker_gone(conn, inc):
+            _give_back_to_family(conn, inc, now)
+            return 1
+        if inc["status"] == "detected" and inc["detected_at"] + SELF_WINDOW_MS <= now:
+            notified = inc["detected_at"] + SELF_WINDOW_MS
+            conn.execute("""UPDATE incidents SET status = 'no_response', family_notified_at = ?, auto_report_at = ?,
+                            updated_at = ? WHERE id = ?""", (notified, notified + AUTO_REPORT_MS, now, inc["id"]))
+            _log(conn, inc["id"], notified, "no_response", late=now - notified > LATE_MS)
+            _notify_family(conn, inc, "family_alert", None, now, sms=True)
+            _push(conn, inc, _family(conn, inc), "family_alert", now)
+            changed += 1
+            inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+        if inc["status"] in ("no_response", "help") and inc["auto_report_at"] and inc["auto_report_at"] <= now:
+            at = inc["auto_report_at"]
+            _report(conn, inc, "auto", at, _victims(conn, inc["home_id"]), "auto_reported", late=now - at > LATE_MS)
+            _notify(conn, inc, _members(conn, inc["group_id"]), "auto_reported", None, now, sms=True)
+            changed += 1
+        if inc["status"] == "checking" and _checking_reminder(conn, inc, now):
+            changed += 1
+    return changed
+
+
+def _checker_gone(conn, inc):
+    return conn.execute("SELECT 1 FROM users WHERE id = ? AND group_id = ?",
+                        (inc["checked_by"], inc["group_id"])).fetchone() is None
+
+
+def _give_back_to_family(conn, inc, now):
+    """The member who took over left the group or withdrew: the incident waits for the family again (no_response or
+    help), with a new automatic report time, so that the others can take over (감사 2026-11-04 N-1, N-5)."""
+    asked = conn.execute("SELECT 1 FROM incident_help WHERE incident_id = ? LIMIT 1", (inc["id"],)).fetchone()
+    n = conn.execute("SELECT COUNT(*) FROM incident_log WHERE incident_id = ? AND action = 'checker_left'",
+                     (inc["id"],)).fetchone()[0] + 1
+    conn.execute("""UPDATE incidents SET status = ?, checked_by = NULL, checked_at = NULL, auto_report_at = ?,
+                    updated_at = ? WHERE id = ?""", ("help" if asked else "no_response", now + AUTO_REPORT_MS, now, inc["id"]))
+    _log(conn, inc["id"], now, "checker_left", None, n)
+    _notify_family(conn, inc, "checker_left", None, now, n=n, sms=True)
+    _push(conn, inc, _family(conn, inc), "family_alert", now, n=n)   # 푸시는 '응답 없음' 문장과 같음
 
 
 def _checking_reminder(conn, inc, now):
@@ -195,7 +227,8 @@ def _checking_reminder(conn, inc, now):
     server stop only the latest reminder is sent (no burst of old ones). Returns True when one was sent."""
     due = (now - inc["checked_at"]) // CHECKING_REMIND_MS
     done = conn.execute("""SELECT COALESCE(MAX(n), 0) FROM incident_log
-                           WHERE incident_id = ? AND action = 'checking_reminder'""", (inc["id"],)).fetchone()[0]
+                           WHERE incident_id = ? AND action = 'checking_reminder' AND at >= ?""",
+                        (inc["id"], inc["checked_at"])).fetchone()[0]   # 지금 맡은 사람이 맡은 뒤의 알림만 셈
     if due <= done:
         return False
     at = inc["checked_at"] + due * CHECKING_REMIND_MS
@@ -369,6 +402,7 @@ LOG_TEXT = {
     "detected": "낙상이 감지됐어요",
     "redetected": "같은 집에서 다시 감지됐어요",
     "checking_reminder": "30분 넘게 확인 중이라 {name}님께 다시 알렸어요",
+    "checker_left": "확인하던 가족이 그룹을 떠나 다른 가족의 확인을 기다려요",
     "no_response": "60초 동안 응답이 없어 가족에게 알렸어요",
     "self_ok": "{name}님이 괜찮다고 응답했어요",
     "help": "{name}님이 도움이 필요하다고 응답했어요 ({n}번째)",

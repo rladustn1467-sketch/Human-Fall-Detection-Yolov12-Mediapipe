@@ -43,6 +43,7 @@ def make_original_detector(angle_threshold):
     det.next_person_id = 1
     det.person_trackers = {}
     det.fallen_person_ids = set()
+    det.recovering_since = {}
     return det
 
 
@@ -112,7 +113,9 @@ SCRIPT = [
     (6.3, [TALL_BOX, FAR_BOX], [STANDING_BACK, STANDING_FRONT]),
     (6.4, [TALL_BOX, (5, 5, 5, 5)], [STANDING_FRONT, None]),
     (6.5, [TALL_BOX, (5, 5, 5, 5)], [LYING_HEAD_LEFT, None]),
-] + [(7.0 + i / 10, [TALL_BOX], [STANDING_FRONT if i % 3 else LYING_HEAD_LEFT]) for i in range(20)]
+] + [(7.0 + i / 10, [TALL_BOX], [STANDING_FRONT if i % 3 else LYING_HEAD_LEFT]) for i in range(20)] + [
+    (10.0 + i / 2, [TALL_BOX], [STANDING_FRONT]) for i in range(6)     # 2초 넘게 일어남
+] + [(13.0, [TALL_BOX], [LYING_HEAD_LEFT])]                            # 다시 넘어짐
 
 
 @unittest.skipIf(fd_mod is None, f"감지용 venv가 아니라 원본 FallDetector를 불러올 수 없음 ({IMPORT_ERROR})")
@@ -139,6 +142,10 @@ class ParityTest(unittest.TestCase):
             with self.subTest(angle_threshold=threshold):
                 results, _, _ = run_side_by_side(SCRIPT, angle_threshold=threshold)
                 self.assert_same(results)
+
+    def test_script_contains_a_new_fall_after_getting_up(self):
+        results, _, _ = run_side_by_side(SCRIPT)
+        self.assertTrue(results[-1][0][0])
 
     def test_script_actually_contains_falls(self):
         # 비교가 의미 있도록 낙상 판정이 실제로 일어나는 흐름인지 확인

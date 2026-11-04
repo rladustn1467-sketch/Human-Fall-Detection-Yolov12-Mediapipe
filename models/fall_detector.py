@@ -8,6 +8,10 @@ import torch
 import os
 from utils.utils import draw_skeleton
 
+# Seconds without the fall posture after which a fallen person counts as up again (fall_logic/legacy.py)
+RECOVER_SECONDS = 2.0
+
+
 class FallDetector:
     def __init__(self, model_path='yolov12n1.pt', confidence=0.5):
         """Initialize the fall detection system.
@@ -100,7 +104,19 @@ class FallDetector:
         self.next_person_id = 1
         self.person_trackers = {}  # Dictionary to track persons across frames {id: tracker_info}
         self.fallen_person_ids = set()  # Set of IDs of persons who are currently fallen
+        self.recovering_since = {}  # Fallen ID -> time its frames without the fall posture began
         
+    def _check_recovery(self, now, person_id, landmarks, pose_features):
+        """After RECOVER_SECONDS without the fall posture the person can be detected falling again."""
+        if person_id not in self.fallen_person_ids or not landmarks or not pose_features:
+            return
+        horizontal = abs(pose_features.get("angle", 0)) >= (self.angle_threshold + 10)
+        if horizontal and pose_features.get("aspect_ratio", 2.0) < 1.5:
+            self.recovering_since.pop(person_id, None)
+        elif now - self.recovering_since.setdefault(person_id, now) >= RECOVER_SECONDS:
+            self.fallen_person_ids.remove(person_id)
+            del self.recovering_since[person_id]
+
     def detect_person(self, frame):
         """Detect persons in the frame using YOLO."""
         # Process frame with explicit device
@@ -490,6 +506,11 @@ class FallDetector:
             pose_data.append((person_id, landmarks, pose_features, (x1, y1, x2, y2)))
             if landmarks: draw_skeleton(output_frame, landmarks, self.mp_pose.POSE_CONNECTIONS, box=(x1, y1, x2, y2))
         
+        # A fallen person who got up can fall again (fall_logic/legacy.py)
+        now = time.time()
+        for person_id, landmarks, pose_features, _ in pose_data:
+            self._check_recovery(now, person_id, landmarks, pose_features)
+
         # Add better fall detection using collected pose data
         for person_id, landmarks, pose_features, (x1, y1, x2, y2) in pose_data:
             # Skip if this person is already marked as fallen
@@ -653,6 +674,7 @@ class FallDetector:
                 # Also remove from fallen_person_ids if present
                 if person_id in self.fallen_person_ids:
                     self.fallen_person_ids.remove(person_id)
+                self.recovering_since.pop(person_id, None)
         
         for person_id in ids_to_remove:
             del self.person_trackers[person_id]

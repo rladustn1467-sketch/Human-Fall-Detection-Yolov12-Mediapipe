@@ -226,10 +226,10 @@
       <h1 class="ov__title"><small>${esc(name)}</small>${title}</h1>
       <p class="ov__lead">${lead}</p>
       <span class="ov-state">${ic('clock')} ${time}</span>
-      ${inc.status === 'reported' ? `<p class="ov-note">${ic('shield-halved')}<span>${sim ? '이미 신고가 기록되어 추가로 신고할 수 없어요.' : '이미 신고가 접수되어 추가로 신고할 수 없어요.'}</span></p>` : ''}
+      ${inc.status === 'reported' ? `<p class="ov-note">${ic('shield-halved')}<span>${sim ? '모의 신고로 기록됐어요. 실제 119에는 연락되지 않았으니 필요하면 직접 전화해 주세요.' : '이미 신고가 접수되어 추가로 신고할 수 없어요.'}</span></p>` : ''}
       <div class="ov-photo">${UI.incidentPhoto(inc)}</div>
       <p class="ov__small">낙상 감지 ${UI.dateTime(inc.detectedAt)}</p>
-    </div><div class="ov__foot"><button class="btn btn--white btn--lg" style="color:#1d2f35" data-action="em.dismiss" data-id="${inc.id}">확인</button></div>`);
+    </div><div class="ov__foot">${inc.status === 'reported' ? call119('btn--white btn--lg') : ''}<button class="btn btn--white btn--lg" style="color:#1d2f35" data-action="em.dismiss" data-id="${inc.id}">확인</button></div>`);
   }
   on('em.dismiss', el => run(() => Act.dismiss(el.dataset.id, Sel.meId())));
 

@@ -68,8 +68,8 @@
       if (kind === 'tick') { UI.tick(document); Emergency.render(false); return; }
       Emergency.render(false);
       if (kind === 'session') { stopIfSignedOut(); Emergency.reset(); R.go(R.path() === '' ? '/' : R.path(), { replace: false }); }
-      if (kind === 'remote') stopIfNoGroup();
       else {
+        if (kind === 'remote') stopIfNoGroup();
         R.refresh();
         UI.refreshSheet();
       }

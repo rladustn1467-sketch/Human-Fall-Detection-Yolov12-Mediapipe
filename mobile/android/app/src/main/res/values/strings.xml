@@ -10,6 +10,7 @@
     <string name="detect_channel">낙상 감지</string>
     <string name="detect_notice_starting">감지 준비 중이에요</string>
     <string name="detect_notice_on">이 휴대폰 카메라로 낙상을 감지하고 있어요</string>
+    <string name="detect_notice_stalled">지금은 낙상을 감지하지 못하고 있어요. 앱을 열어 확인해 주세요</string>
     <string name="detect_notice_off">감지를 꺼 두었어요 (카메라를 쓰지 않아요)</string>
     <string name="detect_stopped_channel">감지 멈춤 알림</string>
     <string name="detect_stopped_title">낙상 감지가 멈춰 있어요</string>

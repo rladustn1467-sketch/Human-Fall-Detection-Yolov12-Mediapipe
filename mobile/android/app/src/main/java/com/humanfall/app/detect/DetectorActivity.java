@@ -316,10 +316,18 @@ public class DetectorActivity extends AppCompatActivity {
             title = "카메라를 사용할 수 없어요" + place;
             color = STOP;
             body = "다른 앱이 카메라를 쓰고 있는지 확인한 뒤 이 화면을 다시 열어 주세요.";
+        } else if (DetectorRuntime.analysisFailing()) {
+            title = "감지가 멈췄어요" + place;
+            color = STOP;
+            body = "카메라 화면을 분석하지 못하고 있어요. 앱을 닫고 다시 열어 주세요. 계속되면 휴대폰을 다시 시작해 주세요.";
         } else if (DetectorRuntime.cameraOk()) {
             title = "감지 중" + place;
             color = OK;
             body = "mock".equals(st.camera) && BuildConfig.DEBUG ? "시험용 사진으로 감지하고 있어요 (개발용 빌드)." : "카메라로 낙상을 감지하고 있어요.";
+        } else if (DetectorRuntime.cameraStalled()) {
+            title = "카메라 영상이 멈췄어요" + place;
+            color = STOP;
+            body = "다른 앱이 카메라를 쓰고 있는지 확인해 주세요. 계속되면 앱을 닫고 다시 열어 주세요.";
         } else {
             title = "카메라 준비 중" + place;
             color = INK;

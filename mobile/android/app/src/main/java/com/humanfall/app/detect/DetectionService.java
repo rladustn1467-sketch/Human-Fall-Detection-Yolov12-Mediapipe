@@ -161,6 +161,8 @@ public class DetectionService extends LifecycleService {
         if (cameraWanted) return;
         cameraWanted = true;
         firstFrameReported = false;
+        DetectorRuntime.STATE.lastFrameAt = 0;
+        DetectorRuntime.STATE.lastAnalyzedAt = 0;
         rate.clear();
         DetectorRuntime.STATE.fps = Double.NaN;
         DetectorRuntime.STATE.frameMs = Double.NaN;
@@ -248,6 +250,7 @@ public class DetectionService extends LifecycleService {
         st.frames++;
         if (!firstFrameReported) {
             firstFrameReported = true;
+            st.lastAnalyzedAt = st.lastFrameAt;
             beatNow();   // 카메라가 실제로 영상을 받기 시작했음을 서버에 바로 알림
             // 640 을 넘으면 분석 전에 줄임 (줄이는 방법이 PC 평가 도구와 달라 판정이 조금 달라질 수 있음, docs/fall_rule_v2.md)
             st.frameSize = bmp.getWidth() + "x" + bmp.getHeight();
@@ -265,6 +268,7 @@ public class DetectionService extends LifecycleService {
         } finally {
             bmp.recycle();
         }
+        st.lastAnalyzedAt = System.currentTimeMillis();
         st.persons = s.persons;
         // 실제로 분석한 속도 (카메라가 밀린 프레임을 버리므로 규칙이 보는 속도는 이것)
         boolean report = rate.add(System.currentTimeMillis(), (System.nanoTime() - began) / 1_000_000);
@@ -396,7 +400,9 @@ public class DetectionService extends LifecycleService {
         String c = DetectorRuntime.STATE.camera;
         String text = !link.enabled ? getString(R.string.detect_notice_off)
                 : "error".equals(c) ? getString(R.string.detect_notice_camera_error)
-                : getString(R.string.detect_notice_on);
+                : !firstFrameReported ? getString(R.string.detect_notice_starting)
+                : DetectorRuntime.cameraOk() ? getString(R.string.detect_notice_on)
+                : getString(R.string.detect_notice_stalled);
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
     }
 

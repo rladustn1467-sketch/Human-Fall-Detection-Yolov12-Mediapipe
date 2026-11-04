@@ -205,7 +205,7 @@
     if (!h) return;
     const others = me.homeIds.filter(id => id !== h.id).length;
     const ok = await UI.confirm({ title: '이 집에 연결할까요?',
-      body: `${Sel.homeName(h, me)}에 함께 사시는 경우에만 연결해 주세요. 연결하면 이 집의 감지 대상이 되고, 주소와 현관 정보를 함께 관리할 수 있어요.`
+      body: `${Sel.homeName(h, me)}에 함께 사시는 경우에만 연결해 주세요. 연결하면 이 집의 감지 대상이 되고, 주소를 함께 관리할 수 있어요. 기기와 현관 정보는 이 집의 관리자만 바꿀 수 있어요.`
         + (others ? ' 지금 연결된 집은 그대로예요. 그 집에 살지 않으면 그 집 상세에서 연결을 해제해 주세요.' : ''),
       ok: '연결하기', cancel: '취소' });
     if (!ok) return;
@@ -358,7 +358,7 @@
     if (stop.self && S) unpaired = await S.unpairAfterWithdraw();   // 이 휴대폰의 기기 기록·연결 정리
     FD.Onboarding.resetDraft();
     toast(stop.self ? (unpaired.removed ? '그룹에서 나갔어요. 이 휴대폰의 감지를 멈추고 기기 연결도 해제했어요.'
-      : '그룹에서 나갔어요. 이 휴대폰의 감지를 멈췄어요. 그룹의 기기 목록에 남은 이 기기는 가족이 삭제할 수 있어요.')
+      : '그룹에서 나갔어요. 이 휴대폰의 감지를 멈췄어요. 그룹의 기기 목록에 남은 이 기기는 그 집의 관리자가 삭제할 수 있어요.')
       : '그룹에서 나갔어요');
     R.go('/ob/group', { replace: true });
   });

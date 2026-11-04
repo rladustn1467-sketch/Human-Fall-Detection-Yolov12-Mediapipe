@@ -3,8 +3,11 @@
 Run from the project folder with the server venv:
   server\\venv\\Scripts\\python.exe -m unittest discover -s server/tests -t server
 """
+import io
 import sqlite3
 import threading
+from contextlib import redirect_stdout
+from unittest import mock
 
 import accounts
 import alerts
@@ -464,6 +467,85 @@ class LegacyDeviceTest(IncidentTestBase):
         self.assertEqual(legacy_devices.remove(self.conn, "laptop"), 1)
         self.assertIsNone(legacy_devices.incident_for_event(self.conn, "laptop", "d" * 32, False))
         self.assertEqual(self.count("incidents"), 1)
+
+
+class CheckerGoneTest(IncidentTestBase):
+    """The family member who pressed '제가 처리할게요' left: the incident goes back to the family (감사 2026-11-04 N-1, N-5)."""
+    MIN = 60 * S
+
+    def taken(self):
+        iid = self.fall()
+        incidents.tick(self.conn, now=T + 60 * S)
+        incidents.take_over(self.conn, self.b, iid, now=T + 61 * S)
+        return iid
+
+    def test_withdrawal_gives_the_incident_back_to_the_family(self):
+        iid = self.taken()
+        accounts.withdraw(self.conn, self.b, PW, IP, self.now)
+        at = T + 62 * S
+        self.assertEqual(incidents.tick(self.conn, now=at), 1)
+        row = self.inc(iid)
+        self.assertEqual((row["status"], row["checked_by"], row["checked_at"]), ("no_response", None, None))
+        self.assertEqual(row["auto_report_at"], at + incidents.AUTO_REPORT_MS)
+        incidents.take_over(self.conn, self.d, iid, now=at + S)                 # 남은 가족이 맡을 수 있음
+        self.assertEqual(self.inc(iid)["checked_by"], self.d)
+
+    def test_leaving_the_group_gives_the_incident_back_to_the_family(self):
+        iid = self.taken()
+        accounts.leave_group(self.conn, self.b)
+        incidents.tick(self.conn, now=T + 62 * S)
+        self.assertEqual(self.inc(iid)["status"], "no_response")
+        kinds = [r["kind"] for r in self.conn.execute(
+            "SELECT kind FROM notifications WHERE user_id = ? AND incident_id = ?", (self.d, iid))]
+        self.assertIn("checker_left", kinds)
+        incidents.take_over(self.conn, self.d, iid, now=T + 63 * S)
+        incidents.close_checked(self.conn, self.d, iid, now=T + 64 * S)
+        self.assertEqual(self.inc(iid)["status"], "closed")
+
+    def test_help_incident_goes_back_to_help(self):
+        iid = self.fall()
+        incidents.self_help(self.conn, self.a, iid, now=T + 5 * S)
+        incidents.take_over(self.conn, self.b, iid, now=T + 6 * S)
+        accounts.leave_group(self.conn, self.b)
+        incidents.tick(self.conn, now=T + 7 * S)
+        self.assertEqual(self.inc(iid)["status"], "help")
+
+    def test_nobody_taking_it_again_ends_in_the_automatic_simulated_report(self):
+        iid = self.taken()
+        accounts.leave_group(self.conn, self.b)
+        at = T + 62 * S
+        incidents.tick(self.conn, now=at)
+        incidents.tick(self.conn, now=at + incidents.AUTO_REPORT_MS)
+        row = self.inc(iid)
+        self.assertEqual((row["status"], row["result"]), ("reported", "auto_reported"))
+
+    def test_other_families_timers_keep_running_after_the_withdrawal(self):
+        self.taken()
+        accounts.withdraw(self.conn, self.b, PW, IP, self.now)
+        other = self.fall(at=T + 29 * self.MIN, home=self.home_c)
+        incidents.tick(self.conn, now=T + 61 * S + 30 * self.MIN)
+        self.assertEqual(self.inc(other)["status"], "no_response")
+
+    def test_an_error_on_one_incident_does_not_stop_the_others(self):
+        iid = self.taken()
+        other = self.fall(at=T + 29 * self.MIN, home=self.home_c)
+        with mock.patch.object(incidents, "_checking_reminder", side_effect=RuntimeError("시험용 오류")):
+            with redirect_stdout(io.StringIO()):
+                incidents.tick(self.conn, now=T + 61 * S + 30 * self.MIN)
+        self.assertEqual(self.inc(other)["status"], "no_response")
+        self.assertEqual(self.inc(iid)["status"], "checking")
+
+    def test_the_new_checker_gets_the_30_minute_reminder_too(self):
+        iid = self.taken()
+        incidents.tick(self.conn, now=T + 61 * S + 30 * self.MIN)                # 비에게 1번째 알림
+        accounts.leave_group(self.conn, self.b)
+        again = T + 32 * self.MIN
+        incidents.tick(self.conn, now=again)
+        incidents.take_over(self.conn, self.d, iid, now=again + S)
+        incidents.tick(self.conn, now=again + S + 30 * self.MIN)
+        kinds = [r["kind"] for r in self.conn.execute(
+            "SELECT kind FROM notifications WHERE user_id = ? AND incident_id = ?", (self.d, iid))]
+        self.assertIn("checking_reminder", kinds)
 
 
 if __name__ == "__main__":

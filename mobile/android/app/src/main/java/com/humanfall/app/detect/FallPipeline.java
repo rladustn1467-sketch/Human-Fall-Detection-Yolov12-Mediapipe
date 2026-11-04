@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * One camera frame → fall decision, in the same order as the PC dashboard:
@@ -18,6 +20,16 @@ import java.util.UUID;
 final class FallPipeline {
     static final String TAG = "FallPipeline";
     static final double FALL_COOLDOWN_SECONDS = 5.0;   // 대시보드 fall_cooldown 과 같음
+
+    /** The photo is optional: an error while making it must not lose the fall, which is then sent without a photo. */
+    static byte[] photoOrNull(Supplier<byte[]> render, Consumer<Throwable> onError) {
+        try {
+            return render.get();
+        } catch (RuntimeException | OutOfMemoryError e) {
+            onError.accept(e);
+            return null;
+        }
+    }
 
     interface Listener {
         /** A new fall: its event id (also used for retries) and the silhouette photo (null if it could not be made). */
@@ -101,8 +113,10 @@ final class FallPipeline {
 
             List<float[]> masks = new ArrayList<>();
             for (int src : people.sources) masks.add(src < pose.masks.size() ? pose.masks.get(src) : null);
+            final Bitmap shot = frame;
             byte[] jpeg = masks.contains(null) ? null
-                    : Silhouette.render(frame, people.boxes, masks, pose.maskWidth, pose.maskHeight);
+                    : photoOrNull(() -> Silhouette.render(shot, people.boxes, masks, pose.maskWidth, pose.maskHeight),
+                            e -> Log.e(TAG, "실루엣 처리 오류", e));
             if (jpeg == null) Log.w(TAG, "실루엣 처리 실패 - 사진 없이 전송");
             for (int ignored : newIds) listener.onFall(UUID.randomUUID().toString().replace("-", ""), jpeg);
             return s;

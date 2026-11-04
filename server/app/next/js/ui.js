@@ -172,7 +172,7 @@
     if (FD.MODE !== 'live') return maskPhoto(inc.id);
     const photos = inc.photos || [];
     if (!photos.length) {
-      return `<figure class="mask-photo mask-photo--none"><span>${ic('image')} 이 낙상에는 사진이 없어요</span></figure>`;
+      return `<figure class="mask-photo mask-photo--none"><span>${ic('image')} 이 낙상에는 사진이 없어요. 사진은 사고가 끝나고 14일 뒤 지워져요</span></figure>`;
     }
     const one = p => `<figure class="mask-photo mask-photo--real">
       <img src="/api/v2/incidents/${encodeURIComponent(inc.id)}/photos/${encodeURIComponent(p.id)}.jpg" alt="배경과 사람을 가린 낙상 감지 사진" loading="lazy">

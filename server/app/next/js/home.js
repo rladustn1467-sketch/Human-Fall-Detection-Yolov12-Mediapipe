@@ -161,7 +161,8 @@
       const nm = Sel.homeName(h, me);
       if (!h.address) out.push({ t: `${nm} 주소를 입력해 주세요`, a: 'todo.address', id: h.id });
       // 현관: 출입 방식이 미설정이거나 비밀번호 방식인데 미등록일 때만 (열쇠·현관 없음·잠금장치 없음은 할 일 없음)
-      ['central', 'door'].forEach(kind => {
+      // 현관은 그 집의 관리자만 바꿀 수 있으므로 구성원에게는 보이지 않음
+      if (Sel.isHomeAdmin(h.id, me)) ['central', 'door'].forEach(kind => {
         const e = UI.entrance(h, kind);
         if (!e.method) out.push({ t: `${nm} ${e.name} 출입 방식을 알려 주세요`, a: 'todo.pw', id: h.id, key: e.pwKey });
         else if (e.needsInput) out.push({ t: `${nm} ${e.name} 비밀번호를 등록해 주세요`, a: 'todo.pw', id: h.id, key: e.pwKey });
@@ -230,7 +231,7 @@
    * ---------------------------------------------------------- */
   const NOTIF_ICON = { family_alert: 'triangle-exclamation', help: 'hand', self_ok: 'user-check', checked: 'user-check',
     closed: 'circle-check', reported: 'truck-medical', auto_reported: 'truck-medical', redetected: 'person-falling',
-    checking_reminder: 'clock', member_joined: 'user-plus', member_removed: 'user-minus' };
+    checking_reminder: 'clock', checker_left: 'triangle-exclamation', member_joined: 'user-plus', member_removed: 'user-minus' };
   on('notif.open', () => R.go('/notifications'));
   on('notif.item', el => {
     const inc = Sel.incident(el.dataset.inc);

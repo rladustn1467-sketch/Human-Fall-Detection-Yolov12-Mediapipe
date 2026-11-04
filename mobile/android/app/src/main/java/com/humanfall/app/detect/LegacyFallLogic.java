@@ -1,9 +1,11 @@
 package com.humanfall.app.detect;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -12,12 +14,15 @@ import java.util.Set;
  * FallLogicGoldenTest.
  *
  * A person counts as fallen in a frame when |angle| >= angleThreshold + 10 and aspect ratio < 1.5. A fallen
- * person ID is reported once and again only after its track expired (5 s unseen), like on the PC.
+ * person ID is reported once, and again after 2 s without the fall posture (got up) or after its track expired
+ * (5 s unseen), like on the PC.
  */
 public final class LegacyFallLogic {
     public static final double DEFAULT_ANGLE_THRESHOLD = 45;
     static final double ANGLE_MARGIN = 10;
     static final double MAX_ASPECT_RATIO = 1.5;
+    /** 낙상 처리된 사람이 낙상 자세가 아닌 채 이만큼(초) 이어지면 일어난 것으로 보고 다시 판정 */
+    static final double RECOVER_SECONDS = 2.0;
     /** 원본에서 낙상 유형 분류는 쓰이지 않아 언제나 이 유형 */
     public static final String DEFAULT_FALL_TYPE = "slip_and_fall";
 
@@ -35,6 +40,7 @@ public final class LegacyFallLogic {
     private final IouTracker tracker = new IouTracker();
     private final List<PoseFeatures> prevPoses = new ArrayList<>();   // 모든 사람이 같이 쓰는 자세 기록 (원본과 동일)
     private final Set<Integer> fallenPersonIds = new HashSet<>();
+    private final Map<Integer, Double> recoveringSince = new HashMap<>();
 
     public LegacyFallLogic() {
         this(DEFAULT_ANGLE_THRESHOLD);
@@ -42,6 +48,20 @@ public final class LegacyFallLogic {
 
     public LegacyFallLogic(double angleThreshold) {
         this.angleThreshold = angleThreshold;
+    }
+
+    /** Frames without a pose are no sign of getting up: they neither count nor break the time. */
+    private void checkRecovery(double now, Integer id, double[][] lm, PoseFeatures f) {
+        if (!fallenPersonIds.contains(id) || lm == null || lm.length == 0 || f == null) return;
+        if (isFallPosture(f, angleThreshold)) {
+            recoveringSince.remove(id);
+            return;
+        }
+        recoveringSince.putIfAbsent(id, now);
+        if (now - recoveringSince.get(id) >= RECOVER_SECONDS) {
+            fallenPersonIds.remove(id);
+            recoveringSince.remove(id);
+        }
     }
 
     static boolean isFallPosture(PoseFeatures f, double angleThreshold) {
@@ -58,7 +78,10 @@ public final class LegacyFallLogic {
     public Result update(double now, List<int[]> boxes, List<double[][]> landmarks) {
         if (landmarks.size() != boxes.size()) throw new IllegalArgumentException("one landmarks entry per box");
         IouTracker.Result tr = tracker.update(boxes, now);
-        for (int id : tr.expired) fallenPersonIds.remove(id);
+        for (int id : tr.expired) {
+            fallenPersonIds.remove(id);
+            recoveringSince.remove(id);
+        }
 
         Result r = new Result();
         r.personCount = boxes.size();
@@ -71,6 +94,8 @@ public final class LegacyFallLogic {
             perBox.add(lm == null ? null : PoseFeatures.compute(lm, prevPoses, now));
         }
         r.features.addAll(perBox);
+
+        for (int i = 0; i < boxes.size(); i++) checkRecovery(now, ids.get(i), landmarks.get(i), perBox.get(i));
 
         for (int i = 0; i < boxes.size(); i++) {
             Integer personId = ids.get(i);

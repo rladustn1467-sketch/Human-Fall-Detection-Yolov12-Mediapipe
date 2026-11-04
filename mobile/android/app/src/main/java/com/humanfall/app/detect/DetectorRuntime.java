@@ -18,6 +18,8 @@ public final class DetectorRuntime {
         public volatile String camera = "none";
         public volatile String cameraError;
         public volatile long lastFrameAt;
+        /** 프레임 분석이 마지막으로 끝난 시각 (카메라가 켜진 뒤 첫 프레임 시각부터 셈) */
+        public volatile long lastAnalyzedAt;
         public volatile long frames;
         public volatile int persons;
         public volatile long lastFallAt;
@@ -29,6 +31,7 @@ public final class DetectorRuntime {
     }
 
     public static final State STATE = new State();
+    private static final long STALL_MS = 5000;
 
     public static synchronized DeviceLink link(Context context) {
         if (link == null) {
@@ -54,8 +57,30 @@ public final class DetectorRuntime {
 
     /** The camera delivered a frame in the last few seconds (sent with the status signal). */
     public static boolean cameraOk() {
+        return running() && System.currentTimeMillis() - STATE.lastFrameAt < STALL_MS && !analysisFailing();
+    }
+
+    /** Frames keep coming but none could be analysed for a while: no fall can be detected. */
+    public static boolean analysisFailing() {
+        return analysisFailing(STATE.lastFrameAt, STATE.lastAnalyzedAt);
+    }
+
+    static boolean analysisFailing(long lastFrameAt, long lastAnalyzedAt) {
+        return lastFrameAt - lastAnalyzedAt >= STALL_MS;
+    }
+
+    /** The camera delivered frames earlier but stopped (for example another app took it). */
+    public static boolean cameraStalled() {
+        return running() && cameraStalled(STATE.lastFrameAt, System.currentTimeMillis());
+    }
+
+    static boolean cameraStalled(long lastFrameAt, long now) {
+        return lastFrameAt > 0 && now - lastFrameAt >= STALL_MS;
+    }
+
+    private static boolean running() {
         String c = STATE.camera;
-        return ("running".equals(c) || "mock".equals(c)) && System.currentTimeMillis() - STATE.lastFrameAt < 5000;
+        return "running".equals(c) || "mock".equals(c);
     }
 
     private DetectorRuntime() {
