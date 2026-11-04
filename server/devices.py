@@ -256,11 +256,15 @@ def photo_id(device, event_id):
     return hashlib.sha256(f"{device['id']}:{event_id}".encode()).hexdigest()[:32]
 
 
-def incident_for_fall(conn, device, event_id, now=None):
-    """Incident of a real (not test) fall. The same event_id of the same device never makes a second incident."""
+def incident_for_fall(conn, device, event_id, now=None, age_ms=None):
+    """Incident of a real (not test) fall. The same event_id of the same device never makes a second incident.
+    age_ms: how long ago the phone saw it, when it could only send it later. At most the 60 s answer time counts: the
+    family is then alerted at once and still has their full time, instead of an automatic report on arrival."""
+    now = now_ms() if now is None else now
+    late = age_ms if isinstance(age_ms, int) and not isinstance(age_ms, bool) and age_ms > 0 else 0
     incident_id, _created = incidents.create(conn, device["home_id"], device["location"], "device",
                                              source_ref=device["id"], dedupe_key=f"device:{device['id']}:{event_id}",
-                                             now=now)
+                                             now=now, detected_at=now - min(late, incidents.SELF_WINDOW_MS))
     return incident_id
 
 

@@ -10,10 +10,16 @@
 (function () {
   window.FD_PREVENT = {
     render(container) {
+      const list = (title, items) => '<p class="group-label" style="margin-top:18px">' + title + '</p><div class="card"><ul class="prevent-list">'
+        + items.map(t => '<li>' + t + '</li>').join('') + '</ul></div>';
       container.innerHTML =
-        '<header class="tab-head"><div><h1 class="page-title">예방</h1></div></header>' +
-        '<section id="prevent-module" aria-label="예방"><div class="empty" style="margin-top:48px">'
-        + '<p><b>예방 기능을 준비하고 있어요</b></p><p style="margin-top:6px">낙상을 미리 막는 운동·생활 안내가 여기에 생길 예정이에요.</p>'
+        '<header class="tab-head"><div><h1 class="page-title">예방</h1></div></header>'
+        + '<section id="prevent-module" aria-label="예방"><div class="page page--tight">'
+        + '<p class="row__sub">넘어지는 일은 집 안에서 많이 일어나요. 할 수 있는 것부터 하나씩 살펴보세요.</p>'
+        + list('집 안 점검', ['다니는 길의 전선과 물건을 치워요.', '밀리는 깔개는 고정하거나 치워요.', '욕실에 미끄럼 방지 매트를 깔고 손잡이를 달아요.',
+          '밤에 다니는 길에 조명을 켜 둬요.', '계단은 밝게 하고 손잡이를 잡고 다녀요.'])
+        + list('생활 수칙', ['앉았다가 일어날 때는 천천히 일어나요.', '집 안에서도 미끄럽지 않은 신발이나 양말을 신어요.', '자주 쓰는 물건은 손이 닿는 곳에 둬요.',
+          '어지러운 약을 먹고 있다면 의사나 약사와 상의해요.', '시력을 정기적으로 확인해요.'])
         + '</div></section>';
     },
     destroy() { }

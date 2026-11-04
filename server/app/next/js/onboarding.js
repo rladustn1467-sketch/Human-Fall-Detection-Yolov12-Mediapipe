@@ -33,6 +33,14 @@
   /* ---------------- O-01 가입 (휴대전화 번호 + 비밀번호) ---------------- */
   // 비밀번호 규칙: 8~64자, 영문과 숫자를 모두 포함 (서버도 B단계에서 같은 규칙으로 다시 확인)
   const PW_MIN = 8, PW_MAX = 64;
+  const TERMS = [
+    ['어떤 서비스인가요', '휴대폰 카메라로 낙상을 감지해 가족에게 알려요. 모든 낙상을 감지하지는 못하고, 의료기기가 아니에요.'],
+    ['무엇을 저장하나요', '이름, 휴대전화 번호, 암호화한 비밀번호, 집 주소와 현관 정보, 낙상 기록과 알림을 저장해요. 입력하면 생년월일, 지병, 복용약도 저장해요.'],
+    ['건강 정보', '생년월일, 지병, 복용약은 낙상 대응을 위해서만 쓰고 같은 그룹 가족에게 공유돼요.'],
+    ['영상과 사진', '카메라 영상은 휴대폰 안에서만 쓰여요. 낙상이 감지되면 사람과 배경을 가린 사진만 서버로 보내고, 사고가 끝나고 14일 뒤 지워요.'],
+    ['누가 볼 수 있나요', '같은 가족 그룹만 볼 수 있어요. 현관 비밀번호는 암호화해서 저장하고 가족에게도 보이지 않아요.'],
+    ['탈퇴하면', '내 계정과 건강 정보를 지워요. 가족의 기록에 남은 내 이름은 지워져요.'],
+  ];
   const pwRule = pw => {
     if (pw.length < PW_MIN || pw.length > PW_MAX) return `비밀번호는 ${PW_MIN}~${PW_MAX}자로 입력해 주세요.`;
     if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return '비밀번호에 영문과 숫자를 모두 넣어 주세요.';
@@ -53,6 +61,7 @@
         ${field({ id: 'su-pw', label: '비밀번호', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX, hint: `${PW_MIN}자 이상, 영문과 숫자를 모두 넣어 주세요.` })}
         ${field({ id: 'su-pw2', label: '비밀번호 확인', type: 'password', autocomplete: 'new-password', maxlength: PW_MAX })}
         <label class="check"><input type="checkbox" id="su-agree"><span>서비스 이용약관과 개인정보 수집·이용에 동의해요.</span></label>
+        <button type="button" class="link-btn" data-action="terms.open">약관 내용 보기</button>
         <p class="field__error" id="su-agree-err" role="alert" hidden></p>
       </form>`,
       `<button class="btn btn--primary btn--lg btn--block" data-action="signup.submit">계속하기</button>`);
@@ -208,6 +217,9 @@
   on('ob.toAsk', () => R.go('/ob/ask'));
 
   /* ---------------- O-04 그룹 참여 ---------------- */
+  on('terms.open', () => UI.openSheet({ title: '서비스 이용약관과 개인정보 안내', html: TERMS.map(([t, b]) =>
+    `<p class="group-label" style="margin-top:10px">${t}</p><p class="row__sub">${b}</p>`).join('') }));
+
   /* QR 인식: 브라우저 내장 인식기(BarcodeDetector)가 있으면 쓰고, 없으면 jsQR (버튼을 누를 때만 불러옴).
      카메라는 보안 연결(HTTPS 또는 localhost)에서만 쓸 수 있음. 읽은 초대 코드는 기존 '그룹 참여하기'로 넘겨
      서버가 확인함 (코드·만료·시도 횟수). 카메라는 닫기·인식·화면 이동·앱 숨김 때 반드시 끔 */

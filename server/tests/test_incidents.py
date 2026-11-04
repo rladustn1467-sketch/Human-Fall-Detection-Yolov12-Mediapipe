@@ -469,6 +469,17 @@ class LegacyDeviceTest(IncidentTestBase):
         self.assertEqual(self.count("incidents"), 1)
 
 
+class RedetectionCountTest(IncidentTestBase):
+    def test_the_screen_is_told_how_many_times_it_was_detected_again(self):
+        iid = self.fall(key="a")
+        self.assertEqual(self.view(self.b, iid)["redetections"], 0)
+        incidents.tick(self.conn, now=T + 60 * S)
+        incidents.take_over(self.conn, self.b, iid, now=T + 61 * S)
+        self.fall(at=T + 90 * S, key="b")
+        self.fall(at=T + 95 * S, key="b")                        # 같은 이벤트를 다시 보내도 한 번
+        self.assertEqual(self.view(self.b, iid)["redetections"], 1)
+
+
 class NeverContacts119Test(IncidentTestBase):
     """The screens show a report as done, but nothing ever leaves for 119 (사용자 규칙): only a record is made."""
 

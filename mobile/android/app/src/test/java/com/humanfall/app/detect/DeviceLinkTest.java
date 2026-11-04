@@ -113,6 +113,17 @@ public class DeviceLinkTest {
     }
 
     @Test
+    public void aKeptFallSaysHowLateItIs() throws Exception {
+        DeviceLink link = paired(new MemStore(), new ArrayList<>());
+        failEvents = 4;
+        link.sendFallOrKeep("e9", null);
+        assertFalse(eventBodies.get(0).has("ageMs"));                       // 바로 보낼 때는 없음
+        Thread.sleep(20);
+        link.heartbeat(true);
+        assertTrue(eventBodies.get(eventBodies.size() - 1).getLong("ageMs") >= 20);
+    }
+
+    @Test
     public void statusSignalCarriesBatteryAndHeat() throws Exception {
         DeviceLink link = paired(new MemStore(), new ArrayList<>());
         DeviceLink.Health h = new DeviceLink.Health();

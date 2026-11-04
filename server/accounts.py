@@ -165,6 +165,32 @@ def signup(conn, name, phone, password, ip, now=None):
     return user_id
 
 
+def record_agreement(conn, user_id, now=None):
+    """When the person agreed to the terms on the sign-up screen."""
+    with _transaction(conn):
+        conn.execute("UPDATE users SET agreed_at = ? WHERE id = ?", (time.time() if now is None else now, user_id))
+
+
+def change_password(conn, user_id, current, new, keep_cookie, now=None):
+    """Change the password after checking the current one. Other logins end; the one in use stays."""
+    now = time.time() if now is None else now
+    me = _user(conn, user_id)
+    key = f"login-phone:{me['phone']}"
+    _check_limit(conn, key, LOGIN_LIMIT_PER_PHONE, now, "비밀번호 확인 시도가 너무 많아요. {minutes}분 뒤 다시 시도해 주세요.")
+    if not verify_password(current or "", me["password_hash"]):
+        with _transaction(conn):
+            _record_failure(conn, key, now)
+        raise AccountError(401, "지금 비밀번호가 맞지 않아요.", "password")
+    problem = password_problem(new)
+    if problem:
+        raise AccountError(400, problem, "new_password")
+    keep = _token_hash(keep_cookie) if keep_cookie else ""
+    with _transaction(conn):
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(new), user_id))
+        conn.execute("DELETE FROM auth_failures WHERE key = ?", (key,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, keep))
+
+
 def authenticate(conn, phone, password, ip, now=None):
     """Check phone + password. Returns the user id. Raises AccountError (401 wrong, 429 too many tries)."""
     now = time.time() if now is None else now

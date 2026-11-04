@@ -198,6 +198,7 @@ def _tick_one(conn, incident_id, now):
             at = inc["auto_report_at"]
             _report(conn, inc, "auto", at, _victims(conn, inc["home_id"]), "auto_reported", late=now - at > LATE_MS)
             _notify(conn, inc, _members(conn, inc["group_id"]), "auto_reported", None, now, sms=True)
+            _push(conn, inc, _members(conn, inc["group_id"]), "auto_reported", now)
             changed += 1
         if inc["status"] == "checking" and _checking_reminder(conn, inc, now):
             changed += 1
@@ -362,8 +363,9 @@ def report(conn, user_id, incident_id, target_ids=None, now=None):
             raise AccountError(400, "낙상 대상자를 다시 선택해 주세요.", "targets")
         targets = list(dict.fromkeys(chosen)) or victims
         _report(conn, inc, me["id"], now, targets, "reported")
-        _notify(conn, inc, [u for u in _members(conn, inc["group_id"]) if u != me["id"]], "reported", me["id"], now,
-                sms=True)
+        others = [u for u in _members(conn, inc["group_id"]) if u != me["id"]]
+        _notify(conn, inc, others, "reported", me["id"], now, sms=True)
+        _push(conn, inc, others, "reported", now)
 
 
 def dismiss(conn, user_id, incident_id, now=None):
@@ -431,8 +433,11 @@ def _incident_dict(conn, inc, names):
            for r in conn.execute("SELECT * FROM incident_log WHERE incident_id = ? ORDER BY at, id", (inc["id"],))]
     photos = [{"id": r["photo_id"], "at": r["at"]} for r in conn.execute(
         "SELECT photo_id, at FROM incident_photos WHERE incident_id = ? ORDER BY at, photo_id", (inc["id"],))]
+    redetections = conn.execute("SELECT COUNT(*) FROM incident_log WHERE incident_id = ? AND action = 'redetected'",
+                                (inc["id"],)).fetchone()[0]
     return {
         "id": inc["id"], "groupId": inc["group_id"], "homeId": inc["home_id"], "location": inc["location"],
+        "redetections": redetections,
         "detectedAt": inc["detected_at"], "status": inc["status"], "response": inc["response"],
         "familyNotifiedAt": inc["family_notified_at"], "helpTimes": helps, "autoReportAt": inc["auto_report_at"],
         "checkedBy": inc["checked_by"], "checkedAt": inc["checked_at"],

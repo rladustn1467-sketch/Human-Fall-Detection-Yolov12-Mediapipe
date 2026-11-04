@@ -94,6 +94,14 @@ if (shown) {
   await sleep(1500);
   cur = (await stateOf(f)).incidents.find((i) => i.id === inc.id);
   check("남은 가족이 맡을 수 있음", cur.status === "checking" && cur.checkedBy === f.id, [cur.status, cur.checkedBy]);
+  check("맡은 가족 화면에 할 일 안내", (await body()).includes("무리하게 일으키지 마세요"));
+  await ev(`document.querySelector('[data-action="em.min"]').click()`);
+  await sleep(600);
+  const closed = !(await ev(`!!document.querySelector('[data-action="em.close"]')`));
+  await a.s("POST", "/api/v2/dev/falls", { homeId: home, location: "거실" });
+  const back = await waitFor(`!!document.querySelector('[data-action="em.close"]')`, 9000);
+  check("다시 넘어지면 닫아 둔 화면이 다시 뜸", closed && back, [closed, back]);
+  check("재감지 안내 표시", (await body()).includes("다시 넘어짐이 감지됐어요"));
   check("남은 가족이 종료할 수 있음", (await f.s("POST", `/api/v2/incidents/${inc.id}/close`))[0] === 200);
 }
 
@@ -119,6 +127,21 @@ t = await body();
 check("낙상 상세에 모의 표시 없음", !/모의|실제 119/.test(t) && t.includes("119"), t.slice(0, 100));
 const notifs = (await stateOf(a)).notifs.map((n) => n.text);
 check("다른 가족 알림에 모의 표시 없음", notifs.some((x) => x.includes("119에 신고했어요")) && !notifs.some((x) => /모의|실제 119/.test(x)), notifs.slice(-1));
+await open(BASE + "/app/next/#/prevent");
+t = await body();
+check("낙상 예방 탭에 내용", t.includes("집 안 점검") && t.includes("생활 수칙"), t.slice(0, 80));
+await open(BASE + "/app/next/#/settings");
+const pw = "New" + PW;
+const changed = await ev(`(async()=>{const w=t=>new Promise(r=>setTimeout(r,t));document.querySelector('[data-action="settings.password"]').click();await w(600);
+  const s=(i,v)=>{document.getElementById(i).value=v};s('pc-cur','${PW}');s('pc-new','${pw}');s('pc-new2','${pw}');
+  document.querySelector('[data-action="pc.submit"]').click();await w(2000);return document.body.innerText.includes('비밀번호를 바꿨어요')})()`);
+check("설정에서 비밀번호 변경", changed === true);
+check("새 비밀번호로 로그인", (await person()("POST", "/api/v2/auth/login", { phone: f.phone, password: pw }))[0] === 200);
+await cdp("Network.clearBrowserCookies");
+await open(BASE + "/app/next/#/ob/signup");
+const terms = await ev(`(async()=>{const b=document.querySelector('[data-action="terms.open"]');if(!b)return '';b.click();await new Promise(r=>setTimeout(r,800));const s=document.querySelector('.sheet');return s?s.innerText:''})()`);
+check("가입 화면에서 약관 보기", terms.includes("무엇을 저장하나요") && terms.includes("의료기기가 아니에요"), terms.slice(0, 80));
+
 for (const name of ["family.js", "onboarding.js"]) {
   const src = await (await fetch(`${BASE}/app/next/js/${name}`)).text();
   check(`${name}: 119 전달 문구 유지 (의도된 문구)`, /구급대(에|에게) 전달돼요/.test(src) && /이 주소가 전달돼요/.test(src));

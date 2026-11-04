@@ -448,6 +448,37 @@ MIGRATIONS = [
         "DROP TABLE push_deliveries_v14",
         "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
     ]),
+    (16, "약관 동의 시각, 신고 결과 푸시 (accounts.py, incidents.py, push.py)", [
+        "ALTER TABLE users ADD COLUMN agreed_at REAL",
+        "ALTER TABLE push_deliveries RENAME TO push_deliveries_v15",
+        """CREATE TABLE push_deliveries (
+               id              INTEGER PRIMARY KEY AUTOINCREMENT,
+               incident_id     TEXT REFERENCES incidents(id) ON DELETE CASCADE,
+               group_id        TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+               user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+               kind            TEXT NOT NULL DEFAULT 'detected'
+                               CHECK (kind IN ('detected', 'family_alert', 'help', 'redetected', 'checking_reminder',
+                                               'reported', 'auto_reported',
+                                               'device_problem', 'device_back', 'device_low_battery')),
+               n               INTEGER NOT NULL DEFAULT 0,
+               status          TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'sent', 'simulated', 'no_token',
+                                                               'skipped', 'failed')),
+               provider        TEXT,
+               attempts        INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at INTEGER,
+               sent_count      INTEGER NOT NULL DEFAULT 0,
+               last_error      TEXT,
+               created_at      INTEGER NOT NULL,
+               updated_at      INTEGER NOT NULL,
+               UNIQUE (incident_id, user_id, kind, n)
+           )""",
+        """INSERT INTO push_deliveries (id, incident_id, group_id, user_id, kind, n, status, provider, attempts,
+                                       next_attempt_at, sent_count, last_error, created_at, updated_at)
+           SELECT id, incident_id, group_id, user_id, kind, n, status, provider, attempts,
+                  next_attempt_at, sent_count, last_error, created_at, updated_at FROM push_deliveries_v15""",
+        "DROP TABLE push_deliveries_v15",
+        "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

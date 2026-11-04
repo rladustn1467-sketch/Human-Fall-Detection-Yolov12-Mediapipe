@@ -38,8 +38,9 @@
     const all = Sel.incidentsFor(me);
     const active = all.filter(i => !Sel.isTerminal(i));
     active.forEach(inc => {
-      const m = mem[inc.id] = mem[inc.id] || { min: false, help: 0, lvl: 0 };
+      const m = mem[inc.id] = mem[inc.id] || { min: false, help: 0, lvl: 0, again: inc.redetections || 0 };
       if (inc.helpTimes.length > m.help) { m.help = inc.helpTimes.length; m.min = false; }
+      if ((inc.redetections || 0) > (m.again || 0)) { m.again = inc.redetections; m.min = false; }   // 다시 넘어짐: 닫아 둔 화면을 다시 띄움
       const lv = alertLevel(inc, me);
       if (lv > m.lvl) { m.lvl = lv; m.min = false; }
     });
@@ -81,7 +82,8 @@
       body = `<h1 class="ov__title">낙상이 감지되었어요.<br>괜찮으신가요?</h1>
         <p class="ov__lead">${esc(inc.location)}에서 낙상이 감지됐어요. 본인이거나 지금 괜찮은 상황이라면 눌러주세요</p>
         ${ring(inc.detectedAt, inc.detectedAt + 60 * S, `data-secs="${inc.detectedAt + 60 * S}"`, '초 안에 응답해 주세요')}
-        <p class="ov-peek">응답이 없으면 가족에게 알려요</p>`;
+        <p class="ov-peek">응답이 없으면 가족에게 알려요</p>
+        <p class="ov__small" style="text-align:center">아프거나 움직이기 어려우면 무리하게 일어나지 마세요.</p>`;
       foot = `${btnOk}${btnHelp}${btn119}${call119('btn--outline')}`;
     } else if (inc.status === 'checking') {
       const who = Sel.person(inc.checkedBy);
@@ -101,6 +103,15 @@
     void h; void nowT;
     return wrap(cls, `${top('긴급 · 낙상 감지', { icon: 'triangle-exclamation' })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
   }
+
+  /* 가족이 할 일: 치료 지시가 아니라 일반적인 행동 안내만 (docs/PROTOTYPE_STATUS.md 의 근거) */
+  const guide = () => `<div class="ov-note ov-note--list">${ic('hand-holding-heart')}<div><b>가족이 할 일</b><ol>
+    <li>무리하게 일으키지 마세요.</li>
+    <li>말을 걸어 의식과 호흡을 확인해 주세요.</li>
+    <li>아픈 곳을 물어봐 주세요. 머리를 부딪쳤거나 움직이기 어려워하면 그대로 두고 119에 전화해 주세요.</li>
+    <li>반응이 없거나 숨을 쉬지 않으면 바로 119에 전화해 주세요.</li>
+  </ol></div></div>`;
+  const again = inc => inc.redetections ? `<div class="ov-alert">${ic('circle-exclamation')}<span>같은 곳에서 다시 넘어짐이 감지됐어요 (${inc.redetections}번)</span></div>` : '';
 
   /* ---------- E-02 / E-03 / E-06 가족 ---------- */
   function viewFamily(inc, me) {
@@ -126,7 +137,7 @@
         <h1 class="ov__title" style="margin-top:12px"><small>${esc(name)}</small>${mine ? '확인 중이에요' : `${esc(who ? who.name : '가족')}님이<br>확인 중이에요`}</h1>
         <p class="ov__lead">${mine ? '직접 상황을 확인하고 있어요. ' : ''}감지 후 <b data-el="${inc.detectedAt}">--</b> 경과</p>
         <p class="ov__small">자동 신고는 멈췄어요. 낙상 감지 ${UI.clock(inc.detectedAt)}</p>
-        ${alertBox}${photo}`;
+        ${alertBox}${again(inc)}${photo}${guide()}`;
       const foot = `${mine ? `<button class="btn btn--white-calm btn--lg" style="background:#fff;color:var(--primary-d)" data-action="em.close" data-id="${inc.id}">${ic('circle-check')} 괜찮은 걸 확인했어요 (종료)</button>` : ''}${btn119}${call119('btn--call')}${contact}`;
       return wrap('ov--calm', `${top('낙상 알림 · 확인 중', { icon: 'user-check', close: true })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
     }
@@ -141,7 +152,8 @@
       ${isHelp && helpN ? `<div class="ov-help-times" aria-label="요청 시각">${inc.helpTimes.map(t => `<span>${UI.secLabel(t - inc.detectedAt)}</span>`).join('')}</div>` : ''}
       <div class="big-count"><p class="big-count__label">자동 신고까지</p><div class="big-count__num" data-cd="${inc.autoReportAt}">--:--</div><div class="big-count__bar"><b data-bar="${inc.familyNotifiedAt},${inc.autoReportAt}"></b></div></div>
       ${detected}
-      <p class="ov-note">${ic('clock')}<span>180초 동안 아무도 누르지 않으면 자동으로 119 신고를 해요.</span></p>`;
+      <p class="ov-note">${ic('clock')}<span>180초 동안 아무도 누르지 않으면 자동으로 119 신고를 해요.</span></p>
+      ${guide()}`;
     const foot = `<button class="btn btn--white btn--lg" data-action="em.take" data-id="${inc.id}">${ic('hand-holding-heart')} 확인했어요, 제가 처리할게요</button>${btn119}${call119('btn--call')}${contact}`;
     return wrap('', `${top(isHelp ? '긴급 · 도움 요청' : '긴급 · 낙상 알림', { close: true })}<div class="ov__body">${body}</div><div class="ov__foot">${foot}</div>`);
   }

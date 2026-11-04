@@ -471,16 +471,21 @@ public final class DeviceLink {
      * @throws IOException no network / server error after the retries (the caller may keep it for later)
      */
     public JSONObject sendFall(String eventId, boolean isTest, byte[] jpeg) throws Revoked, IOException {
-        JSONObject r = sendFallOnce(eventId, isTest, jpeg);
+        return sendFall(eventId, isTest, jpeg, 0);
+    }
+
+    /** ageMs: how long ago the fall was seen, for one that could only be sent later (0 = just now). */
+    private JSONObject sendFall(String eventId, boolean isTest, byte[] jpeg, long ageMs) throws Revoked, IOException {
+        JSONObject r = sendFallOnce(eventId, isTest, jpeg, ageMs);
         if (isTest || !enabled || !"off".equals(r.optString("ignored"))) return r;
         if (sendEnabled(true) != null) {
             if (isRevoked()) throw new Revoked("revoked");
             throw new IOException("server still has detection off");
         }
-        return sendFallOnce(eventId, isTest, jpeg);
+        return sendFallOnce(eventId, isTest, jpeg, ageMs);
     }
 
-    private JSONObject sendFallOnce(String eventId, boolean isTest, byte[] jpeg) throws Revoked, IOException {
+    private JSONObject sendFallOnce(String eventId, boolean isTest, byte[] jpeg, long ageMs) throws Revoked, IOException {
         String token = token();
         if (token == null) throw new Revoked("not paired");
         JSONObject body = new JSONObject();
@@ -489,6 +494,7 @@ public final class DeviceLink {
             body.put("fall_type", LegacyFallLogic.DEFAULT_FALL_TYPE);
             body.put("is_test", isTest);
             if (jpeg != null) body.put("image_jpeg_base64", base64(jpeg));
+            if (ageMs > 0) body.put("ageMs", ageMs);
         } catch (JSONException e) {
             throw new IOException(e);
         }
@@ -559,7 +565,7 @@ public final class DeviceLink {
         }
         for (Pending p : todo) {
             try {
-                sendFall(p.eventId, false, p.jpeg);
+                sendFall(p.eventId, false, p.jpeg, System.currentTimeMillis() - p.at);
             } catch (Revoked e) {
                 return;
             } catch (IllegalStateException e) {

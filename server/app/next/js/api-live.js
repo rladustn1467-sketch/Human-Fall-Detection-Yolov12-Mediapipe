@@ -68,7 +68,7 @@
     },
 
     /* ---- 계정 (B단계) ---- 각 함수는 { authenticated, me_id, state } 를 돌려줌 */
-    async signup({ name, phone, password }) { return remember(await call('POST', '/api/v2/auth/signup', { name, phone, password })); },
+    async signup({ name, phone, password }) { return remember(await call('POST', '/api/v2/auth/signup', { name, phone, password, agreed: true })); },
     async login({ phone, password }) { return remember(await call('POST', '/api/v2/auth/login', { phone, password })); },
     async logout() { return remember(await call('POST', '/api/v2/auth/logout')); },
     /* 가족 휴대폰 푸시 (push.js): 이 휴대폰의 알림 토큰 등록·해제 (로그인한 본인 것만, 로그인 세션에 묶임) */
@@ -91,6 +91,7 @@
       return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/members/${encodeURIComponent(memberId)}/admin`, { admin: !!admin }));
     },
     async updateHomeAddress(homeId, address) { return remember(await call('POST', `/api/v2/homes/${encodeURIComponent(homeId)}/address`, { address })); },
+    async changePassword(current, next) { return remember(await call('POST', '/api/v2/me/password', { current, new: next })); },
     async withdraw(password) { return remember(await call('POST', '/api/v2/me/withdraw', { password })); },
 
     /* ---- 현관 비밀번호 (H단계) ---- 등록·변경·삭제만. 값을 받아 오는 주소는 없음 (응답은 등록 여부만) */

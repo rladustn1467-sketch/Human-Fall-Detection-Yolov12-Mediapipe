@@ -639,6 +639,7 @@
       async setEntrance(homeId, kind, method, code) { applyServer(await API.setEntrance(homeId, kind, method, code || null)); },
       /* 회원 탈퇴: 비밀번호를 다시 확인한 뒤 서버가 한 번에 삭제 */
       async withdraw(personId, password) { applyServer(await API.withdraw(password), 'session'); },
+      async changePassword(current, next) { applyServer(await API.changePassword(current, next)); },
       /* D단계: 낙상 사고 (시간 경과·자동 신고는 서버만 처리. 119 신고는 모의 신고 기록) */
       async selfOk(id) { return incidentCall(id, 'self-ok'); },
       async selfHelp(id) { return incidentCall(id, 'help'); },

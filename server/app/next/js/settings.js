@@ -26,6 +26,7 @@
           <button class="row" data-action="settings.detector"><span class="det-dev__ic">${ic('mobile-screen')}</span><span class="row__main"><span class="row__title">이 휴대폰으로 감지하기</span><span class="row__sub" id="self-det-sub" style="display:block">${SELF_SUB}</span></span>${ic('chevron-right', 'chev')}</button>
         </div>` : ''}
         <div class="card" style="margin-top:16px">
+          ${FD.MODE === 'live' ? `<button class="row" data-action="settings.password"><span class="det-dev__ic">${ic('key')}</span><span class="row__main"><span class="row__title">비밀번호 변경</span></span></button>` : ''}
           <button class="row" data-action="settings.logout"><span class="det-dev__ic">${ic('right-from-bracket')}</span><span class="row__main"><span class="row__title">로그아웃</span></span>${ic('chevron-right', 'chev')}</button>
           <button class="row row--danger" data-action="settings.withdraw"><span class="det-dev__ic" style="background:var(--stop-soft);color:var(--stop)">${ic('user-slash')}</span><span class="row__main"><span class="row__title">회원 탈퇴</span></span>${ic('chevron-right', 'chev')}</button>
         </div>
@@ -45,6 +46,25 @@
   /* 이 휴대폰으로 감지하기 (Android 앱 안에서만): 처음 설정·기기 추가와 같은 흐름 (devices.js) */
   on('settings.detector', () => FD.DeviceConnect.self.start());
   on('settings.profile', () => R.go('/settings/profile'));
+  on('settings.password', () => openSheet({ title: '비밀번호 변경', html: `
+    ${field({ id: 'pc-cur', label: '지금 비밀번호', type: 'password', autocomplete: 'current-password', maxlength: 64 })}
+    ${field({ id: 'pc-new', label: '새 비밀번호', type: 'password', autocomplete: 'new-password', maxlength: 64, hint: '8자 이상, 영문과 숫자를 함께 써 주세요' })}
+    ${field({ id: 'pc-new2', label: '새 비밀번호 확인', type: 'password', autocomplete: 'new-password', maxlength: 64 })}
+    <p class="row__sub" style="margin:6px 0 12px">바꾸면 다른 기기에서는 다시 로그인해야 해요.</p>
+    <button class="btn btn--primary btn--lg btn--block" data-action="pc.submit">변경</button>` }));
+  on('pc.submit', async el => {
+    const v = id => document.getElementById(id).value;   // 비밀번호는 공백 포함 그대로
+    if (!v('pc-cur')) { setError('pc-cur', '지금 비밀번호를 입력해 주세요.'); return; }
+    if (v('pc-new') !== v('pc-new2')) { setError('pc-new2', '새 비밀번호가 서로 달라요. 다시 확인해 주세요.'); return; }
+    try {
+      await UI.busy(el, () => Act.changePassword(v('pc-cur'), v('pc-new')));
+    } catch (err) {
+      UI.showError(err, { password: 'pc-cur', new_password: 'pc-new' });
+      return;
+    }
+    closeSheet();
+    toast('비밀번호를 바꿨어요.');
+  });
   on('settings.notif', () => R.go('/settings/notifications'));
 
   /* ---------------- S-10 내 프로필 수정 ---------------- */

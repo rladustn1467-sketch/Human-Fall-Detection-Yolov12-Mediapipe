@@ -819,6 +819,12 @@ class SignupBody(BaseModel):
     name: str = Field(max_length=100)
     phone: str = Field(max_length=30)
     password: str = Field(max_length=200)
+    agreed: bool = False    # 가입 화면에서 약관에 동의함
+
+
+class ChangePasswordBody(BaseModel):
+    current: str = Field(max_length=200)
+    new: str = Field(max_length=200)
 
 
 class LoginBody(BaseModel):
@@ -971,6 +977,8 @@ def api_v2_signup(body: SignupBody, request: Request):
     _check_origin(request)
     with db.session(DB_PATH) as conn:
         user_id = accounts.signup(conn, body.name, body.phone, body.password, _client_ip(request))
+        if body.agreed:
+            accounts.record_agreement(conn, user_id)
         return _logged_in_response(conn, request, user_id)
 
 
@@ -1100,6 +1108,15 @@ def api_v2_push_token_delete(body: PushTokenBody, request: Request):
 
 
 # C단계: 내 정보·집·탈퇴. 모두 로그인한 사람 본인 기준이고, 집 id 는 그 사람 그룹 안에서만 찾음 (people.py)
+@app.post("/api/v2/me/password")
+def api_v2_password(body: ChangePasswordBody, request: Request):
+    _check_origin(request)
+    with db.session(DB_PATH) as conn:
+        user_id = _require_user(conn, request)
+        accounts.change_password(conn, user_id, body.current, body.new, request.cookies.get(SESSION_COOKIE))
+        return _state_response(conn, user_id)
+
+
 @app.post("/api/v2/me/profile")
 def api_v2_profile(body: ProfileBody, request: Request):
     _check_origin(request)
@@ -1295,6 +1312,7 @@ class DeviceFallBody(BaseModel):
     fall_type: str = "unknown"
     is_test: bool = False
     image_jpeg_base64: Optional[str] = Field(None, max_length=MAX_IMAGE_BYTES * 4 // 3 + 4)
+    ageMs: Any = None       # 통신이 끊겨 늦게 보낸 낙상: 기기가 본 지 얼마나 지났는지
 
 
 @app.post("/api/v2/homes/{home_id}/devices/pairing")
@@ -1373,7 +1391,7 @@ def api_v2_device_fall(body: DeviceFallBody, request: Request):
         devices.seen(conn, device)
         if not device["enabled"]:
             return JSONResponse({"ok": True, "ignored": "off"}, headers=NO_STORE)
-        incident_id = devices.incident_for_fall(conn, device, body.event_id)
+        incident_id = devices.incident_for_fall(conn, device, body.event_id, age_ms=body.ageMs)
         image_saved = False
         image = _decode_jpeg(body.image_jpeg_base64) if body.image_jpeg_base64 else None
         if image:
