@@ -1,5 +1,10 @@
 apply plugin: 'com.android.application'
 
+// 배포용 서명: 키와 비밀번호는 저장소 밖 파일에서 읽음 (mobile/RELEASE.md). 없으면 배포용 빌드가 멈춤 (checkReleaseConfig)
+def keystoreFile = file(System.getenv('FD_KEYSTORE_PROPERTIES') ?: "${rootDir}/keystore.properties")
+def keystore = new Properties()
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystore.load(it) }
+
 android {
     namespace = "com.humanfall.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +12,9 @@ android {
         applicationId "com.humanfall.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // 새 버전을 낼 때: gradlew assembleRelease -PfdVersionCode=2 -PfdVersionName=1.1
+        versionCode((project.findProperty('fdVersionCode') ?: 1) as int)
+        versionName((project.findProperty('fdVersionName') ?: '1.0') as String)
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +22,19 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (keystore.storeFile) {
+                storeFile file(keystore.storeFile)
+                storePassword keystore.storePassword
+                keyAlias keystore.keyAlias
+                keyPassword keystore.keyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (keystore.storeFile) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -94,6 +111,41 @@ tasks.register('downloadPoseModel') {
     }
 }
 preBuild.dependsOn 'downloadPoseModel'
+
+// 배포용 빌드 전에 검사: 시험용 주소나 빠진 설정으로 APK 가 만들어지지 않게 함 (문제를 모두 모아 한 번에 알려 줌)
+tasks.register('checkReleaseConfig') {
+    doLast {
+        def problems = []
+        def configFile = file('src/main/assets/capacitor.config.json')
+        def url = configFile.exists() ? new groovy.json.JsonSlurper().parse(configFile).server?.url : null
+        def host = url ? new URI(url).host : null
+        if (!url) {
+            problems << "서버 주소가 없어요. FD_SERVER_URL=https://도메인/app/next/ npm run sync:release 를 먼저 실행해 주세요."
+        } else if (!url.startsWith('https://')) {
+            problems << "서버 주소가 HTTPS 가 아니에요 ($url). 배포용 앱은 HTTP 서버에 연결할 수 없어요."
+        } else if (host in ['localhost', '127.0.0.1', '10.0.2.2']) {
+            problems << "서버 주소가 이 PC 를 가리켜요 ($url). 실제 서버 도메인을 넣어 주세요."
+        }
+        def firebase = file('google-services.json')
+        if (!firebase.exists()) {
+            problems << "google-services.json 이 없어요. 없으면 푸시 알림이 동작하지 않아요 (mobile/android/app/ 에 넣어 주세요)."
+        } else if (!firebase.text.contains('"com.humanfall.app"')) {
+            problems << "google-services.json 이 이 앱(com.humanfall.app)의 설정이 아니에요."
+        }
+        def missing = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].findAll { !keystore[it] }
+        if (!keystoreFile.exists()) {
+            problems << "서명 설정 파일이 없어요 ($keystoreFile). mobile/RELEASE.md 를 봐 주세요."
+        } else if (missing) {
+            problems << "서명 설정에 빠진 값이 있어요: ${missing.join(', ')}"
+        } else if (!file(keystore.storeFile).exists()) {
+            problems << "서명 키 파일을 찾을 수 없어요 (${keystore.storeFile})."
+        }
+        if (problems) {
+            throw new GradleException("배포용 빌드를 멈췄어요:\n - " + problems.join("\n - "))
+        }
+    }
+}
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach { dependsOn 'checkReleaseConfig' }
 
 repositories {
     flatDir{
