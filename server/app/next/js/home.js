@@ -191,8 +191,7 @@
   }
   on('hist.list', () => R.go('/history'));
 
-  // 결과 표시. 실제 모드의 119 신고는 모의 신고로만 기록됨 (reportKind 'simulation')
-  const resultLabel = x => UI.RESULT_LABEL[x.result] + (x.reportKind === 'simulation' ? ' (모의 신고)' : '');
+  const resultLabel = x => UI.RESULT_LABEL[x.result];
   function resultIcon(r) { return { self: 'user-check', family: 'people-group', reported: 'truck-medical', auto_reported: 'robot' }[r] || 'bell'; }
   function historyRow(x) {
     const h = Sel.home(x.homeId);
@@ -271,7 +270,7 @@
           <button type="button" class="${editing.type === 'homecam' ? 'is-on' : ''}" data-action="devs.type" data-type="homecam">홈캠</button>
           <button type="button" class="${editing.type === 'cctv' ? 'is-on' : ''}" data-action="devs.type" data-type="cctv">CCTV</button>
         </div>`}
-        ${UI.field({ id: 'devs-loc', label: '위치 이름', value: editing.location, maxlength: 12, onenter: 'devs.save' })}
+        ${UI.field({ id: 'devs-loc', label: '위치 이름', value: editing.location, maxlength: 20, onenter: 'devs.save' })}
         <div class="confirm__actions"><button class="btn btn--ghost btn--block" data-action="devs.cancel">취소</button><button class="btn btn--primary btn--block" data-action="devs.save">저장</button></div>`;
     }
     return `<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
@@ -410,9 +409,9 @@
     } else if (x.result === 'self') {
       const c = Sel.person(x.closedBy); ender = `${esc(c ? c.name : '본인')}님이 ${UI.hm24(x.closedAt)}에 괜찮다고 응답하고 종료`;
     } else if (x.result === 'reported') {
-      const c = Sel.person(x.reportedBy); ender = `${esc(c ? c.name : '가족')}님이 ${UI.hm24(x.reportedAt || x.closedAt)}에 119에 신고${x.reportKind === 'simulation' ? ' (모의 신고 · 실제 119 연락 없음)' : ''}`;
+      const c = Sel.person(x.reportedBy); ender = `${esc(c ? c.name : '가족')}님이 ${UI.hm24(x.reportedAt || x.closedAt)}에 119에 신고`;
     } else if (x.result === 'auto_reported') {
-      ender = `${UI.hm24(x.reportedAt || x.closedAt)}에 자동으로 119 신고${x.reportKind === 'simulation' ? ' (모의 신고 · 실제 119 연락 없음)' : ''}`;
+      ender = `${UI.hm24(x.reportedAt || x.closedAt)}에 자동으로 119 신고`;
     }
     return `${UI.subHeader('낙상 이력')}
       <div class="page page--tight">

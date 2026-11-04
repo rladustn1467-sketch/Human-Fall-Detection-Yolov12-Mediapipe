@@ -15,6 +15,7 @@ import devices
 import door_codes
 import people
 import push
+from tests.test_accounts import IP, PW
 from tests.test_incidents import IncidentTestBase
 
 T = 1_800_000_000_000
@@ -187,6 +188,23 @@ class SettingsTest(DeviceTestBase):
         self.assertIn("주소", text)
         self.assertIn("가족비", text)
 
+    def test_saving_the_same_address_tells_nobody(self):
+        self.linked()
+        people.update_home_address(self.conn, self.b, self.home, "서울 마포구 월드컵로 1", now=self.now)
+        self.conn.execute("DELETE FROM notifications")
+        people.update_home_address(self.conn, self.b, self.home, "서울 마포구 월드컵로 1", now=self.now)
+        self.assertEqual(self.kinds(self.a), [])
+
+    def test_the_text_says_what_happened_to_the_device(self):
+        self.linked()
+        people.set_admin(self.conn, self.a, self.home, self.b, True)
+        code = devices.start_pairing(self.conn, self.b, self.home, "phone", "안방", now=T)["code"]
+        other = devices.pair(self.conn, code, "10.0.0.1", now=T)["deviceId"]
+        devices.remove(self.conn, self.b, other)
+        texts = " / ".join(n["text"] for n in self.state(self.a)["notifs"])
+        self.assertIn("감지 기기를 추가했어요", texts)
+        self.assertIn("감지 기기를 삭제했어요", texts)
+
     def test_the_setting_turns_home_notices_off(self):
         self.linked()
         self.set_pref(self.a, "home", False)
@@ -299,6 +317,25 @@ class RemovedPersonDeviceTest(DeviceTestBase):
         self.assertEqual(self.ids(), [spare])
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM devices WHERE id = ?", (own,)).fetchone()[0], 0)
 
+    def test_leaving_from_another_browser_removes_the_own_phone_too(self):
+        own = self.pair("안방", mode="self")
+        spare = self.pair("복도")
+        accounts.leave_group(self.conn, self.a)
+        self.assertEqual(self.ids(), [spare])
+        self.assertFalse(self.conn.execute("SELECT 1 FROM devices WHERE id = ?", (own,)).fetchone())
+
+    def test_withdrawing_from_another_browser_removes_the_own_phone_too(self):
+        self.pair("안방", mode="self")
+        spare = self.pair("복도")
+        accounts.withdraw(self.conn, self.a, PW, IP, self.now)
+        self.assertEqual(self.ids(), [spare])
+
+    def test_an_unused_pairing_code_dies_with_its_person(self):
+        code = devices.start_pairing(self.conn, self.a, self.home, "phone", "안방", now=T)["code"]
+        accounts.remove_member(self.conn, self.b, self.a, now=self.now)
+        with self.assertRaises(accounts.AccountError):
+            devices.pair(self.conn, code, "10.0.0.1", now=T + 1000)
+
     def test_old_devices_without_the_mark_stay(self):
         accounts.remove_member(self.conn, self.b, self.a, now=self.now)
         self.assertEqual(self.row()["id"], self.device_id)
@@ -311,6 +348,17 @@ class RemovedPersonDeviceTest(DeviceTestBase):
     def test_a_phone_that_paired_with_an_unknown_mode_is_not_marked(self):
         self.pair("안방", mode="other")
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM devices WHERE self_user_id IS NOT NULL").fetchone()[0], 0)
+
+
+class WithdrawnNameTest(DeviceTestBase):
+    def test_the_group_no_longer_carries_the_name_of_who_made_it(self):
+        accounts.withdraw(self.conn, self.a, PW, IP, self.now)
+        self.assertEqual(self.state(self.b)["groups"][0]["name"], "우리 가족")
+        stored = self.conn.execute("SELECT name FROM groups WHERE id = ?", (self.g1,)).fetchone()[0]
+        self.assertNotIn("가족에이", stored)
+
+    def test_while_the_maker_stays_the_name_stays(self):
+        self.assertIn("가족에이", self.state(self.b)["groups"][0]["name"])
 
 
 class MigrationTest(unittest.TestCase):

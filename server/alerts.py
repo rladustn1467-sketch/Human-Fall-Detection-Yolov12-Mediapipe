@@ -28,8 +28,8 @@ NOTIF_TEXT = {
     "self_ok": "{home} · {loc}: {name}님이 괜찮다고 응답했어요",
     "checked": "{home} · {loc}: {name}님이 확인하고 있어요",
     "closed": "{home} · {loc}: {name}님이 괜찮은 것을 확인하고 종료했어요",
-    "reported": "{home} · {loc}: {name}님이 119 신고를 기록했어요 (모의 신고)",
-    "auto_reported": "{home} · {loc}: 자동 119 신고가 기록됐어요 (모의 신고)",
+    "reported": "{home} · {loc}: {name}님이 119에 신고했어요",
+    "auto_reported": "{home} · {loc}: 아무도 확인하지 않아 자동으로 119에 신고했어요",
     "redetected": "{home} · {loc}: 확인 중인 사고에서 다시 넘어짐이 감지됐어요",
     "checking_reminder": "{home} · {loc}: 아직 확인 중인 사고예요. 확인을 마치면 종료해 주세요",
     "checker_left": "{home} · {loc}: 확인하던 가족이 그룹을 떠났어요. 다른 가족이 확인해 주세요",
@@ -40,7 +40,7 @@ NOTIF_TEXT = {
     "device_problem": "{home} · {loc}: 감지 기기가 멈췄어요. 기기를 확인해 주세요",
     "device_back": "{home} · {loc}: 감지 기기가 다시 연결됐어요",
     "device_low_battery": "{home} · {loc}: 감지 기기의 배터리가 얼마 남지 않았어요. 충전기를 꽂아 주세요",
-    "home_changed": "{home}: {name}님이 {loc} 바꿨어요",
+    "home_changed": "{home}: {name}님이 {loc}",
 }
 # 문자 문장 (이름·건강 정보·주소는 넣지 않음)
 SMS_TEXT = {

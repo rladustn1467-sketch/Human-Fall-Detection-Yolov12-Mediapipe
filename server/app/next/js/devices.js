@@ -64,7 +64,7 @@
       ${self ? `<p class="row__sub" style="margin-bottom:16px">이 휴대폰의 카메라로 낙상을 감지해요. 로그인한 계정으로 바로 연결돼서 연결 코드를 입력하지 않아도 돼요.</p>` : ''}
       ${homes.length > 1 ? `<div class="label">감지할 집</div>
       <div class="segmented" style="margin-bottom:16px">${homes.map(h => `<button type="button" class="${h.id === hid ? 'is-on' : ''}" data-action="dc.home" data-id="${h.id}">${esc(Sel.homeName(h, me))}</button>`).join('')}</div>` : ''}
-      ${field({ id: 'dc-loc', label: self ? '휴대폰을 둘 위치' : '위치 이름', placeholder: '예) 안방, 거실', maxlength: 12, value: (document.getElementById('dc-loc') && document.getElementById('dc-loc').value) || '', onenter: 'dc.submit' })}
+      ${field({ id: 'dc-loc', label: self ? '휴대폰을 둘 위치' : '위치 이름', placeholder: '예) 안방, 거실', maxlength: 20, value: (document.getElementById('dc-loc') && document.getElementById('dc-loc').value) || '', onenter: 'dc.submit' })}
       <div class="chips" style="margin:-6px 0 18px">${LOCS.map(l => `<button type="button" class="chip" data-action="dc.loc" data-loc="${l}">${l}</button>`).join('')}</div>
       ${self ? `<div class="notice">${ic('circle-info')}<span>감지하는 동안에는 휴대폰을 낙상을 볼 수 있는 곳에 세워 두고 충전기를 꽂아 두세요. 다음 화면에서 카메라 권한을 허용하면 감지를 시작해요.</span></div>` : ''}
       <button class="btn btn--primary btn--lg btn--block" style="margin-top:16px" data-action="dc.submit">${self ? '연결하고 감지 시작' : '연결 코드 받기'}</button>`;

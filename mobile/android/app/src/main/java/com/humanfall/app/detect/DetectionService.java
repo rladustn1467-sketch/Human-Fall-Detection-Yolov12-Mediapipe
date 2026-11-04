@@ -86,6 +86,7 @@ public class DetectionService extends LifecycleService {
     private final FrameRate rate = new FrameRate();
     private final CameraWatchdog watchdog = new CameraWatchdog();
     private boolean foreground;
+    private boolean destroyed;
     private String shownNotice;
     private OrientationEventListener orientation;
     private ImageAnalysis cameraAnalysis;
@@ -190,6 +191,7 @@ public class DetectionService extends LifecycleService {
             Log.e(TAG, "상태 신호 처리 오류 (다음 신호는 계속)", e);   // 여기서 멈추면 서버에 연결 끊김으로 남음
         } finally {
             synchronized (this) {
+                if (nextBeat != null) nextBeat.cancel(false);   // 그사이 beatNow 가 잡은 예약과 겹치지 않게 하나만
                 if (!linkExec.isShutdown()) nextBeat = linkExec.schedule(this::beat, next, TimeUnit.SECONDS);
             }
         }
@@ -197,6 +199,7 @@ public class DetectionService extends LifecycleService {
 
     /** Main thread: camera on/off as the server says; stop when the device was deleted in the app. */
     private void followServer() {
+        if (destroyed) return;
         if (!link.isPaired()) {
             Log.i(TAG, "기기 연결이 없어 감지를 멈춤 (해제됨=" + link.isRevoked() + ")");
             stopCamera();
@@ -204,12 +207,16 @@ public class DetectionService extends LifecycleService {
             return;
         }
         if (link.enabled) startCamera();   // 이 기기에서 정한 값대로 (서버 값으로 켜지지 않음)
-        else stopCamera();
+        else {
+            stopCamera();
+            BootReceiver.clear(this);      // 일부러 껐으면 '감지가 멈췄어요' 알림은 필요 없음
+        }
         updateNotification();
     }
 
     /** Main thread, every few seconds: restart the camera or the analysis when they stopped (CameraWatchdog). */
     private void watch() {
+        if (destroyed) return;
         if (cameraWanted && mockDir == null) {
             DetectorRuntime.State st = DetectorRuntime.STATE;
             CameraWatchdog.Action action = watchdog.check(System.currentTimeMillis(), st.lastFrameAt, st.lastAnalyzedAt);
@@ -251,7 +258,9 @@ public class DetectionService extends LifecycleService {
         pipeline = null;
         analysisExec.execute(() -> {   // 분석 중인 프레임이 끝난 뒤 닫고 새로 만듦
             if (old != null) old.close();
-            main.post(this::startCamera);
+            main.post(() -> {
+                if (!destroyed && link.isPaired() && link.enabled) startCamera();   // 그사이 감지를 껐으면 켜지 않음
+            });
         });
     }
 
@@ -524,6 +533,8 @@ public class DetectionService extends LifecycleService {
 
     @Override
     public void onDestroy() {
+        destroyed = true;
+        if (!link.enabled || !link.isPaired()) BootReceiver.clear(this);
         if (orientation != null) orientation.disable();
         stopCamera();
         DetectorRuntime.STATE.serviceRunning = false;

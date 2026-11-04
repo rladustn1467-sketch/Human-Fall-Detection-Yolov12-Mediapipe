@@ -84,11 +84,11 @@ HOME_INFO = report119.HomeInfo(
     building_door_code=os.environ.get("BUILDING_DOOR_CODE", "").strip(),
     contact=os.environ.get("REPORT_CONTACT", "").strip(),
 )
-# 신고 기록 상세(주소·현관 비번·의료 정보) 페이지 접근 범위: anywhere(토큰만 있으면 어디서나, 기본) / local(이 PC에서만)
-REPORT_PAGE_LOCAL_ONLY = os.environ.get("REPORT_PAGE_ACCESS", "").strip().lower() == "local"
+# 신고 기록 상세(주소·현관 비번·의료 정보) 페이지 접근 범위: local(이 PC에서만, 기본) / anywhere(토큰만 있으면 어디서나)
+REPORT_PAGE_LOCAL_ONLY = os.environ.get("REPORT_PAGE_ACCESS", "").strip().lower() != "anywhere"
 # 신고 완료 알림의 '상세 보기' 버튼: 누른 보호자의 텔레그램 대화창에 신고 상세(주소·현관 비번·의료 정보)를 답장.
-# 진짜 정보를 넣을 때는 false 로 끄세요 (텔레그램에 보낸 내용은 텔레그램 서버와 휴대폰에 남습니다)
-ESCALATION.show_detail = os.environ.get("SHOW_DETAIL_IN_TELEGRAM", "true").strip().lower() not in ("false", "0", "off", "no")
+# 기본은 꺼짐. 켜려면 true (텔레그램에 보낸 내용은 텔레그램 서버와 휴대폰에 남습니다)
+ESCALATION.show_detail = os.environ.get("SHOW_DETAIL_IN_TELEGRAM", "").strip().lower() in ("true", "1", "on", "yes")
 # 휴대폰에서 열리는 서버 주소 (예: https://example.com). 있을 때만 신고 완료 알림에 웹 링크를 붙임
 ESCALATION.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
 MAX_IMAGE_BYTES = 1_000_000  # 디코딩 후 최대 1MB
@@ -576,10 +576,10 @@ def config_warnings(env):
         out.append("FCM_SERVICE_ACCOUNT_FILE 이 없어 휴대폰 푸시 알림이 안 가요")
     elif not Path(fcm).is_file():
         out.append("FCM_SERVICE_ACCOUNT_FILE 의 파일을 찾을 수 없어 휴대폰 푸시 알림이 안 가요")
-    if get("TELEGRAM_BOT_TOKEN") and get("SHOW_DETAIL_IN_TELEGRAM").lower() not in ("false", "0", "off", "no"):
+    if get("TELEGRAM_BOT_TOKEN") and get("SHOW_DETAIL_IN_TELEGRAM").lower() in ("true", "1", "on", "yes"):
         out.append("SHOW_DETAIL_IN_TELEGRAM 이 켜져 있어 신고 상세(주소·현관 비밀번호·의료 정보)가 텔레그램으로 갈 수 있어요")
-    if get("REPORT_PAGE_ACCESS").lower() != "local":
-        out.append("REPORT_PAGE_ACCESS 가 local 이 아니라 신고 기록 페이지가 이 PC 밖에서도 열려요")
+    if get("REPORT_PAGE_ACCESS").lower() == "anywhere":
+        out.append("REPORT_PAGE_ACCESS 가 anywhere 라서 신고 기록 페이지가 이 PC 밖에서도 열려요")
     for key in ("FD_DEV_TOOLS", "FD_DEV_DEVICES"):
         if get(key) == "1":
             out.append(f"{key} 가 켜져 있어요 (개발·시험 서버에서만 켜세요)")

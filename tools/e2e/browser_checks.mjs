@@ -102,14 +102,23 @@ await f.s("POST", `/api/v2/incidents/${inc.id}/dismiss`);
 await fall();
 await sleep(2200);
 inc = (await stateOf(a)).incidents.find((i) => i.status === "no_response");
-check("모의 신고 기록", (await f.s("POST", `/api/v2/incidents/${inc.id}/report`, { targets: [] }))[0] === 200);
+check("119 신고 기록", (await f.s("POST", `/api/v2/incidents/${inc.id}/report`, { targets: [] }))[0] === 200);
 await browserAs(f, "#/");
 await waitFor(`!!document.querySelector('[data-call119]')`, 9000);
 const link = await ev(`(() => { const x = document.querySelector('[data-call119]'); return x ? x.getAttribute('href') : null })()`);
-check("모의 신고 뒤 119 전화 링크 (href 만 확인)", link === "tel:119", link);
+check("신고 뒤 119 전화 링크 (href 만 확인)", link === "tel:119", link);
 t = await body();
-check("실제 119에 연락되지 않았다는 안내", t.includes("실제 119에는 연락되지 않았으니"));
-
+check("신고 화면에 모의 표시 없음", !/모의|실제 119/.test(t) && t.includes("이미 신고가 접수되어"));
+await ev(`document.querySelector('[data-action="em.dismiss"]').click()`);
+await sleep(800);
+await open(BASE + "/app/next/#/history");
+t = await body();
+check("낙상 이력에 모의 표시 없음", !/모의|실제 119/.test(t) && t.includes("신고됨"), t.slice(0, 100));
+await open(BASE + `/app/next/#/history/${inc.id}`);
+t = await body();
+check("낙상 상세에 모의 표시 없음", !/모의|실제 119/.test(t) && t.includes("119"), t.slice(0, 100));
+const notifs = (await stateOf(a)).notifs.map((n) => n.text);
+check("다른 가족 알림에 모의 표시 없음", notifs.some((x) => x.includes("119에 신고했어요")) && !notifs.some((x) => /모의|실제 119/.test(x)), notifs.slice(-1));
 for (const name of ["family.js", "onboarding.js"]) {
   const src = await (await fetch(`${BASE}/app/next/js/${name}`)).text();
   check(`${name}: 119 전달 문구 유지 (의도된 문구)`, /구급대(에|에게) 전달돼요/.test(src) && /이 주소가 전달돼요/.test(src));

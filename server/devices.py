@@ -139,7 +139,7 @@ def remove(conn, user_id, device_id):
     with db.transaction(conn):
         row = _my_device(conn, user_id, device_id, "삭제")
         conn.execute("DELETE FROM devices WHERE id = ?", (row["id"],))
-        alerts.tell_home(conn, row["home_id"], user_id, "감지 기기를", now_ms())
+        alerts.tell_home(conn, row["home_id"], user_id, "감지 기기를 삭제했어요", now_ms())
 
 
 # ---- 기기: 연결 · 인증 · 상태 신호 · 낙상 ----
@@ -168,7 +168,7 @@ def pair(conn, code, ip, app_version=None, now=None, mode=None):
                           _token_hash(token), row["created_by"], now, _clean_version(app_version),
                           row["created_by"] if mode == "self" else None))
             conn.execute("UPDATE device_pairings SET used_at = ?, device_id = ? WHERE code = ?", (now, device_id, code))
-            alerts.tell_home(conn, row["home_id"], row["created_by"], "감지 기기를", now)
+            alerts.tell_home(conn, row["home_id"], row["created_by"], "감지 기기를 추가했어요", now)
     if error:
         raise error
     return {"deviceId": device_id, "deviceToken": token, "type": row["type"], "location": row["location"],

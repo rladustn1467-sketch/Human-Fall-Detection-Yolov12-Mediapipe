@@ -776,7 +776,7 @@
       <div class="segmented" style="margin-bottom:16px">
         ${types.map(t => `<button type="button" class="${type === t ? 'is-on' : ''}" data-action="ds.type" data-type="${t}">${esc(UI.DEVICE_TYPE[t])}</button>`).join('')}
       </div>
-      ${field({ id: 'ds-loc', label: '위치 이름', placeholder: '예) 안방, 거실', maxlength: 12, value: (document.getElementById('ds-loc') && document.getElementById('ds-loc').value) || (o.value && o.value.location) || '', onenter: 'ds.submit' })}
+      ${field({ id: 'ds-loc', label: '위치 이름', placeholder: '예) 안방, 거실', maxlength: 20, value: (document.getElementById('ds-loc') && document.getElementById('ds-loc').value) || (o.value && o.value.location) || '', onenter: 'ds.submit' })}
       <div class="chips" style="margin:-6px 0 18px">${locs.map(l => `<button type="button" class="chip" data-action="ds.loc" data-loc="${l}">${l}</button>`).join('')}</div>
       <button class="btn btn--primary btn--lg btn--block" data-action="ds.submit">${esc(o.submit || '연결하기')}</button>`;
     const api = openSheet({ title: o.title, html: html() });

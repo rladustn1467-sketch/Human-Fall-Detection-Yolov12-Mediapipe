@@ -308,6 +308,7 @@ public class DetectorActivity extends AppCompatActivity {
         pairButton.setEnabled(!busy);
         toggleButton.setEnabled(!busy);
         if (!paired) {
+            renderSetup(false, DetectorRuntime.STATE);   // 연결이 끊기면 설치 확인도 지움
             // self: 코드는 앱이 넘겨 줌 (입력 칸 없음). 실패하면 설정에서 다시 시작
             pairBox.setVisibility(self() ? View.GONE : View.VISIBLE);
             String again = self() ? "앱의 설정에서 '이 휴대폰으로 감지하기'를 다시 눌러 주세요." : HOW_TO_GET_CODE;
@@ -489,7 +490,7 @@ public class DetectorActivity extends AppCompatActivity {
         try {
             startActivity(ask);
         } catch (ActivityNotFoundException e) {   // 이 화면이 없는 휴대폰: 배터리 설정 목록을 열어 줌
-            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            openSettings(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
         }
     }
 
@@ -501,7 +502,16 @@ public class DetectorActivity extends AppCompatActivity {
             return;
         }
         // 한 번 거절했으면 설정 화면에서만 허용할 수 있음
-        startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+        openSettings(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+    }
+
+    /** That settings screen, or the app's own settings on phones that do not have it. */
+    private void openSettings(Intent screen) {
+        try {
+            startActivity(screen);
+        } catch (ActivityNotFoundException e) {
+            startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", getPackageName(), null)));
+        }
     }
 
     private void askCamera() {

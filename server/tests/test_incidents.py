@@ -110,8 +110,8 @@ class TimeTest(IncidentTestBase):
         self.assertEqual((v["status"], v["result"], v["reportKind"], v["reportedBy"], v["reportedAt"], v["closedAt"],
                           v["response"], v["autoReportAt"], v["reportedTargetIds"]),
                          ("reported", "auto_reported", "simulation", "auto", T + 240 * S, T + 240 * S, "none", None, [self.a]))
-        self.assertIn("모의 신고", v["log"][-1]["text"])
-        self.assertIn("실제 119에는 연락하지 않았어요", v["log"][-1]["text"])
+        self.assertIn("119에 신고했어요", v["log"][-1]["text"])
+        self.assertNotIn("모의", v["log"][-1]["text"])           # 화면에 표시하지 않음 (사용자 결정 2026-11-04)
         self.assertEqual(self.kinds(self.a), ["auto_reported"])
         self.assertEqual(self.kinds(self.b), ["family_alert", "auto_reported"])
         self.assertEqual(incidents.tick(self.conn, T + 999 * S), 0)       # 끝난 사고는 그대로
@@ -194,7 +194,7 @@ class ActionTest(IncidentTestBase):
         v = self.view(self.a, iid)
         self.assertEqual((v["status"], v["result"], v["reportKind"], v["reportedBy"], v["reportedTargetIds"]),
                          ("reported", "reported", "simulation", self.b, [self.a]))
-        self.assertIn("모의 신고", v["log"][-1]["text"])
+        self.assertIn("119에 신고했어요", v["log"][-1]["text"])
         self.assertAccountError(409, incidents.report, self.conn, self.d, iid, [], now=T + 6 * S)   # 중복 신고 없음
         self.assertEqual(self.count("incidents"), 1)
         self.assertEqual([d["kind"] for d in self.deliveries()], ["reported", "reported"])   # 에이·디에게 (신고한 비 제외)
@@ -467,6 +467,41 @@ class LegacyDeviceTest(IncidentTestBase):
         self.assertEqual(legacy_devices.remove(self.conn, "laptop"), 1)
         self.assertIsNone(legacy_devices.incident_for_event(self.conn, "laptop", "d" * 32, False))
         self.assertEqual(self.count("incidents"), 1)
+
+
+class NeverContacts119Test(IncidentTestBase):
+    """The screens show a report as done, but nothing ever leaves for 119 (사용자 규칙): only a record is made."""
+
+    def no_network(self):
+        return (mock.patch("urllib.request.urlopen", side_effect=AssertionError("외부 연결 시도")),
+                mock.patch("socket.create_connection", side_effect=AssertionError("외부 연결 시도")),
+                mock.patch("http.client.HTTPConnection.connect", side_effect=AssertionError("외부 연결 시도")))
+
+    def test_a_report_by_the_family_only_makes_a_record(self):
+        iid = self.fall()
+        incidents.tick(self.conn, now=T + 60 * S)
+        a, b, c = self.no_network()
+        with a, b, c:
+            incidents.report(self.conn, self.b, iid, now=T + 61 * S)
+        row = self.inc(iid)
+        self.assertEqual((row["status"], row["report_kind"]), ("reported", "simulation"))
+
+    def test_the_automatic_report_only_makes_a_record(self):
+        iid = self.fall()
+        incidents.tick(self.conn, now=T + 60 * S)
+        a, b, c = self.no_network()
+        with a, b, c:
+            incidents.tick(self.conn, now=T + 60 * S + incidents.AUTO_REPORT_MS)
+        row = self.inc(iid)
+        self.assertEqual((row["result"], row["report_kind"]), ("auto_reported", "simulation"))
+
+    def test_no_server_code_can_reach_119(self):
+        # 119 로 나가는 전송 채널이 없음: 알림 채널은 앱·문자(모의)·텔레그램·푸시뿐이고, 받는 사람은 가족뿐
+        from pathlib import Path
+        for path in Path(alerts.__file__).parent.glob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"https?://[^\s\"']*119", path.name)
+            self.assertNotRegex(text, r"tel:\s*\+?\d*119", path.name)
 
 
 class CheckerGoneTest(IncidentTestBase):

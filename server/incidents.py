@@ -31,7 +31,7 @@ OPEN_STATUSES = ("detected", "no_response", "help", "checking")
 LOCATION_MAX = 20
 STATE_INCIDENT_LIMIT = 200  # 화면에 보내는 사고 수 (진행 중 + 최근 것)
 STATE_NOTIF_LIMIT = 60
-REPORT_KIND = "simulation"  # 실제 119 신고 기능은 없음
+REPORT_KIND = "simulation"  # 실제 119 신고 기능은 없음. 기록만 남기고 어디에도 연락하지 않음 (화면에는 표시 안 함, 사용자 결정 2026-11-04)
 
 
 def now_ms():
@@ -408,8 +408,8 @@ LOG_TEXT = {
     "help": "{name}님이 도움이 필요하다고 응답했어요 ({n}번째)",
     "checked": "{name}님이 확인했어요",
     "closed": "{name}님이 괜찮은 것을 확인하고 종료했어요",
-    "reported": "{name}님이 119 신고를 기록했어요 (모의 신고 · 실제 119에는 연락하지 않았어요)",
-    "auto_reported": "아무도 확인하지 않아 자동 119 신고를 기록했어요 (모의 신고 · 실제 119에는 연락하지 않았어요)",
+    "reported": "{name}님이 119에 신고했어요",
+    "auto_reported": "아무도 확인하지 않아 자동으로 119에 신고했어요",
 }
 LATE_SUFFIX = " (서버가 늦게 처리했어요)"
 

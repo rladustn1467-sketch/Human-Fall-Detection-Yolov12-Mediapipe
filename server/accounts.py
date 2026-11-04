@@ -335,8 +335,6 @@ def remove_member(conn, user_id, member_id, now=None):
         member = conn.execute("SELECT id FROM users WHERE id = ? AND group_id = ?", (member_id, group_id)).fetchone()
         if not member:
             raise AccountError(404, "구성원을 찾을 수 없어요.")
-        # 내보낸 사람의 '이 휴대폰' 기기는 바로 지움: 앱이 꺼져 있어도 토큰이 막힘. 그 사람이 둔 감지 전용 기기는 집에 남음
-        conn.execute("DELETE FROM devices WHERE self_user_id = ? AND group_id = ?", (member_id, group_id))
         _leave(conn, member_id, group_id)
         _issue_invite(conn, group_id, user_id, now)
         others = [r["id"] for r in conn.execute("SELECT id FROM users WHERE group_id = ? AND id != ?", (group_id, user_id))]
@@ -345,8 +343,16 @@ def remove_member(conn, user_id, member_id, now=None):
                             int(now * 1000))
 
 
+def _drop_own_devices(conn, user_id):
+    """The person's 'this phone' device goes with them, wherever they left from: its token stops working even if the
+    app is closed or on another phone. A spare phone they set up stays with the home. Unused pairing codes go too."""
+    conn.execute("DELETE FROM devices WHERE self_user_id = ?", (user_id,))
+    conn.execute("DELETE FROM device_pairings WHERE created_by = ? AND used_at IS NULL", (user_id,))
+
+
 def _leave(conn, user_id, group_id):
     """Inside a transaction: take the person out of the group (shared profile and home links go with it)."""
+    _drop_own_devices(conn, user_id)
     homes = [r["home_id"] for r in conn.execute("SELECT home_id FROM home_members WHERE user_id = ?", (user_id,))]
     conn.execute("DELETE FROM home_members WHERE user_id = ?", (user_id,))
     _pass_admin_on(conn, homes)
@@ -366,6 +372,7 @@ def _pass_admin_on(conn, home_ids):
 
 
 WITHDRAWN_NAME = "탈퇴한 가족"
+GROUP_WITHOUT_MAKER = "우리 가족"   # 만든 사람이 탈퇴한 그룹 이름 (실명을 남기지 않음)
 
 
 def _forget_name_in_sent_texts(conn, group_id, name):
@@ -404,6 +411,8 @@ def withdraw(conn, user_id, password, ip, now=None):
         conn.execute("DELETE FROM auth_failures WHERE key IN (?, ?, ?)",
                      (phone_key, f"join-user:{user_id}", f"address-user:{user_id}"))
         _forget_name_in_sent_texts(conn, group_id, me["name"])
+        _drop_own_devices(conn, user_id)
+        conn.execute("UPDATE groups SET name = ? WHERE id = ? AND created_by = ?", (GROUP_WITHOUT_MAKER, group_id, user_id))
         homes = [r["home_id"] for r in conn.execute("SELECT home_id FROM home_members WHERE user_id = ?", (user_id,))]
         conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         _pass_admin_on(conn, homes)

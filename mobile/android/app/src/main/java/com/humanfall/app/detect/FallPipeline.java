@@ -127,7 +127,11 @@ final class FallPipeline {
             }
             if (checkSetup) {
                 nextSetupCheckAt = nowMs + SETUP_CHECK_MS;
-                checkSetup(s, frame, pose, people, brightness);
+                try {
+                    checkSetup(s, frame, pose, people, brightness);
+                } catch (RuntimeException | OutOfMemoryError e) {   // 설치 확인 때문에 낙상을 놓치면 안 됨
+                    Log.e(TAG, "설치 확인 오류", e);
+                }
             }
             if (!r.fallDetected) return s;
 
