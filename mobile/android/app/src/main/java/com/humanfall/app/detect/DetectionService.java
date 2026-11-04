@@ -60,9 +60,13 @@ public class DetectionService extends LifecycleService {
     public static final String EXTRA_MOCK_FRAMES_DIR = "mock_frames_dir";       // debug 빌드만
     public static final String EXTRA_HEARTBEAT_SECONDS = "heartbeat_seconds";   // debug 빌드만
     public static final String EXTRA_MOCK_FPS = "mock_fps";                     // debug 빌드만 (녹화 영상 한 번 재생)
+    public static final String EXTRA_TEST_BLOCK_FRAMES_SECONDS = "test_block_frames_seconds";   // debug 빌드만 (영상 멈춤 재현)
+    public static final String EXTRA_TEST_FAIL_ANALYSIS_SECONDS = "test_fail_analysis_seconds"; // debug 빌드만 (분석 실패 재현)
     public static final String ACTION_NUDGE = "com.humanfall.app.detect.NUDGE"; // 상태 신호를 바로 한 번
     static final String CHANNEL = "detect";
     static final int NOTIFICATION_ID = 41;
+    private static final int WATCH_SECONDS = 5;
+    private static final int FALLBACK_BEAT_SECONDS = 60;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private ScheduledExecutorService linkExec;
@@ -79,6 +83,11 @@ public class DetectionService extends LifecycleService {
     private boolean cameraWanted;
     private volatile boolean firstFrameReported;   // 카메라가 켜진 뒤 첫 프레임에서 상태 신호를 한 번 바로 보냄
     private final FrameRate rate = new FrameRate();
+    private final CameraWatchdog watchdog = new CameraWatchdog();
+    private boolean foreground;
+    private String shownNotice;
+    private volatile long testBlockFramesUntil;
+    private volatile long testFailAnalysisUntil;
 
     /** Start (or nudge) the service. Needs the camera permission: Android refuses a camera service without it. */
     public static boolean start(Context context, @Nullable Intent extras) {
@@ -104,15 +113,31 @@ public class DetectionService extends LifecycleService {
         analysisExec = Executors.newSingleThreadExecutor();
         sendExec = Executors.newSingleThreadExecutor();
         createChannel();
-        startInForeground(getString(R.string.detect_notice_starting));
+        try {
+            startInForeground(getString(R.string.detect_notice_starting));
+            foreground = true;
+        } catch (RuntimeException e) {
+            // Android 가 뒤에서 카메라 서비스를 시작하지 못하게 한 경우 (다시 시작될 때): 꺼지지 않고 사람에게 알림
+            Log.e(TAG, "감지 서비스를 시작하지 못함", e);
+            BootReceiver.remind(this, R.string.detect_stalled_text);
+            return;
+        }
         DetectorRuntime.STATE.serviceRunning = true;
         BootReceiver.clear(this);   // 감지를 다시 시작함: '감지가 멈춰 있어요' 알림 지움
+        linkExec.scheduleWithFixedDelay(() -> main.post(this::watch), WATCH_SECONDS, WATCH_SECONDS, TimeUnit.SECONDS);
     }
 
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
         super.onStartCommand(intent, flags, startId);
+        if (!foreground) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         if (intent != null && BuildConfig.DEBUG) {
+            long now = System.currentTimeMillis();
+            if (intent.hasExtra(EXTRA_TEST_BLOCK_FRAMES_SECONDS)) testBlockFramesUntil = now + intent.getIntExtra(EXTRA_TEST_BLOCK_FRAMES_SECONDS, 0) * 1000L;
+            if (intent.hasExtra(EXTRA_TEST_FAIL_ANALYSIS_SECONDS)) testFailAnalysisUntil = now + intent.getIntExtra(EXTRA_TEST_FAIL_ANALYSIS_SECONDS, 0) * 1000L;
             if (intent.hasExtra(EXTRA_MOCK_FRAMES_DIR)) mockDir = intent.getStringExtra(EXTRA_MOCK_FRAMES_DIR);
             if (intent.hasExtra(EXTRA_HEARTBEAT_SECONDS)) heartbeatOverride = intent.getIntExtra(EXTRA_HEARTBEAT_SECONDS, 0);
             if (intent.hasExtra(EXTRA_MOCK_FPS)) mockFps = intent.getFloatExtra(EXTRA_MOCK_FPS, 0f);
@@ -120,6 +145,10 @@ public class DetectionService extends LifecycleService {
         if (!link.isPaired()) {
             stopSelf();
             return START_NOT_STICKY;
+        }
+        if (intent != null && cameraWanted && watchdog.userAsked()) {   // 사람이 앱을 열었으면 기다리지 않고 다시 시도
+            Log.i(TAG, "앱을 열어 카메라를 다시 시작");
+            restartCamera();
         }
         beatNow();                // 시작·재요청 때 바로 상태 신호 → 카메라 켜기/끄기 결정
         return START_STICKY;      // 시스템이 정리해도 다시 시작
@@ -135,11 +164,17 @@ public class DetectionService extends LifecycleService {
     }
 
     private void beat() {
-        int next = link.heartbeat(DetectorRuntime.cameraOk());
-        if (heartbeatOverride > 0) next = heartbeatOverride;
-        main.post(this::followServer);
-        synchronized (this) {
-            if (!linkExec.isShutdown()) nextBeat = linkExec.schedule(this::beat, next, TimeUnit.SECONDS);
+        int next = FALLBACK_BEAT_SECONDS;
+        try {
+            next = link.heartbeat(DetectorRuntime.cameraOk());
+            if (heartbeatOverride > 0) next = heartbeatOverride;
+            main.post(this::followServer);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "상태 신호 처리 오류 (다음 신호는 계속)", e);   // 여기서 멈추면 서버에 연결 끊김으로 남음
+        } finally {
+            synchronized (this) {
+                if (!linkExec.isShutdown()) nextBeat = linkExec.schedule(this::beat, next, TimeUnit.SECONDS);
+            }
         }
     }
 
@@ -156,10 +191,58 @@ public class DetectionService extends LifecycleService {
         updateNotification();
     }
 
+    /** Main thread, every few seconds: restart the camera or the analysis when they stopped (CameraWatchdog). */
+    private void watch() {
+        if (cameraWanted && mockDir == null) {
+            DetectorRuntime.State st = DetectorRuntime.STATE;
+            CameraWatchdog.Action action = watchdog.check(System.currentTimeMillis(), st.lastFrameAt, st.lastAnalyzedAt);
+            switch (action) {
+                case RESTART_CAMERA:
+                    Log.w(TAG, "카메라 영상이 없어 다시 시작");
+                    restartCamera();
+                    break;
+                case RESTART_ANALYSIS:
+                    Log.w(TAG, "프레임 분석이 멈춰 자세 인식을 다시 시작");
+                    restartAnalysis();
+                    break;
+                case ASK_USER:
+                    Log.w(TAG, "카메라를 다시 켜지 못해 사람에게 알림");
+                    BootReceiver.remind(this, R.string.detect_stalled_text);
+                    break;
+                case RECOVERED:
+                    Log.i(TAG, "카메라 감지 복구됨");
+                    BootReceiver.clear(this);
+                    beatNow();
+                    break;
+                default:
+                    break;
+            }
+            st.recovering = watchdog.recovering();
+        }
+        updateNotification();
+    }
+
+    private void restartCamera() {
+        stopCamera();
+        startCamera();
+    }
+
+    private void restartAnalysis() {
+        stopCamera();
+        final PoseDetector old = detector;
+        detector = null;
+        pipeline = null;
+        analysisExec.execute(() -> {   // 분석 중인 프레임이 끝난 뒤 닫고 새로 만듦
+            if (old != null) old.close();
+            main.post(this::startCamera);
+        });
+    }
+
     // ---- 카메라 ----
     private void startCamera() {
         if (cameraWanted) return;
         cameraWanted = true;
+        watchdog.cameraStarted(System.currentTimeMillis());
         firstFrameReported = false;
         DetectorRuntime.STATE.lastFrameAt = 0;
         DetectorRuntime.STATE.lastAnalyzedAt = 0;
@@ -227,6 +310,7 @@ public class DetectionService extends LifecycleService {
     private void analyze(ImageProxy proxy) {
         try {
             if (!cameraWanted) return;
+            if (BuildConfig.DEBUG && System.currentTimeMillis() < testBlockFramesUntil) return;
             Bitmap bmp = proxy.toBitmap();
             int rotation = proxy.getImageInfo().getRotationDegrees();
             if (rotation != 0) {
@@ -237,7 +321,7 @@ public class DetectionService extends LifecycleService {
                 bmp = rotated;
             }
             runPipeline(bmp, null, System.currentTimeMillis());
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | OutOfMemoryError e) {
             Log.e(TAG, "프레임 분석 실패", e);
         } finally {
             proxy.close();
@@ -260,8 +344,9 @@ public class DetectionService extends LifecycleService {
         FallPipeline.Stats s;
         long began = System.nanoTime();
         try {
+            if (BuildConfig.DEBUG && System.currentTimeMillis() < testFailAnalysisUntil) throw new IllegalStateException("시험용 분석 실패");
             s = pipeline.process(bmp, nowMs);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | OutOfMemoryError e) {
             // 프레임 한 장의 문제로 감지 전체가 멈추지 않게 그 프레임만 건너뜀
             Log.e(TAG, "프레임 처리 실패 (건너뜀)" + (label != null ? " file=" + label : ""), e);
             return;
@@ -400,9 +485,11 @@ public class DetectionService extends LifecycleService {
         String c = DetectorRuntime.STATE.camera;
         String text = !link.enabled ? getString(R.string.detect_notice_off)
                 : "error".equals(c) ? getString(R.string.detect_notice_camera_error)
-                : !firstFrameReported ? getString(R.string.detect_notice_starting)
+                : !firstFrameReported && !DetectorRuntime.STATE.recovering ? getString(R.string.detect_notice_starting)
                 : DetectorRuntime.cameraOk() ? getString(R.string.detect_notice_on)
                 : getString(R.string.detect_notice_stalled);
+        if (text.equals(shownNotice)) return;
+        shownNotice = text;
         getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(text));
     }
 

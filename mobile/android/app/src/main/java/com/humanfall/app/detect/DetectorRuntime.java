@@ -20,6 +20,8 @@ public final class DetectorRuntime {
         public volatile long lastFrameAt;
         /** 프레임 분석이 마지막으로 끝난 시각 (카메라가 켜진 뒤 첫 프레임 시각부터 셈) */
         public volatile long lastAnalyzedAt;
+        /** 카메라나 분석이 멈춰 자동으로 다시 시작하는 중 (CameraWatchdog) */
+        public volatile boolean recovering;
         public volatile long frames;
         public volatile int persons;
         public volatile long lastFallAt;

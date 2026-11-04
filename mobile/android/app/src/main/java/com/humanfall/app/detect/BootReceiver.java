@@ -27,7 +27,7 @@ public class BootReceiver extends BroadcastReceiver {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(a) && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(a)) return;
         DeviceLink link = DetectorRuntime.link(context);
         if (!shouldRemind(link.isPaired(), link.isRevoked(), link.isHeld(), link.enabled)) return;
-        remind(context);
+        remind(context, R.string.detect_stopped_text);
     }
 
     /** Remind only phones that were detecting: paired, not revoked, not held by logout, detection on. */
@@ -35,7 +35,7 @@ public class BootReceiver extends BroadcastReceiver {
         return paired && !revoked && !held && enabled;
     }
 
-    static void remind(Context context) {
+    static void remind(Context context, int textId) {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel ch = new NotificationChannel(CHANNEL, context.getString(R.string.detect_stopped_channel),
                     NotificationManager.IMPORTANCE_HIGH);
@@ -47,8 +47,8 @@ public class BootReceiver extends BroadcastReceiver {
         NotificationCompat.Builder b = new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_fall_alert)
                 .setContentTitle(context.getString(R.string.detect_stopped_title))
-                .setContentText(context.getString(R.string.detect_stopped_text))
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(context.getString(R.string.detect_stopped_text)))
+                .setContentText(context.getString(textId))
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(context.getString(textId)))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_REMINDER)
                 .setAutoCancel(true)
