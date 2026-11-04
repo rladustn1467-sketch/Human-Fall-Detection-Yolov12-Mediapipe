@@ -37,6 +37,7 @@ import time
 import urllib.error
 import urllib.request
 
+import accounts
 import db
 from accounts import AccountError
 
@@ -269,11 +270,14 @@ def describe(sender):
 
 
 def _tokens(conn, user_id, group_id, now):
-    """Tokens of the person's phones with a valid login session, only while the person is still in the group."""
+    """Tokens of the person's phones, only while the person is still in the group. Logging out deletes the token. A
+    login that merely ended by time keeps receiving for PUSH_AFTER_EXPIRY_DAYS: falls are rare, so family members may
+    not open the app for months, and they must not silently stop getting alerts (감사 2026-11-04 N-3)."""
     return [r["token"] for r in conn.execute(
         """SELECT pt.token FROM push_tokens pt JOIN sessions s ON s.token_hash = pt.session_hash
            JOIN users u ON u.id = pt.user_id
-           WHERE pt.user_id = ? AND u.group_id = ? AND s.expires_at > ?""", (user_id, group_id, now / 1000))]
+           WHERE pt.user_id = ? AND u.group_id = ? AND s.expires_at > ?""",
+        (user_id, group_id, now / 1000 - accounts.PUSH_AFTER_EXPIRY_DAYS * 86400))]
 
 
 def process_due(conn, sender, now=None):

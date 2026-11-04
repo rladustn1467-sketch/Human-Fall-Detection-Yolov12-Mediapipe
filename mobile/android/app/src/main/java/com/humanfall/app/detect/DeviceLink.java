@@ -238,6 +238,11 @@ public final class DeviceLink {
     // ---- 연결 · 해제 ----
     /** Sends the pairing code once. Returns null on success, else the message for the person. */
     public String pair(String base, String code) {
+        return pair(base, code, false);
+    }
+
+    /** ownPhone: 'this phone' of the logged-in person, which the server removes when that person leaves the group. */
+    public String pair(String base, String code, boolean ownPhone) {
         String c = code == null ? "" : code.replaceAll("\\s+", "").toUpperCase();
         if (c.isEmpty()) return "연결 코드를 입력해 주세요.";
         Response r;
@@ -245,6 +250,7 @@ public final class DeviceLink {
             JSONObject body = new JSONObject();
             body.put("code", c);
             body.put("appVersion", APP_VERSION);
+            if (ownPhone) body.put("mode", "self");
             r = post(base, "/api/v2/device/pair", body, null);
         } catch (IOException | JSONException e) {
             logFailure("연결 코드 전송", e);

@@ -143,7 +143,7 @@ def device_flow(server, args, target, family, home):
             if inc.get("photos"):
                 photo = inc["photos"][0]["id"]
                 with family.jar.open(f"{server.base}/api/v2/incidents/{inc['id']}/photos/{photo}.jpg", timeout=10) as r:
-                    check("가족이 사진을 볼 수 있음", r.status == 200 and r.read(3) == b"ÿØÿ")
+                    check("가족이 사진을 볼 수 있음", r.status == 200 and r.read(3) == bytes((0xff, 0xd8, 0xff)))
             c = sqlite3.connect(server.db_path, timeout=10)
             c.execute("UPDATE incidents SET detected_at = detected_at - 61000 WHERE id = ?", (inc["id"],))
             c.commit()
@@ -176,7 +176,7 @@ def device_flow(server, args, target, family, home):
     check("삭제되면 감지 서비스 종료", wait(lambda: not service_running(), 30))
 
 
-def logout_flow(person):
+def start_own_phone(person):
     reset_app()
     adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1")
     time.sleep(9)
@@ -186,6 +186,10 @@ def logout_flow(person):
     web("(async()=>{location.hash='#/settings';await new Promise(r=>setTimeout(r,1500));document.querySelector('[data-action=\"settings.detector\"]').click();"
         "await new Promise(r=>setTimeout(r,1500));document.getElementById('dc-loc').value='거실';document.querySelector('[data-action=\"dc.submit\"]').click();return 1})()")
     check("이 휴대폰으로 감지 시작", wait(camera_open, 30) and service_running())
+
+
+def logout_flow(person):
+    start_own_phone(person)
     adb("shell", "input", "keyevent", "KEYCODE_BACK")
     time.sleep(3)
     r = web("(async()=>{const w=t=>new Promise(r=>setTimeout(r,t));location.hash='#/settings';await w(1500);"
@@ -195,6 +199,23 @@ def logout_flow(person):
     check("로그아웃", r == "#/ob/login", r)
     check("로그아웃하면 카메라 닫힘", wait(lambda: not camera_open(), 8))
     check("로그아웃하면 감지 서비스 종료", wait(lambda: not service_running(), 8))
+
+
+def removal_flow(server, person, family):
+    """A person removed from the group: their own phone stops by itself, without opening the app."""
+    start_own_phone(person)
+    adb("shell", "input", "keyevent", "HOME")
+    c = sqlite3.connect(server.db_path, timeout=10)
+    own = c.execute("SELECT COUNT(*) FROM devices WHERE self_user_id = ?", (person.id,)).fetchone()[0]
+    c.close()
+    check("서버가 이 사람의 휴대폰으로 기억", own >= 1, own)
+    check("가족이 내보냄", family.call("POST", f"/api/v2/groups/members/{person.id}/remove")[0] == 200)
+    c = sqlite3.connect(server.db_path, timeout=10)
+    left = c.execute("SELECT COUNT(*) FROM devices WHERE self_user_id = ?", (person.id,)).fetchone()[0]
+    c.close()
+    check("그 사람의 기기가 서버에서 바로 삭제", left == 0, left)
+    check("앱을 열지 않아도 다음 상태 신호에서 감지 종료", wait(lambda: not service_running(), 80, 3))
+    check("카메라 닫힘", wait(lambda: not camera_open(), 8))
 
 
 def main():
@@ -217,6 +238,7 @@ def main():
         try:
             device_flow(server, args, target, family, home)
             logout_flow(target)
+            removal_flow(server, target, family)
         finally:
             adb("shell", "am", "force-stop", PKG)
             check("크래시 없음", "FATAL" not in log())

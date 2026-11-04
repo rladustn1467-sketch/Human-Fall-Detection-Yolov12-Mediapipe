@@ -26,6 +26,7 @@ import db
 
 # ---- 조정 가능한 설정값 ----
 SESSION_DAYS = 90                  # 로그인 유지: 마지막으로 쓴 날부터 (사용자 결정 2026-10-30)
+PUSH_AFTER_EXPIRY_DAYS = 365   # 로그인이 끝난 뒤에도 낙상 푸시를 받는 기간 (낙상은 드물어 앱을 오래 안 열 수 있음, 푸시에 개인정보 없음)
 SESSION_RENEW_SECONDS = 86400      # 쓰는 동안 만료일을 늦추는 것은 하루에 한 번
 INVITE_HOURS = 24                  # 초대 코드 유효 시간
 PASSWORD_MIN, PASSWORD_MAX = 8, 64
@@ -194,7 +195,8 @@ def create_session(conn, user_id, now=None):
     now = time.time() if now is None else now
     token = secrets.token_urlsafe(32)
     with _transaction(conn):
-        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+        # 끝난 세션은 푸시 유지 기간이 지나야 지움: 세션을 지우면 그 휴대폰의 알림 토큰도 함께 지워짐
+        conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (now - PUSH_AFTER_EXPIRY_DAYS * 86400,))
         conn.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
                      (_token_hash(token), user_id, now, now + SESSION_DAYS * 86400))
     return token
@@ -333,6 +335,8 @@ def remove_member(conn, user_id, member_id, now=None):
         member = conn.execute("SELECT id FROM users WHERE id = ? AND group_id = ?", (member_id, group_id)).fetchone()
         if not member:
             raise AccountError(404, "구성원을 찾을 수 없어요.")
+        # 내보낸 사람의 '이 휴대폰' 기기는 바로 지움: 앱이 꺼져 있어도 토큰이 막힘. 그 사람이 둔 감지 전용 기기는 집에 남음
+        conn.execute("DELETE FROM devices WHERE self_user_id = ? AND group_id = ?", (member_id, group_id))
         _leave(conn, member_id, group_id)
         _issue_invite(conn, group_id, user_id, now)
         others = [r["id"] for r in conn.execute("SELECT id FROM users WHERE group_id = ? AND id != ?", (group_id, user_id))]

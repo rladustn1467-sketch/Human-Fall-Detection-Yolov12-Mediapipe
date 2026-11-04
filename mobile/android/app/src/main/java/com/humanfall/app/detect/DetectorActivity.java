@@ -362,7 +362,7 @@ public class DetectorActivity extends AppCompatActivity {
         errorText.setText("");
         render();
         io.execute(() -> {
-            String err = link.pair(server, code);
+            String err = link.pair(server, code, self());
             runOnUiThread(() -> {
                 busy = false;
                 if (err != null) errorText.setText(err);

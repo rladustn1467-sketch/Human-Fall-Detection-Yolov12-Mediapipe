@@ -141,8 +141,9 @@ def remove(conn, user_id, device_id):
 
 
 # ---- 기기: 연결 · 인증 · 상태 신호 · 낙상 ----
-def pair(conn, code, ip, app_version=None, now=None):
-    """The device sends the pairing code once. Returns {deviceId, deviceToken, type, location, heartbeatSeconds}."""
+def pair(conn, code, ip, app_version=None, now=None, mode=None):
+    """The device sends the pairing code once. Returns {deviceId, deviceToken, type, location, heartbeatSeconds}.
+    mode 'self' = the person's own phone ('이 휴대폰으로 감지'), which goes when that person is removed from the group."""
     now = now_ms() if now is None else now
     code = re.sub(r"\s+", "", str(code or "")).upper()
     key = f"pair-ip:{ip}"
@@ -159,10 +160,11 @@ def pair(conn, code, ip, app_version=None, now=None):
             device_id = f"d_{secrets.token_hex(8)}"
             token = secrets.token_urlsafe(32)
             conn.execute("""INSERT INTO devices (id, group_id, home_id, type, location, enabled, enabled_at, token_hash,
-                                                 created_by, created_at, app_version)
-                            VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                                                 created_by, created_at, app_version, self_user_id)
+                            VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
                          (device_id, row["group_id"], row["home_id"], row["type"], row["location"], now,
-                          _token_hash(token), row["created_by"], now, _clean_version(app_version)))
+                          _token_hash(token), row["created_by"], now, _clean_version(app_version),
+                          row["created_by"] if mode == "self" else None))
             conn.execute("UPDATE device_pairings SET used_at = ?, device_id = ? WHERE code = ?", (now, device_id, code))
             alerts.tell_home(conn, row["home_id"], row["created_by"], "감지 기기를", now)
     if error:

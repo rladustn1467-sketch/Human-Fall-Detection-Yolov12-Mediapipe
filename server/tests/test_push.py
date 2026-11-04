@@ -172,7 +172,8 @@ class TokenTest(PushTestBase):
         token_b = self.phone(self.b, "b1", session=accounts._token_hash(cookie))
         accounts.end_session(self.conn, cookie)                                   # 로그아웃 → 토큰도 삭제
         self.assertIsNone(self.conn.execute("SELECT 1 FROM push_tokens WHERE token = ?", (token_b,)).fetchone())
-        old = accounts.create_session(self.conn, self.d, now=T / 1000 - (accounts.SESSION_DAYS + 10) * 86400)  # 만료된 세션의 토큰
+        # 로그인이 끝난 지 푸시 유지 기간도 지난 세션의 토큰
+        old = accounts.create_session(self.conn, self.d, now=T / 1000 - (accounts.SESSION_DAYS + accounts.PUSH_AFTER_EXPIRY_DAYS + 10) * 86400)
         push.register_token(self.conn, self.d, accounts._token_hash(old), TOK + "d-old-" + "x" * 30, now=T)
         self.phone(self.a, "a1")
         self.fall()
@@ -183,6 +184,19 @@ class TokenTest(PushTestBase):
         self.assertEqual(self.deliveries("family_alert")[self.d]["status"], "no_token")
         accounts.withdraw(self.conn, self.a, PW, IP, now=T / 1000)  # 탈퇴 → 토큰 삭제
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM push_tokens WHERE user_id = ?", (self.a,)).fetchone()[0], 0)
+
+    def test_a_family_member_who_has_not_opened_the_app_for_months_still_gets_falls(self):
+        # 낙상은 드물어서 앱을 90일 넘게 안 열 수 있음 (감사 2026-11-04 N-3). 다른 사람이 로그인해도 토큰이 지워지지 않음
+        old = accounts.create_session(self.conn, self.d, now=T / 1000 - (accounts.SESSION_DAYS + 30) * 86400)
+        push.register_token(self.conn, self.d, accounts._token_hash(old), TOK + "d-old-" + "x" * 30, now=T)
+        accounts.create_session(self.conn, self.b, now=T / 1000)
+        self.assertIsNone(accounts.session_user(self.conn, old, now=T / 1000))    # 로그인은 끝났음
+        self.fall()
+        incidents.tick(self.conn, T + 60 * S)
+        sender = push.FakeSender()
+        self.send(sender, at=T + 61 * S)
+        self.assertEqual(len(sender.sent), 1)
+        self.assertEqual(self.deliveries("family_alert")[self.d]["status"], "simulated")
 
     def test_too_many_phones_keeps_the_newest(self):
         s = self.session(self.a)

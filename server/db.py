@@ -412,6 +412,9 @@ MIGRATIONS = [
         "DROP TABLE push_deliveries_v12",
         "CREATE INDEX push_deliveries_due ON push_deliveries (status, next_attempt_at)",
     ]),
+    (14, "'이 휴대폰으로 감지' 기기의 주인: 그룹에서 내보내면 그 기기만 바로 지움 (accounts.py, 감사 2026-11-04 N-7)", [
+        "ALTER TABLE devices ADD COLUMN self_user_id TEXT",
+    ]),
 ]
 
 BUSY_TIMEOUT_MS = 10_000  # 다른 스레드가 쓰는 중이면 이 시간까지 기다림

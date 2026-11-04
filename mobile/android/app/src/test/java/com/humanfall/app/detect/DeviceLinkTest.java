@@ -43,6 +43,7 @@ public class DeviceLinkTest {
     volatile boolean revoked = false;
     volatile boolean down = false;        // 서버가 응답하지 못함 (503)
     volatile boolean unpaired = false;
+    volatile String pairMode;
     volatile boolean revokedEnabledOnly = false;   // 켜짐/꺼짐 알림만 500
     volatile String rejectEvent = null;            // 이 event id 는 400 (잘못된 요청)
     final List<String> eventIds = Collections.synchronizedList(new ArrayList<>());
@@ -59,6 +60,7 @@ public class DeviceLinkTest {
         switch (path) {
             case "/api/v2/device/pair":
                 if ("GOOD12".equals(b.optString("code"))) {
+                    pairMode = b.optString("mode", "");
                     return new Object[]{200, "{\"deviceId\":\"d_1\",\"deviceToken\":\"" + TOKEN + "\",\"type\":\"phone\",\"location\":\"거실\",\"heartbeatSeconds\":60}"};
                 }
                 return new Object[]{400, "{\"message\":\"연결 코드를 확인해 주세요.\",\"field\":\"code\"}"};
@@ -98,6 +100,14 @@ public class DeviceLinkTest {
     @After
     public void stop() throws IOException {
         server.close();
+    }
+
+    @Test
+    public void thisPhoneTellsTheServerItIsThePersonsOwnPhone() {
+        assertNull(new DeviceLink(new MemStore()).pair(base, "GOOD12", true));
+        assertEquals("self", pairMode);
+        assertNull(new DeviceLink(new MemStore()).pair(base, "GOOD12", false));
+        assertEquals("", pairMode);
     }
 
     private DeviceLink paired(MemStore store, List<Long> waits) {

@@ -212,6 +212,38 @@ class SettingsTest(DeviceTestBase):
         self.assertEqual(self.kinds(self.a), ["home_changed"] * 2)
 
 
+class RemovedPersonDeviceTest(DeviceTestBase):
+    """A person removed from the group stops at once (감사 2026-11-04 N-7): their 'this phone' device is deleted on the
+    server, so its token stops working even if the app is closed. A spare phone they set up stays with the home."""
+
+    def pair(self, location, mode=None):
+        code = devices.start_pairing(self.conn, self.a, self.home, "phone", location, now=T)["code"]
+        return devices.pair(self.conn, code, "10.0.0.1", now=T, mode=mode)["deviceId"]
+
+    def ids(self):
+        return [r["id"] for r in self.conn.execute("SELECT id FROM devices WHERE id != ?", (self.device_id,))]
+
+    def test_removed_person_loses_only_their_own_phone(self):
+        own = self.pair("안방", mode="self")
+        spare = self.pair("복도")
+        accounts.remove_member(self.conn, self.b, self.a, now=self.now)
+        self.assertEqual(self.ids(), [spare])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM devices WHERE id = ?", (own,)).fetchone()[0], 0)
+
+    def test_old_devices_without_the_mark_stay(self):
+        accounts.remove_member(self.conn, self.b, self.a, now=self.now)
+        self.assertEqual(self.row()["id"], self.device_id)
+
+    def test_removing_someone_else_leaves_my_phone(self):
+        own = self.pair("안방", mode="self")
+        accounts.remove_member(self.conn, self.a, self.b, now=self.now)
+        self.assertEqual(self.ids(), [own])
+
+    def test_a_phone_that_paired_with_an_unknown_mode_is_not_marked(self):
+        self.pair("안방", mode="other")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM devices WHERE self_user_id IS NOT NULL").fetchone()[0], 0)
+
+
 class MigrationTest(unittest.TestCase):
     def test_push_rows_survive_and_device_pushes_are_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:

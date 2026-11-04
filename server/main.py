@@ -1278,6 +1278,7 @@ class DeviceUpdateBody(BaseModel):
 class DevicePairBody(BaseModel):
     code: Any = None
     appVersion: Any = None
+    mode: Any = None        # 'self' = 사람이 쓰는 이 휴대폰으로 감지
 
 
 class DeviceHeartbeatBody(BaseModel):
@@ -1325,7 +1326,7 @@ def api_v2_device_delete(device_id: str, request: Request):
 def api_v2_device_pair(body: DevicePairBody, request: Request):
     # 기기가 연결 코드를 한 번 보냄 → 기기 토큰 (이 응답에서만 한 번 보임, 서버에는 해시만)
     with db.session(DB_PATH) as conn:
-        return JSONResponse(devices.pair(conn, body.code, _client_ip(request), body.appVersion), headers=NO_STORE)
+        return JSONResponse(devices.pair(conn, body.code, _client_ip(request), body.appVersion, mode=body.mode), headers=NO_STORE)
 
 
 @app.post("/api/v2/device/heartbeat")
