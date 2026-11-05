@@ -37,3 +37,9 @@ deploy/https/Caddyfile
 deploy/https/logs/
 *.key
 *.pem
+
+# 이 PC 에서만 쓰는 파일과 공개하지 않는 참고 자료
+run_dashboard.bat
+docs/system_audit_*.md
+docs/references/*.pdf
+*.log

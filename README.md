@@ -42,7 +42,7 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 | 시험 | 결과 |
 |---|---|
 | 서버 | 350개 통과 |
-| 루트 (감지 로직 등) | 104개 통과, 4개 건너뜀 |
+| 판정 로직과 PC 프로그램 | 112개 통과 |
 | Android 단위 (JVM) | 72개 통과, 1개 건너뜀 |
 | 브라우저 끝까지 시험 | 24개 통과 |
 | 에뮬레이터 실제 앱 시험 | 46개 통과 |
@@ -69,7 +69,18 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 | `tools/e2e/` | 브라우저·에뮬레이터 끝까지 시험 |
 | `docs/` | 현황과 조사 문서 |
 
-자세한 현황과 다음 작업은 [docs/PROTOTYPE_STATUS.md](docs/PROTOTYPE_STATUS.md), 원격 접속은 [docs/TAILSCALE.md](docs/TAILSCALE.md)에 있습니다.
+자세한 현황과 다음 작업은 [docs/PROTOTYPE_STATUS.md](docs/PROTOTYPE_STATUS.md), 파일 구분과 정리 기준은 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md), 원격 접속은 [docs/TAILSCALE.md](docs/TAILSCALE.md)에 있습니다.
+
+### 실행 방법
+
+| 대상 | 방법 |
+|---|---|
+| 서버 | `server` 폴더에 가상환경을 만든 뒤 `server\run_server.bat` 실행. 앱 주소는 `http://localhost:8000/app/next/` |
+| PC 프로그램 | `python fall_detection_system.py --mode dashboard` |
+| Android 앱 | [mobile/RELEASE.md](mobile/RELEASE.md) 참고 |
+| 서버 시험 | `server\venv\Scripts\python.exe -m unittest discover -s server/tests -t server` |
+| 판정 로직 시험 | `venv\Scripts\python.exe -m unittest discover -s tests -t .` |
+| 끝까지 시험 | [tools/e2e/README.md](tools/e2e/README.md) 참고 |
 
 ## Features
 
@@ -247,13 +258,21 @@ fall-detection-system/
 │   └── fall_detector.py        # Core fall detection model
 ├── dashboard/
 │   └── dashboard_app.py        # PyQt5 Dashboard UI application
+├── fall_logic/                 # Fall rules shared by the PC program and tests
 ├── utils/
 │   └── utils.py                # Utility functions
-├── fall_snapshots/             # Directory for fall images
+├── server/                     # FastAPI server and family web app
+├── mobile/                     # Current Android app
+├── tools/                      # Evaluation and end-to-end test tools
+├── tests/                      # Detection logic tests
+├── docs/                       # Status and project documents
 ├── fall_detection_system.py    # Main application script
+├── yolov12n1.pt                # Default YOLO model
 ├── README.md                   # Project documentation
-└── requirements.txt            # Project dependencies
+└── requirements.txt            # Detection program dependencies
 ```
+
+See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for what each part is used for.
 
 ## Recent Improvements
 
