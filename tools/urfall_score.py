@@ -17,7 +17,7 @@ Scoring, per sequence:
 Summary: recall (fall sequences hit / fall sequences), false alarms (count, per minute of ADL video),
 precision = hits / (hits + false alarms), F1.
 
-Engines: "legacy" = fall_logic.LegacyFallLogic (same as models/fall_detector.py and the Android app).
+Engines: "legacy" = fall_logic.LegacyFallLogic (same as pc/models/fall_detector.py and the Android app).
 The replayed legacy result is also checked against what the original detector recorded in the log.
 
 Usage (from the project root): venv\\Scripts\\python.exe tools\\urfall_score.py [--engine legacy]

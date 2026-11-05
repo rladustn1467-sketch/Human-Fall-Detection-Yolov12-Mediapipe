@@ -17,7 +17,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * This phone's connection to the server as a detection device (same rules as the PC's dashboard/device_link.py).
+ * This phone's connection to the server as a detection device (same rules as the PC's pc/dashboard/device_link.py).
  *
  * The family member gets a 6-character pairing code in the app ('기기 추가' → 안 쓰는 휴대폰); it is entered once on
  * this phone and the server gives it its own device token, kept only in the app's private storage (never in Git,

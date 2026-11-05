@@ -1,0 +1,17 @@
+.env
+fall.db
+fall.db-wal
+fall.db-shm
+backups/
+images/
+logs/
+events.json
+events.tmp
+residents.json
+access_token.txt
+telegram_state.json
+telegram_state.json.tmp
+__pycache__/
+*.pyc
+*.key
+*.pem

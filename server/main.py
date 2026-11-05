@@ -1576,9 +1576,8 @@ def _seconds_cell(e):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    denied = _page_or_401(request)
-    if denied:
-        return denied
+    if _page_or_401(request):
+        return RedirectResponse("/app/next/", status_code=302)
     with _lock:
         _refresh_timeouts()
         rows_data = [_public(ev) for ev in reversed(list(events.values()))]

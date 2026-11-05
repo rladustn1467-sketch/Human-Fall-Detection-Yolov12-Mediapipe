@@ -1,4 +1,4 @@
-"""The PC detector's app connection (dashboard/device_link.py) against a COPY of the server.
+"""The PC detector's app connection (pc/dashboard/device_link.py) against a COPY of the server.
 
 Pairing code, wrong codes, token saved outside the project and reused after a restart, status signals, the app's
 detection on/off, falls with photos and retries, and the token refused after the device is deleted in the app.
@@ -18,7 +18,7 @@ from pathlib import Path
 from tests.test_api_v2 import ServerCopy, free_port
 from tests.test_auth_api import PW, Browser
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "dashboard"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pc" / "dashboard"))
 import device_link  # noqa: E402
 
 JPEG = base64.b64encode(b"\xff\xd8\xff\xe0" + b"L" * 64 + b"\xff\xd9").decode()

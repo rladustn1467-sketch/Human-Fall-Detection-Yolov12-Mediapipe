@@ -8,7 +8,7 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 
 집 안 낙상사고를 AI로 감지해 가족에게 알리는 아이디어를 실제로 구현하고 시연하는 **프로토타입**입니다. 상용 서비스가 목적이 아닙니다.
 
-처음에는 PC 낙상 감지 프로그램이었고, 지금은 Android 앱과 가족용 서비스까지 확장했습니다. 이 섹션 아래의 영어 설명은 주로 PC 프로그램과 초기 구조에 관한 내용입니다.
+처음에는 PC 낙상 감지 프로그램이었고, 지금은 Android 앱과 가족용 서비스까지 확장했습니다. 이 섹션 아래의 영어 설명은 주로 `pc/` 의 PC 프로그램과 초기 구조에 관한 내용입니다.
 
 > **119 안전 규칙:** 이 프로토타입은 119에 전화나 문자를 보내거나 신고를 전달하지 않습니다. 앱의 119 신고는 앱 안의 기록으로만 남고, 서버 시험(`NeverContacts119Test`)으로 이 규칙을 고정해 두었습니다.
 
@@ -41,8 +41,8 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 
 | 시험 | 결과 |
 |---|---|
-| 서버 | 350개 통과 |
-| 판정 로직과 PC 프로그램 | 112개 통과 |
+| 서버 | 351개 통과 |
+| 판정 로직과 도구 | 116개 통과 |
 | Android 단위 (JVM) | 72개 통과, 1개 건너뜀 |
 | 브라우저 끝까지 시험 | 24개 통과 |
 | 에뮬레이터 실제 앱 시험 | 46개 통과 |
@@ -62,12 +62,16 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 
 | 위치 | 내용 |
 |---|---|
-| `server/` | FastAPI 서버와 SQLite DB 코드 |
-| `server/app/next/` | 가족용 웹앱. Android 앱도 이 화면을 사용 |
-| `mobile/android/` | Android 앱과 기기 안 낙상 감지 |
-| `fall_logic/` | 낙상 판정 규칙 |
-| `tools/e2e/` | 브라우저·에뮬레이터 끝까지 시험 |
+| `server/` | FastAPI 서버와 가족용 웹앱. Android 앱도 이 화면을 사용 |
+| `mobile/` | Android 앱과 기기 안 낙상 감지 |
+| `pc/` | PC 프로그램, YOLO 모델, PC용 설치 목록 |
+| `fall_logic/` | 판정 규칙의 Python 구현. 시험과 평가 도구가 사용 |
+| `tools/` | 평가 도구, 끝까지 시험, 배포 복사 |
+| `tests/` | 판정 로직과 도구 시험 |
+| `deploy/` | 배포 파일과 참고 자료 |
 | `docs/` | 현황과 조사 문서 |
+
+학교 서버에는 서버와 웹앱만 담은 배포용 저장소 [fall](https://github.com/rladustn1467-sketch/fall) 을 올립니다. 코드는 이 저장소에서 고치고 `tools/export_deploy.py` 로 복사합니다.
 
 자세한 현황과 다음 작업은 [docs/PROTOTYPE_STATUS.md](docs/PROTOTYPE_STATUS.md), 파일 구분과 정리 기준은 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md), 원격 접속은 [docs/TAILSCALE.md](docs/TAILSCALE.md)에 있습니다.
 
@@ -76,7 +80,7 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 | 대상 | 방법 |
 |---|---|
 | 서버 | `server` 폴더에 가상환경을 만든 뒤 `server\run_server.bat` 실행. 앱 주소는 `http://localhost:8000/app/next/` |
-| PC 프로그램 | `python fall_detection_system.py --mode dashboard` |
+| PC 프로그램 | [pc/README.md](pc/README.md) 참고 |
 | Android 앱 | [mobile/RELEASE.md](mobile/RELEASE.md) 참고 |
 | 서버 시험 | `server\venv\Scripts\python.exe -m unittest discover -s server/tests -t server` |
 | 판정 로직 시험 | `venv\Scripts\python.exe -m unittest discover -s tests -t .` |
@@ -99,7 +103,7 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 
 - Python 3.12 (tested on Windows; MediaPipe 0.10.14 has no wheels for Python 3.13)
 - CPU-only PyTorch by default (see GPU note below)
-- Exact versions are pinned in `requirements.txt` (detection program) and `server/requirements.txt` (web server)
+- Exact versions are pinned in `pc/requirements.txt` (detection program) and `server/requirements.txt` (web server)
 
 ## Installation
 
@@ -112,9 +116,9 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 2. Create a virtual environment for the detection program and install requirements:
    ```
    python -m venv venv
-   venv\Scripts\python.exe -m pip install -r requirements.txt
+   venv\Scripts\python.exe -m pip install -r pc\requirements.txt
    ```
-   `requirements-working.txt` lists the exact version of every package in a tested
+   `pc/requirements-working.txt` lists the exact version of every package in a tested
    environment and can be used instead to reproduce it exactly.
 
 3. Create a separate virtual environment for the web server:
@@ -124,12 +128,12 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
    venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
 
-4. Download YOLOv12 model (automatic on first run, or manually place in project root)
+4. Download YOLOv12 model (automatic on first run, or manually place in `pc/`)
 
 **GPU (optional):** the default PyPI build of PyTorch on Windows is CPU-only. To use an
 NVIDIA GPU, first install the CUDA build of `torch` and `torchvision` (same versions as in
-`requirements.txt`) from the PyTorch index following https://pytorch.org/get-started/locally/,
-then install `requirements.txt`. Separate `nvidia-*-cu11` packages are not needed.
+`pc/requirements.txt`) from the PyTorch index following https://pytorch.org/get-started/locally/,
+then install `pc/requirements.txt`. Separate `nvidia-*-cu11` packages are not needed.
 
 **Do not upgrade MediaPipe to 1.x:** it removed the `mp.solutions` API that this project uses.
 
@@ -197,7 +201,7 @@ are never sent to the server or saved (the raw fall snapshot option is disabled)
 ### Dashboard Mode (Recommended)
 
 ```
-python fall_detection_system.py --mode dashboard
+python pc/fall_detection_system.py --mode dashboard
 ```
 
 **Testing without a webcam:** put photos in `test_images/` (ignored by git). In the dashboard,
@@ -206,7 +210,7 @@ camera frame (with an empty folder it sends a fake fall without a photo). **Shif
 pick the photo. Or start with a photo:
 
 ```
-python fall_detection_system.py --mode dashboard --test-image test_images/lying.jpg
+python pc/fall_detection_system.py --mode dashboard --test-image test_images/lying.jpg
 ```
 
 Photo tests follow the real path (person detection, privacy processing, server upload, alerts),
@@ -215,7 +219,7 @@ and the processed image is also saved to `test_output/` for checking.
 ### Command Line Mode
 
 ```
-python fall_detection_system.py --mode cli --source 0
+python pc/fall_detection_system.py --mode cli --source 0
 ```
 
 ### Options
@@ -254,22 +258,21 @@ The system consists of several key components:
 
 ```
 fall-detection-system/
-├── models/
-│   └── fall_detector.py        # Core fall detection model
-├── dashboard/
-│   └── dashboard_app.py        # PyQt5 Dashboard UI application
-├── fall_logic/                 # Fall rules shared by the PC program and tests
-├── utils/
-│   └── utils.py                # Utility functions
 ├── server/                     # FastAPI server and family web app
-├── mobile/                     # Current Android app
-├── tools/                      # Evaluation and end-to-end test tools
+├── mobile/                     # Android app
+├── pc/
+│   ├── fall_detection_system.py # Main application script
+│   ├── dashboard/              # PyQt5 Dashboard UI application
+│   ├── models/                 # Core fall detection model
+│   ├── utils/                  # Utility functions
+│   ├── yolov12n1.pt            # Default YOLO model
+│   └── requirements.txt        # Detection program dependencies
+├── fall_logic/                 # Python fall rules for tests and evaluation
+├── tools/                      # Evaluation, end-to-end tests, deployment copy
 ├── tests/                      # Detection logic tests
+├── deploy/                     # Deployment files
 ├── docs/                       # Status and project documents
-├── fall_detection_system.py    # Main application script
-├── yolov12n1.pt                # Default YOLO model
-├── README.md                   # Project documentation
-└── requirements.txt            # Detection program dependencies
+└── README.md                   # Project documentation
 ```
 
 See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for what each part is used for.

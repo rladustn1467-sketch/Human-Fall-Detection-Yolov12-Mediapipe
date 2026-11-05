@@ -1,6 +1,6 @@
 """Fall decision logic separated from the PyQt5 dashboard.
 
-Stage 1 (current): a legacy mode that reproduces models/fall_detector.py exactly,
+Stage 1 (current): a legacy mode that reproduces pc/models/fall_detector.py exactly,
 including its known issues. Nothing in the existing program imports this package;
 the dashboard and CLI keep using FallDetector unchanged. Connect it only after
 tools/replay_compare.py shows zero differences on recorded data.

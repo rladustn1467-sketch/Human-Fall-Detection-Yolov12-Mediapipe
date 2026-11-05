@@ -1,6 +1,6 @@
 """Synthetic poses in the same structure FallDetector.analyze_pose returns.
 
-Structure (from models/fall_detector.py): a list of 33 tuples (x, y, z, visibility), where
+Structure (from pc/models/fall_detector.py): a list of 33 tuples (x, y, z, visibility), where
 x and y are normalized to the person crop frame[y1:y2, x1:x2] (x: fraction of box width,
 y: fraction of box height). Only joints 0, 11, 12, 23-28 are used by the legacy features;
 the other 24 joints get a fixed filler value.

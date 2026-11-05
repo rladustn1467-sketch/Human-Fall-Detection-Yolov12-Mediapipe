@@ -1,4 +1,4 @@
-"""Posture rule, reproducing the check inside FallDetector.process_frame (models/fall_detector.py:494-542).
+"""Posture rule, reproducing the check inside FallDetector.process_frame (pc/models/fall_detector.py:494-542).
 
 A person counts as fallen in a single frame when
     abs(angle) >= angle_threshold + 10   and   aspect_ratio < 1.5

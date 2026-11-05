@@ -1,4 +1,4 @@
-"""IoU person tracker, reproducing FallDetector.track_persons (models/fall_detector.py:575-659).
+"""IoU person tracker, reproducing FallDetector.track_persons (pc/models/fall_detector.py:575-659).
 
 Known issues kept on purpose (legacy reproduction):
   - matching is not one-to-one: two boxes in the same frame can get the same ID

@@ -132,6 +132,11 @@ class ApiV2Test(unittest.TestCase):
         self.assertEqual(status, 307)
         self.assertEqual(headers.get("location"), "/app/next/")
 
+    def test_first_address_opens_the_app_without_login(self):
+        status, headers, _ = self.server.request("GET", "/")
+        self.assertEqual(status, 302)
+        self.assertEqual(headers.get("location"), "/app/next/")
+
     def test_next_files_need_no_login(self):
         for path in ("/app/next/index.html", "/app/next/dev.html", "/app/next/js/store.js", "/app/next/css/main.css"):
             status, _, _ = self.server.request("GET", path)

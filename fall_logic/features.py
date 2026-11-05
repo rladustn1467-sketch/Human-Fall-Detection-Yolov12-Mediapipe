@@ -1,4 +1,4 @@
-"""Pose features, reproducing FallDetector.calculate_pose_features (models/fall_detector.py) exactly.
+"""Pose features, reproducing FallDetector.calculate_pose_features (pc/models/fall_detector.py) exactly.
 
 Input coordinates are the ones FallDetector produces: each landmark is
 (x, y, z, visibility) from MediaPipe Pose run on the person crop frame[y1:y2, x1:x2].

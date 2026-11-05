@@ -20,6 +20,11 @@ class FallDetector:
             model_path (str): Path to the YOLOv12 model file (default: 'yolov12n1.pt')
             confidence (float): Detection confidence threshold (0-1)
         """
+        # A bare file name also means the models kept in pc/
+        beside_program = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), model_path)
+        if not os.path.exists(model_path) and os.path.exists(beside_program):
+            model_path = beside_program
+
         # First verify CUDA is working
         try:
             print(f"PyTorch version: {torch.__version__}")

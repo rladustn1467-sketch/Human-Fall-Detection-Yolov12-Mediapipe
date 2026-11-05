@@ -1,6 +1,6 @@
 """Record what the existing FallDetector sees and decides, for replay comparison with fall_logic.
 
-Runs the unchanged models/fall_detector.py (YOLO + MediaPipe) on a video, an image, a folder of
+Runs the unchanged pc/models/fall_detector.py (YOLO + MediaPipe) on a video, an image, a folder of
 images or a webcam, the same way the dashboard does (low-light correction first, then
 FallDetector.process_frame), and writes a pose log (see tools/pose_log.py). No image is saved:
 only boxes, landmarks, times and the detector's own results.
@@ -24,8 +24,9 @@ import sys
 import time as _time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+for path in (ROOT, os.path.join(ROOT, "pc")):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from tools import pose_log  # noqa: E402
 
@@ -50,7 +51,7 @@ class FrameClock:
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Record FallDetector inputs and results to a pose log")
     parser.add_argument("source", help="video file, image file, image folder, or webcam number (e.g. 0)")
-    parser.add_argument("--model", default=os.path.join(ROOT, "yolov12n1.pt"),
+    parser.add_argument("--model", default=os.path.join(ROOT, "pc", "yolov12n1.pt"),
                         help="YOLO model file (dashboard default: yolov12n1.pt)")
     parser.add_argument("--conf", type=float, default=0.5, help="detection confidence (dashboard default 0.5)")
     parser.add_argument("--angle-threshold", type=float, default=45,

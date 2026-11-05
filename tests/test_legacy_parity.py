@@ -5,7 +5,7 @@ The original class is used as is, except that its two model calls are replaced o
 original calculate_pose_features) and the `time` name inside models.fall_detector is patched
 to a fake clock. The model is never loaded (__init__ is skipped) and no file is changed.
 
-Needs the detection venv (models/fall_detector.py imports torch, ultralytics, mediapipe, cv2);
+Needs the detection venv (pc/models/fall_detector.py imports torch, ultralytics, mediapipe, cv2);
 skipped elsewhere.
 """
 import unittest

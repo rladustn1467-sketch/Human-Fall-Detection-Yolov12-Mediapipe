@@ -1,5 +1,5 @@
 """Legacy features and posture rule: expected values worked out from the formulas in
-FallDetector.calculate_pose_features / process_frame (models/fall_detector.py), not new thresholds."""
+FallDetector.calculate_pose_features / process_frame (pc/models/fall_detector.py), not new thresholds."""
 import unittest
 
 from fall_logic.features import compute_legacy_features

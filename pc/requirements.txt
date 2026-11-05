@@ -1,9 +1,9 @@
 # Fall detection program (dashboard / CLI) dependencies
 # Tested with Python 3.12 on Windows, CPU-only PyTorch.
 #   python -m venv venv
-#   venv\Scripts\python.exe -m pip install -r requirements.txt
+#   venv\Scripts\python.exe -m pip install -r pc\requirements.txt
 # The web server has its own environment: see server/requirements.txt
-# Exact versions of every installed package: requirements-working.txt
+# Exact versions of every installed package: pc/requirements-working.txt
 
 # --- Deep learning (CPU) ---
 # The default PyPI build of torch on Windows is CPU-only, which is what this project uses.

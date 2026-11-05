@@ -38,7 +38,7 @@ from PyQt5.QtGui import QKeySequence
 # 낙상 이벤트 전송 설정 (다른 컴퓨터에서는 DEVICE_ID만 바꾸면 됨)
 EVENT_SERVER_URL = "http://127.0.0.1:8000/api/events"
 DEVICE_ID = "laptop"
-_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 서버가 처음 실행될 때 만드는 접근 토큰 파일 (서버와 같은 컴퓨터에서 실행할 때)
 ACCESS_TOKEN_FILE = os.path.join(_PROJECT_DIR, "server", "access_token.txt")
 # 전송 실패 시 재시도 간격(초). 항목 수 = 재시도 횟수
