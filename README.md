@@ -41,7 +41,7 @@ A real-time fall detection system using computer vision with YOLOv12 for person 
 
 | 시험 | 결과 |
 |---|---|
-| 서버 | 351개 통과 |
+| 서버 | 352개 통과 |
 | 판정 로직과 도구 | 116개 통과 |
 | Android 단위 (JVM) | 72개 통과, 1개 건너뜀 |
 | 브라우저 끝까지 시험 | 24개 통과 |

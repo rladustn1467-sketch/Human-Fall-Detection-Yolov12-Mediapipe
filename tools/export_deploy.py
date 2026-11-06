@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 EXTRAS = {"deploy/school/README.md": "README.md", "deploy/school/gitignore": ".gitignore",
           "deploy/school/env.example": ".env.example"}
 SKIP_PARTS = ("tests",)
-SKIP_NAMES = (".env.example",)    # 배포용 설정 예시(deploy/school/env.example)로 대신함
+SKIP_NAMES = (".env.example",     # 배포용 설정 예시(deploy/school/env.example)로 대신함
+              "dev.html", "dev.js")   # 개발 확인용 화면
 SKIP_SUFFIXES = (".bat",)
 FORBIDDEN_NAMES = (".env", "fall.db", "events.json", "residents.json", "access_token.txt", "telegram_state.json",
                    "google-services.json")

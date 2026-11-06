@@ -214,7 +214,10 @@ async def lifespan(app):
     stop.set()
 
 
-app = FastAPI(title="Fall Detection Server", lifespan=lifespan)
+# API 문서 화면은 개발용 복사본에서만 (공개 서버에서 내부 경로 목록을 보여 주지 않음)
+_API_DOCS = os.environ.get("FD_DEV_TOOLS", "").strip() == "1"
+app = FastAPI(title="Fall Detection Server", lifespan=lifespan, docs_url="/docs" if _API_DOCS else None,
+              redoc_url="/redoc" if _API_DOCS else None, openapi_url="/openapi.json" if _API_DOCS else None)
 
 # 모든 응답에 기본 보안 헤더 (감사 2026-10-29, H-4): 다른 사이트가 화면을 몰래 끼워 보여 주지 못하게, 파일 종류를
 # 짐작하지 않게, 다른 사이트로 주소를 넘기지 않게. 응답이 이미 정한 값(예: 로그인의 no-referrer)은 그대로 둠

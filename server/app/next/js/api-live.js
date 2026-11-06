@@ -32,7 +32,8 @@
     let data = null;
     try { data = await res.json(); } catch (e) { /* 내용 없음 */ }
     if (!res.ok) {
-      const message = data && typeof data.message === 'string' ? data.message : `요청을 처리하지 못했어요 (HTTP ${res.status}).`;
+      const fallback = res.status >= 500 ? '서버가 잠시 응답하지 못했어요. 잠시 후 다시 시도해 주세요.' : '요청을 처리하지 못했어요.';
+      const message = data && typeof data.message === 'string' ? data.message : `${fallback} (HTTP ${res.status})`;
       throw new FD.ApiError(res.status, message, data && data.field);
     }
     return data;

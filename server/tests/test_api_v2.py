@@ -137,6 +137,10 @@ class ApiV2Test(unittest.TestCase):
         self.assertEqual(status, 302)
         self.assertEqual(headers.get("location"), "/app/next/")
 
+    def test_api_docs_are_closed(self):
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            self.assertEqual(self.server.request("GET", path)[0], 404, path)
+
     def test_next_files_need_no_login(self):
         for path in ("/app/next/index.html", "/app/next/dev.html", "/app/next/js/store.js", "/app/next/css/main.css"):
             status, _, _ = self.server.request("GET", path)

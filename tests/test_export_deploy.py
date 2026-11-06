@@ -20,7 +20,7 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(export_deploy.export(self.dir), [])
         for name in ("main.py", "requirements.txt", "README.md", ".gitignore", ".env.example", "app/next/index.html"):
             self.assertTrue((self.dir / name).is_file(), name)
-        for name in ("tests", "server", "pc", "mobile", "run_server.bat"):
+        for name in ("tests", "server", "pc", "mobile", "run_server.bat", "app/next/dev.html", "app/next/js/dev.js"):
             self.assertFalse((self.dir / name).exists(), name)
 
     def test_keeps_git_and_removes_stale_files(self):
