@@ -19,6 +19,7 @@
     if (!me) return (p === '/ob/signup' || p === '/ob/login' || p === '/ob/join' || p === '/join') ? null : '/ob/login';   // 앱 첫 화면 = 로그인
     if (p === '/ob/login') return '/';   // 이미 로그인한 사람
     if (!me.groupId) return (p === '/ob/group' || p === '/ob/invite' || p === '/ob/join' || p === '/join') ? null : '/ob/group';
+    if (p === '/ob/group') return '/ob/invite';   // 이미 그룹이 있음 (뒤로 돌아온 경우)
     if (me.onboarded === false && !inOb && p !== '/join') return '/ob/ask';
     if (p === '/ob/signup') return '/';
     return null;

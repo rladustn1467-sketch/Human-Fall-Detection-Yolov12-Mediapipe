@@ -866,6 +866,7 @@ class SetupHome(BaseModel):
     mode: str = Field(max_length=20)
     id: Optional[str] = Field(default=None, max_length=60)
     address: Optional[str] = Field(default=None, max_length=1000)
+    replaces: Optional[str] = Field(default=None, max_length=60)   # 뒤로 돌아가 다른 집을 고른 경우, 방금 저장했던 집
 
 
 class SetupBody(BaseModel):

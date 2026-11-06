@@ -14,7 +14,18 @@
     return { info: { birth: undefined, conditions: undefined, medications: undefined }, homeMode: null, homeId: null, address: '', addrBase: '', addrDetail: '',
       central: '', door: '', centralKeep: true, doorKeep: true, devices: [], phoneCamera: false, addrSkipped: false };
   }
-  const D = () => (draft = draft || newDraft());
+  const D = () => restoreSaved(draft = draft || newDraft());
+  /* 저장한 뒤 앱을 다시 열면 임시 입력값이 없음: 서버에 저장된 값으로 채움 (집이 또 생기거나 건강 정보가 지워지지 않게) */
+  function restoreSaved(d) {
+    const me = LIVE ? Sel.me() : null;
+    if (!me || !me.isTarget || !me.homeIds.length || d.savedHomeId || d.homeMode) return d;
+    const id = me.homeIds[me.homeIds.length - 1], h = Sel.home(id);
+    d.info = { birth: me.birth || undefined, conditions: me.conditions || undefined, medications: me.medications || undefined };
+    d.homeMode = 'existing'; d.homeId = id; d.savedHomeId = id;
+    d.ownHomeId = Sel.isHomeAdmin(id) ? id : null;
+    d.address = (h && h.address) || ''; d.addrBase = d.address; d.addrDetail = ''; d.addrManual = true; d.addrWhole = true;
+    return d;
+  }
   const LIVE = FD.MODE === 'live';
   // 주소 검색을 쓸 수 없으면(api-live.js 의 addressSearch 가 false) 또는 사용자가 '직접 입력하기'를 고르면 직접 입력
   const manualAddress = () => FD.API.addressSearch === false || !!(draft && draft.addrManual);
@@ -206,7 +217,7 @@
     const me = Sel.me(); const g = me && me.groupId ? Sel.group(me.groupId) : null;
     return {
       html: page(`
-        ${top(1, 3)}
+        ${top(1, 3, { noBack: true })}
         <h1 class="ob__title">가족을 초대해 주세요</h1>
         <p class="ob__sub">QR코드를 보여주거나 초대 코드를 알려주세요. 나중에 가족 탭에서도 초대할 수 있어요.</p>
         <div id="invite-area">${g ? inviteBlock(g) : ''}</div>`,
@@ -410,15 +421,16 @@
   /* ---------------- O-05 감지 대상 설정 질문 ---------------- */
   R.register('/ob/ask', () => {
     const me = Sel.me();
+    const saved = !!D().savedHomeId;   // 뒤로 돌아온 경우: 이미 감지 대상으로 저장됨
     return page(`
       ${top(2, 3)}
       <h1 class="ob__title">이 기기를 사용하는 분을<br>낙상 감지 대상으로<br>설정할까요?</h1>
       <p class="ob__sub">감지 대상이 되면 카메라로 낙상을 살피고, 사고가 나면 가족에게 알려요.</p>
       <div class="notice" style="margin-top:22px">${ic('circle-info')}<span>나중에 홈에서 낙상 감지를 켤 수 있어요.</span></div>`,
       `<button class="btn btn--primary btn--lg btn--block" data-action="ask.yes">예</button>
-       <button class="btn btn--ghost btn--lg btn--block" data-action="ask.no">아니요 (알림만 받을게요)</button>`);
+       ${saved ? '' : '<button class="btn btn--ghost btn--lg btn--block" data-action="ask.no">아니요 (알림만 받을게요)</button>'}`);
   });
-  on('ask.yes', () => { draft = newDraft(); R.go('/ob/info'); });
+  on('ask.yes', () => { D(); R.go('/ob/info'); });
   on('ask.no', async el => {
     try {
       await UI.busy(el, () => Act.updateProfile(Sel.me().id, { onboarded: true }));
@@ -500,12 +512,18 @@
 
     /* O-07 주소
        그룹에 이미 집이 있으면 먼저 '같은 집에 사시나요?'를 물음 (주소를 아직 입력하지 않은 집도 후보).
-       같은 집이면 새 집을 만들지 않고 그 집에 연결. 다른 집을 고른 뒤에만 주소 입력·건너뛰기(새 집) */
-    const groupHomes = () => { const me = Sel.me(); return me && me.groupId ? Sel.homes(me.groupId) : []; };
+       같은 집이면 새 집을 만들지 않고 그 집에 연결. 다른 집을 고른 뒤에만 주소 입력·건너뛰기(새 집).
+       이 흐름에서 저장한 내 집(d.ownHomeId)은 가족의 집이 아니므로 후보에서 빼고, 돌아오면 그 주소를 고침 */
+    const groupHomes = () => {
+      const me = Sel.me();
+      return me && me.groupId ? Sel.homes(me.groupId).filter(h => h.id !== D().ownHomeId) : [];
+    };
+    // 지금 고른 집. 저장한 내 집의 주소를 고치는 중이면(homeMode 'new') 그 집
+    const chosenHome = d => (d.homeMode === 'existing' ? Sel.home(d.homeId) : d.homeMode === 'new' && d.ownHomeId ? Sel.home(d.ownHomeId) : null);
     R.register(base + '/address', () => {
       const d = D();
       const homes = groupHomes();
-      const hasHomes = homes.length > 0 && d.homeMode !== 'new';
+      const hasHomes = homes.length > 0 && d.homeMode !== 'new' && !(d.ownHomeId && d.homeId === d.ownHomeId);
       return {
         html: page(`
           ${top(1, 4)}
@@ -557,9 +575,9 @@
     let lastResults = [];
     on('addr.same', el => { const d = D(); d.homeMode = 'existing'; d.homeId = el.dataset.id; R.go(curBase() + '/password'); });
     // '다른 집'·'가족이 등록한 집 중에서 고르기'는 화면 전체를 다시 그림 (아래 건너뛰기 버튼이 다른 집일 때만 보이도록)
-    on('addr.other', () => { const d = D(); d.homeMode = 'new'; d.homeId = null; d.addrBase = ''; R.go(R.path()); });
+    on('addr.other', () => { const d = D(); d.homeMode = 'new'; d.homeId = null; d.addrBase = ''; d.addrWhole = false; R.go(R.path()); });
     on('addr.back-existing', () => { const d = D(); d.homeMode = null; d.homeId = null; R.go(R.path()); });
-    on('addr.change', () => { const d = D(); d.addrBase = ''; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
+    on('addr.change', () => { const d = D(); d.addrBase = ''; d.addrWhole = false; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
     on('addr.search', async () => {
       const q = document.getElementById('addr-q').value;
       const box = document.getElementById('addr-results');
@@ -570,8 +588,8 @@
         ? lastResults.map((a, i) => `<button class="addr-item" data-action="addr.pick" data-i="${i}">${ic('location-dot')}<span>${esc(a)}</span></button>`).join('')
         : `<p class="empty" style="padding:18px">검색 결과가 없어요. 건물명이나 도로명을 다시 입력해 보세요.</p>`;
     });
-    on('addr.manual', () => { const d = D(); d.addrManual = true; d.addrBase = ''; d.homeMode = 'new'; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
-    on('addr.searchmode', () => { const d = D(); d.addrManual = false; d.addrBase = ''; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
+    on('addr.manual', () => { const d = D(); d.addrManual = true; d.addrBase = ''; d.addrWhole = false; d.homeMode = 'new'; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
+    on('addr.searchmode', () => { const d = D(); d.addrManual = false; d.addrBase = ''; d.addrWhole = false; drawAddr(document.getElementById('addr-body'), groupHomes(), false); });
     on('addr.pick', el => {
       const d = D(); d.addrBase = lastResults[+el.dataset.i]; d.homeMode = 'new';
       drawAddr(document.getElementById('addr-body'), groupHomes(), false);
@@ -585,8 +603,8 @@
         setError('addr-base', '');
         d.addrBase = b;
       }
-      if (!det) { setError('addr-detail', '동·호수까지 입력해 주세요.'); return; }
-      d.addrDetail = det; d.address = d.addrBase + ' ' + det; d.homeMode = 'new'; d.addrSkipped = false;
+      if (!det && !d.addrWhole) { setError('addr-detail', '동·호수까지 입력해 주세요.'); return; }   // addrWhole: 저장된 주소 전체를 불러온 경우
+      d.addrDetail = det; d.address = det ? d.addrBase + ' ' + det : d.addrBase; d.homeMode = 'new'; d.addrSkipped = false;
       R.go(curBase() + '/password');
     });
     on('addr.skip', async () => {
@@ -601,7 +619,7 @@
        입력한 값은 이 흐름의 임시 보관(메모리)에만 두었다가 '완료' 때 서버로 보냄 (실제 모드는 서버가 암호화 저장).
        같은 집을 고른 가족: 지금 방식을 미리 선택. 등록된 비밀번호는 '그대로 사용'이 기본이라 덮어쓰지 않음 */
     function entranceDraft(d, h) {
-      const key = d.homeMode === 'existing' ? d.homeId : 'new';
+      const key = h ? h.id : 'new';
       if (d.entFor !== key) {   // 집을 바꿔 고르면 처음부터
         d.entFor = key; d.entSkipped = false; d.central = ''; d.door = ''; d.centralKeep = true; d.doorKeep = true;
         ['central', 'door'].forEach(k => { d[k + 'Method'] = h ? UI.entrance(h, k).method : null; });
@@ -611,7 +629,7 @@
     const memberOfExisting = (d, h) => !!(h && Sel.homeAdmins(h.id).length && !Sel.homeAdmins(h.id).includes(Sel.meId()));
     R.register(base + '/password', () => {
       const d = D();
-      const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
+      const h = chosenHome(d);
       if (memberOfExisting(d, h)) {
         d.entSkipped = true;
         const line = kind => { const e = UI.entrance(h, kind); return `<div class="kv__row"><span class="kv__k">${e.name}</span><span class="kv__v">${e.label}</span></div>`; };
@@ -647,7 +665,7 @@
         <div style="margin-top:18px">${block('central')}${block('door')}</div>`,
         `<button class="btn btn--primary btn--lg btn--block" data-action="pw.next">다음</button>
          <button class="btn btn--ghost btn--block" data-action="pw.skip">건너뛰기</button>`);
-    });
+    }, { parent: base + '/address' });
     function collectPw() {
       const d = D();
       ['central', 'door'].forEach(k => { const e = document.getElementById('pw-' + k + '-in'); if (e) d[k] = e.value; });
@@ -672,7 +690,7 @@
       });
       if (!ok) return;
       // 같은 집에 등록된 비밀번호를 다른 방식으로 바꾸면 확인을 받음 (그 현관의 비밀번호만 삭제됨)
-      const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
+      const h = chosenHome(d);
       const losing = h ? ['central', 'door'].map(k => UI.entrance(h, k)).filter(e => e.registered && d[e.kind + 'Method'] !== 'code') : [];
       if (losing.length) {
         const names = losing.map(e => e.name).join('·');
@@ -698,12 +716,15 @@
 
     /* 실제 모드: 건강 정보 + 집 + 현관 정보를 서버가 한 트랜잭션으로 저장 (실패하면 아무것도 저장되지 않고 3단계에 머묾).
        서버는 이때 가입 완료로 표시함 → 4단계에서 앱을 꺼도 다음에는 홈으로 ('나중에 연결'과 같음).
-       저장한 집은 draft 에 '기존 집'으로 기억: 뒤로 와서 다시 '다음'을 눌러도 집을 새로 만들지 않고 같은 집을 다시 저장 */
+       저장한 집은 draft 에 기억: 뒤로 와서 다시 '다음'을 누르면 집을 새로 만들지 않고 그 집을 고침.
+       다른 집을 고르면 서버가 같은 트랜잭션에서 방금 저장한 집을 정리함 (replaces) */
     async function saveSetup(el) {
       const d = D(), me = Sel.me();
       const info = {};
       ['birth', 'conditions', 'medications'].forEach(k => { info[k] = d.info[k] === undefined ? null : d.info[k]; });
-      const home = d.homeMode === 'existing' && d.homeId ? { mode: 'existing', id: d.homeId } : { mode: 'new', address: d.address || '' };
+      const home = d.homeMode === 'new' && d.ownHomeId ? { mode: 'existing', id: d.ownHomeId, address: d.address || '' }
+        : d.homeMode === 'existing' && d.homeId ? { mode: 'existing', id: d.homeId } : { mode: 'new', address: d.address || '' };
+      if (d.savedHomeId && d.savedHomeId !== home.id) home.replaces = d.savedHomeId;
       const entrances = entrancesToSend(d);
       const before = me.homeIds.slice();
       try {
@@ -712,6 +733,7 @@
       const after = Sel.me().homeIds;
       const homeId = home.mode === 'existing' ? home.id : after.find(id => !before.includes(id));
       if (!homeId) { UI.toast('집 정보를 불러오지 못했어요. 다시 시도해 주세요.'); return false; }
+      d.ownHomeId = home.mode === 'new' || homeId === d.ownHomeId ? homeId : null;
       d.homeMode = 'existing'; d.homeId = homeId; d.savedHomeId = homeId;
       ['central', 'door'].forEach(k => { d[k] = ''; d[k + 'Keep'] = true; });   // 비밀번호는 저장됨 (다시 보내지 않음)
       return true;
@@ -732,9 +754,9 @@
           <button class="choice ${d.phoneCamera ? 'choice--on' : ''}" data-action="dev.phone"><span class="choice__ic">${ic('mobile-screen')}</span><span><span class="choice__t">내 폰 카메라 사용</span><span class="choice__s" style="display:block">${d.phoneCamera ? '내 폰 카메라로 감지하도록 설정했어요.' : '이 휴대전화의 카메라로 감지해요.'}</span></span></button>
         </div>`,
         `<button class="btn btn--primary btn--lg btn--block" data-action="flow.finish">${(d.devices.length || d.phoneCamera) ? '완료' : '나중에 연결할게요'}</button>`);
-    }, { live: true });   // 실제 모드: 기기가 연결되면 서버 상태대로 다시 그림
+    }, { live: true, parent: base + '/password' });   // 실제 모드: 기기가 연결되면 서버 상태대로 다시 그림
     /* 실제 모드 4단계: 3단계에서 저장한 집에 감지 기기를 연결 (홈 '기기 추가'와 같은 흐름, devices.js).
-       연결된 기기와 상태는 서버 상태 그대로. 저장이 끝났으므로 뒤로 가지 않고, '완료'·'나중에 연결할게요'는 홈으로만 */
+       연결된 기기와 상태는 서버 상태 그대로. '완료'·'나중에 연결할게요'는 홈으로 */
     function liveDevicePage(d) {
       const me = Sel.me();
       // 앱을 다시 열어 이 화면으로 바로 온 경우(임시 입력값 없음): 이미 저장된 내 집으로
@@ -749,7 +771,7 @@
       const devRow = x => `<div class="dev-added"><i class="fa-solid fa-${UI.DEVICE_ICON[x.type] || 'video'} ic" aria-hidden="true"></i><span style="flex:1">${esc(UI.deviceName(x))}<br>
         <small class="${x.status === 'ok' ? 'muted' : ''}" style="${x.status === 'ok' ? '' : 'color:var(--stop)'}">${esc(UI.STATUS_LABEL[x.status])}${x.status === 'disconnected' && UI.DEVICE_PROBLEM[x.problem] ? ' · ' + esc(UI.DEVICE_PROBLEM[x.problem]) : ''}</small></span></div>`;
       return page(`
-        ${top(3, 4, { noBack: true })}
+        ${top(3, 4)}
         <p class="tag tag--primary">${STEP_NAMES[3]} · 4/4</p>
         <h1 class="ob__title" style="margin-top:10px">감지할 기기를<br>연결해 주세요</h1>
         <div class="notice" style="margin-top:16px">${ic('eye-slash')}<span>영상은 낙상 판단에만 쓰이고 저장되지 않아요. 낙상이 감지되면 배경과 사람을 가린 이미지만 기록돼요.</span></div>
@@ -808,7 +830,7 @@
       const admins = Sel.homeAdmins(d.homeId);
       if (admins.length && !admins.includes(Sel.meId())) return null;
     }
-    const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : null;
+    const h = d.homeMode === 'existing' ? Sel.home(d.homeId) : d.homeMode === 'new' && d.ownHomeId ? Sel.home(d.ownHomeId) : null;
     const out = {};
     ['central', 'door'].forEach(k => {
       const m = d[k + 'Method'], before = h ? UI.entrance(h, k).method : null, code = m === 'code' ? (d[k] || '') : '';

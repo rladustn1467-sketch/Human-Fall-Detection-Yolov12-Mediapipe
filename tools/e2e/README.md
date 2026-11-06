@@ -6,6 +6,7 @@
 |---|---|---|
 | `server/tests/test_full_flow.py` | 서버 venv | 등록부터 기기 삭제까지 10단계. 서버 시험 전체를 돌릴 때 함께 실행 |
 | `run_browser.py` | 서버 venv, Node, Chrome | 화면 자동 갱신, 사고 인계, 모의 신고 뒤 119 링크, 관리자 화면 |
+| `run_onboarding.py` | 서버 venv, Node, Chrome | 처음 설정에서 뒤로 돌아가 수정, 다른 집 고르기, 새로고침 |
 | `run_emulator.py` | 서버 venv, 켜진 에뮬레이터, debug APK | 실제 앱으로 연결, 낙상, 복구, 로그아웃 |
 
 ## 실행
@@ -14,6 +15,7 @@
 
 ```powershell
 python tools\e2e\run_browser.py
+python tools\e2e\run_onboarding.py
 python tools\e2e\run_emulator.py --frames <녹화 프레임 폴더>
 ```
 

@@ -238,13 +238,35 @@ def update_home_address(conn, user_id, home_id, address, now=None):
             alerts.tell_home(conn, home["id"], user_id, "주소를 바꿨어요", int(now * 1000))
 
 
+def _drop_replaced_home(conn, me, home_id):
+    """Back in the setup the person chose another home: the link saved a moment ago goes, and the home too if
+    nothing else uses it. A home that a phone is connected to stays until that phone is disconnected."""
+    home = _group_home(conn, me, home_id)
+    if not _is_linked(conn, home["id"], me["id"]):
+        return
+    others = conn.execute("SELECT 1 FROM home_members WHERE home_id = ? AND user_id != ?",
+                          (home["id"], me["id"])).fetchone()
+    own_phone = conn.execute("SELECT 1 FROM devices WHERE home_id = ? AND self_user_id = ?",
+                             (home["id"], me["id"])).fetchone()
+    devices = conn.execute("SELECT 1 FROM devices WHERE home_id = ?", (home["id"],)).fetchone()
+    if own_phone or (devices and not others):
+        raise AccountError(409, "이 집에 연결한 기기를 먼저 삭제해 주세요.", "home")
+    conn.execute("DELETE FROM home_members WHERE home_id = ? AND user_id = ?", (home["id"], me["id"]))
+    ensure_admin(conn, home["id"])
+    used = conn.execute("SELECT 1 FROM incidents WHERE home_id = ?", (home["id"],)).fetchone()
+    if not others and not used and home["created_by"] == me["id"]:
+        conn.execute("DELETE FROM homes WHERE id = ?", (home["id"],))
+
+
 # ---- 처음 설정 완료 (감지 대상 켜기) ----
 def finish_setup(conn, user_id, info, home, now=None, today=None, doors=None, key=None, entrances=None):
     """Finish the 'detection target' setup in ONE transaction: all saved, or nothing saved.
 
     info: {birth, conditions, medications} (None = not entered)
     home: {"mode": "existing", "id": ...} to link a home of your group, or {"mode": "new", "address": ...}
-          (address may be empty when the user skipped it)
+          (address may be empty when the user skipped it). "existing" with an address changes that home's
+          address (administrator only). "replaces": the home saved earlier in this setup, when the person came
+          back and chose another one.
     entrances: {"central": {"method", "code"}, "door": {...}} - entrance methods and, for 'code', the codes the
            user entered (stage H, door_codes.py). Entrances not sent are left as they are.
     doors: older form {"central": code, "door": code}, treated as method 'code'.
@@ -261,7 +283,8 @@ def finish_setup(conn, user_id, info, home, now=None, today=None, doors=None, ke
     mode = home.get("mode")
     if mode not in ("existing", "new"):
         raise AccountError(400, "집 정보를 다시 선택해 주세요.", "home")
-    address = clean_address(home.get("address"), required=False) if mode == "new" else None
+    keep_address = mode == "existing" and home.get("address") is None
+    address = None if keep_address else clean_address(home.get("address"), required=False)
     key = key if key is not None else door_codes.current_key()
     merged = dict(entrances) if isinstance(entrances, dict) else {}
     if isinstance(doors, dict):   # 예전 형식: 입력한 비밀번호 = '비밀번호' 방식
@@ -281,6 +304,15 @@ def finish_setup(conn, user_id, info, home, now=None, today=None, doors=None, ke
         else:
             home_id = _create_home(conn, me, address, now)
         _link(conn, home_id, user_id, now)
+        if mode == "existing" and not keep_address:
+            if not is_admin(conn, home_id, user_id):
+                raise AccountError(403, "주소는 이 집의 관리자만 바꿀 수 있어요.", "address")
+            before = conn.execute("SELECT address FROM homes WHERE id = ?", (home_id,)).fetchone()[0]
+            if before != address:
+                conn.execute("UPDATE homes SET address = ?, updated_at = ? WHERE id = ?", (address, now, home_id))
+                alerts.tell_home(conn, home_id, user_id, "주소를 바꿨어요", int(now * 1000))
+        if home.get("replaces") and home["replaces"] != home_id:
+            _drop_replaced_home(conn, me, home["replaces"])
         # 현관 출입 방식·비밀번호: 연결이 끝난 뒤 (이 사람은 이제 이 집에 연결된 가족) 같은 트랜잭션으로 저장
         door_codes.apply_entrances_in_transaction(conn, user_id, home_id, checked, key, now)
     return home_id

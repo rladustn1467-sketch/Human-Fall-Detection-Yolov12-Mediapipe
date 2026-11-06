@@ -155,6 +155,57 @@ class SetupTest(PeopleTestBase):
         self.assertAccountError(409, self.setup, self.c)
 
 
+class SetupBackTest(PeopleTestBase):
+    """Coming back in the setup after it was saved."""
+
+    def homes(self):
+        return self.conn.execute("SELECT id, address FROM homes WHERE group_id = ?", (self.g1,)).fetchall()
+
+    def test_changing_the_address_edits_the_saved_home(self):
+        home = self.setup(self.a, home={"mode": "new", "address": "처음 주소"})
+        again = self.setup(self.a, home={"mode": "existing", "id": home, "address": "고친 주소"})
+        self.assertEqual(again, home)
+        self.assertEqual([(r["id"], r["address"]) for r in self.homes()], [(home, "고친 주소")])
+
+    def test_saving_again_without_an_address_keeps_it(self):
+        home = self.setup(self.a, home={"mode": "new", "address": "처음 주소"})
+        self.setup(self.a, home={"mode": "existing", "id": home})
+        self.assertEqual(self.homes()[0]["address"], "처음 주소")
+
+    def test_only_the_administrator_changes_the_address(self):
+        home = self.setup(self.a, home={"mode": "new", "address": "처음 주소"})
+        with self.assertRaises(accounts.AccountError) as e:
+            self.setup(self.b, home={"mode": "existing", "id": home, "address": "다른 주소"})
+        self.assertEqual(e.exception.status, 403)
+        self.assertEqual(self.homes()[0]["address"], "처음 주소")
+        self.assertFalse(self.me(self.b)["homeIds"])
+
+    def test_choosing_a_family_home_removes_the_empty_one_just_saved(self):
+        family = self.setup(self.a, home={"mode": "new", "address": "가족 집"})
+        mine = self.setup(self.b, home={"mode": "new", "address": "내 집"})
+        self.setup(self.b, home={"mode": "existing", "id": family, "replaces": mine})
+        self.assertEqual([r["id"] for r in self.homes()], [family])
+        self.assertEqual(self.me(self.b)["homeIds"], [family])
+
+    def test_leaving_a_family_home_keeps_it_for_the_family(self):
+        family = self.setup(self.a, home={"mode": "new", "address": "가족 집"})
+        self.setup(self.b, home={"mode": "existing", "id": family})
+        mine = self.setup(self.b, home={"mode": "new", "address": "내 집", "replaces": family})
+        self.assertEqual(self.me(self.b)["homeIds"], [mine])
+        self.assertEqual(self.me(self.a)["homeIds"], [family])
+        self.assertEqual(len(self.homes()), 2)
+
+    def test_a_connected_phone_blocks_the_change_and_nothing_is_saved(self):
+        home = self.setup(self.a, home={"mode": "new", "address": "처음 주소"})
+        self.conn.execute("""INSERT INTO devices (id, group_id, home_id, type, location, enabled_at, token_hash, created_by,
+                                                  created_at, self_user_id)
+                             VALUES ('d1', ?, ?, 'phone', '거실', 1, 'x', ?, 1, ?)""", (self.g1, home, self.a, self.a))
+        with self.assertRaises(accounts.AccountError) as e:
+            self.setup(self.a, home={"mode": "new", "address": "새 집", "replaces": home})
+        self.assertEqual(e.exception.status, 409)
+        self.assertEqual([r["id"] for r in self.homes()], [home])
+
+
 class HomeTest(PeopleTestBase):
     def test_link_unlink_and_address_permissions(self):
         home_id = self.setup(self.a)
